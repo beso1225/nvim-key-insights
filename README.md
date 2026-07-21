@@ -32,4 +32,4 @@ docs/                         Public design contracts
 
 ## Status
 
-The current scaffold establishes privacy defaults, the schema version boundary, and test entry points. Collection, JSONL validation, reporting, and Codex integration will be implemented incrementally with TDD.
+The current implementation establishes privacy defaults, strict event construction, and a bounded streaming JSONL validator with session-aware validation. Input collection, deterministic reporting, and Codex integration will be implemented incrementally with TDD.

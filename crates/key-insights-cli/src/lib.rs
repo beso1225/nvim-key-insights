@@ -1,5 +1,14 @@
 //! Deterministic analysis primitives shared by the CLI and its tests.
 
+mod event;
+mod validator;
+
+pub use event::{Event, Mode, SequenceMode};
+pub use validator::{
+    MAX_EVENT_LINE_BYTES, MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationError,
+    ValidationErrorKind, ValidationSummary, validate_jsonl,
+};
+
 /// Version of the collector/analyzer event contract.
 pub const SCHEMA_VERSION: u32 = 1;
 
