@@ -1,6 +1,12 @@
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.12.4#/Taskfile.pkl"
 
+local toolchainSources: Listing<String> = new {
+  "flake.nix"
+  "flake.lock"
+}
+
 local rustSources: Listing<String> = new {
+  ...toolchainSources
   "Cargo.toml"
   "Cargo.lock"
   "crates/**/*.rs"
@@ -8,9 +14,18 @@ local rustSources: Listing<String> = new {
 }
 
 local luaSources: Listing<String> = new {
+  ...toolchainSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
   "tests/lua/**/*.lua"
+}
+
+local workflowSources: Listing<String> = new {
+  ...toolchainSources
+  ".github/workflows/*.yml"
+  ".github/workflows/*.yaml"
+  "Taskfile.pkl"
+  "tests/ci_contract.sh"
 }
 
 local testRust: Task = new {
@@ -41,6 +56,13 @@ local lintRust: Task = new {
   inputs = rustSources
 }
 
+local lintActions: Task = new {
+  name = "lint:actions"
+  description = "Lint GitHub Actions workflows"
+  cmd = "actionlint && bash tests/ci_contract.sh"
+  inputs = workflowSources
+}
+
 local test: Task = new {
   name = "test"
   description = "Run all tests"
@@ -50,7 +72,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; test }
+  deps { formatCheck; lintRust; lintActions; test }
 }
 
 local default: Task = new {
@@ -59,4 +81,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; formatCheck; lintRust; test; check; default }
+tasks { testRust; testLua; formatCheck; lintRust; lintActions; test; check; default }

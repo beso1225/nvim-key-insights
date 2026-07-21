@@ -4,6 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     pkfire.url = "github:mizchi/pkfire";
+    pkfire.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { nixpkgs, pkfire, ... }:
@@ -17,6 +18,7 @@
         in {
           default = pkgs.mkShell {
             packages = [
+              pkgs.actionlint
               pkgs.cargo
               pkgs.clippy
               pkgs.neovim

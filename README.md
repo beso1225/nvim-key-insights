@@ -1,5 +1,7 @@
 # nvim-key-insights
 
+[![CI](https://github.com/beso1225/nvim-key-insights/actions/workflows/ci.yml/badge.svg)](https://github.com/beso1225/nvim-key-insights/actions/workflows/ci.yml)
+
 Privacy-first Neovim usage collection and deterministic local analysis.
 
 This repository is in its initial implementation phase. The intended system has three parts:
