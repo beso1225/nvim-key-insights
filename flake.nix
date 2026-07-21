@@ -17,6 +17,7 @@
         in {
           default = pkgs.mkShell {
             packages = [
+              pkgs.actionlint
               pkgs.cargo
               pkgs.clippy
               pkgs.neovim

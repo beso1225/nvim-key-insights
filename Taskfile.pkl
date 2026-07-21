@@ -13,6 +13,11 @@ local luaSources: Listing<String> = new {
   "tests/lua/**/*.lua"
 }
 
+local workflowSources: Listing<String> = new {
+  ".github/workflows/*.yml"
+  ".github/workflows/*.yaml"
+}
+
 local testRust: Task = new {
   name = "test:rust"
   description = "Run Rust unit and integration tests"
@@ -41,6 +46,13 @@ local lintRust: Task = new {
   inputs = rustSources
 }
 
+local lintActions: Task = new {
+  name = "lint:actions"
+  description = "Lint GitHub Actions workflows"
+  cmd = "actionlint"
+  inputs = workflowSources
+}
+
 local test: Task = new {
   name = "test"
   description = "Run all tests"
@@ -50,7 +62,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; test }
+  deps { formatCheck; lintRust; lintActions; test }
 }
 
 local default: Task = new {
@@ -59,4 +71,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; formatCheck; lintRust; test; check; default }
+tasks { testRust; testLua; formatCheck; lintRust; lintActions; test; check; default }
