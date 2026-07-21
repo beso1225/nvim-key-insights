@@ -38,7 +38,7 @@ local testRust: Task = new {
 local testLua: Task = new {
   name = "test:lua"
   description = "Run headless Neovim collector tests"
-  cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/privacy_spec.lua"
+  cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/run.lua"
   inputs = luaSources
 }
 
