@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workflow=".github/workflows/ci.yml"
+workflow="${CI_WORKFLOW:-.github/workflows/ci.yml}"
 taskfile="Taskfile.pkl"
+workflow_contents=$(<"$workflow")
 
-grep -Fq "persist-credentials: false" "$workflow" || {
+grep -Fq "persist-credentials: false" <<<"$workflow_contents" || {
   echo "checkout credentials must not persist into untrusted project steps" >&2
   exit 1
 }
 
-if [[ $(grep -Fc -- "--no-update-lock-file" "$workflow") -lt 2 ]]; then
-  echo "every Nix evaluation step must reject implicit flake.lock updates" >&2
+unprotected_nix_commands=$(awk '
+  /nix[[:space:]]+(flake|develop)([[:space:]]|$)/ &&
+    $0 !~ /--no-update-lock-file/ {
+      print NR ":" $0
+    }
+' <<<"$workflow_contents")
+
+if [[ -n "$unprotected_nix_commands" ]]; then
+  echo "every Nix evaluation command must reject implicit flake.lock updates:" >&2
+  echo "$unprotected_nix_commands" >&2
   exit 1
 fi
 
