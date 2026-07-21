@@ -41,7 +41,7 @@ The current implementation provides these commands:
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
 - `:KeyInsightsStatus` displays the current lifecycle state.
 
-Session events are appended to `stdpath("state")/key-insights/events.jsonl` with owner-only file permissions. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
 
 ## Repository layout
 

@@ -6,29 +6,34 @@ The collector is stopped by default and does not create a log until the user run
 
 - `stopped`: no active session and no `vim.on_key` callback;
 - `recording`: one active session with a non-consuming callback;
-- `paused`: the session remains open, but the callback is detached.
+- `paused`: the session remains open, but the callback is detached;
+- `stopping`: finalization failed and `:KeyInsightsStop` can safely retry it without adding another `session_end`.
 
 Running `:KeyInsightsStart` while paused resumes the same session. Running it after `:KeyInsightsStop` creates a new opaque session ID and a new `session_start` boundary. Pause and stop flush pending events, and Neovim shutdown stops an active or paused session through `VimLeavePre`.
 
 ## Storage
 
-The default JSONL path is:
+The default session directory is:
 
 ```text
-stdpath("state")/key-insights/events.jsonl
+stdpath("state")/key-insights/sessions/
 ```
 
-The directory is created with owner-only permissions when possible, and the log file is opened as mode `0600`. Writes are append-only. A custom path can be supplied through `setup`:
+Each Neovim session first reserves its opaque ID with an exclusively created `<session_id>.lock`, then writes `<session_id>.jsonl.part` as mode `0600`. A clean stop flushes `session_end`, closes the file, atomically renames it to `<session_id>.jsonl`, and releases the reservation. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave `.lock` and `.jsonl.part` files, which analyzers must ignore.
+
+A custom directory can be supplied through `setup`:
 
 ```lua
 require("key-insights").setup({
   storage = {
-    path = vim.fn.expand("~/.local/state/key-insights/events.jsonl"),
+    directory = vim.fn.expand("~/.local/state/key-insights/sessions"),
   },
 })
 ```
 
-The path is local configuration and is never included in an event.
+The directory is local configuration and is never included in an event.
+
+Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. Stop records its closing transition, so retrying after a transient write failure flushes the existing `session_end` instead of appending a duplicate.
 
 ## Current collection boundary
 

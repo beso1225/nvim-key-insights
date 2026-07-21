@@ -26,7 +26,7 @@ local DEFAULTS = {
     exclude_special_buffers = true,
   },
   storage = {
-    path = nil,
+    directory = nil,
   },
 }
 

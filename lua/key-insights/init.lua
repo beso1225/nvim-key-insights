@@ -12,8 +12,8 @@ local function get_instance()
     local writer = storage.new(options.storage)
     instance = collector.new({
       options = options,
-      write = function(lines)
-        writer:write(lines)
+      open_session = function(session_id)
+        return writer:open_session(session_id)
       end,
     })
   end

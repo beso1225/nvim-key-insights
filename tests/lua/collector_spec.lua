@@ -1,4 +1,16 @@
 local collector = require("key-insights.collector")
+local schema = require("key-insights.schema")
+
+local function memory_session(on_write)
+  return {
+    write = function(_, lines)
+      on_write(lines)
+    end,
+    flush = function() end,
+    finish = function() end,
+    abort = function() end,
+  }
+end
 
 local now_ms = 0
 local written = {}
@@ -12,10 +24,12 @@ local instance = collector.new({
   new_session_id = function()
     return "session-one"
   end,
-  write = function(lines)
-    for _, line in ipairs(lines) do
-      table.insert(written, vim.json.decode(line))
-    end
+  open_session = function()
+    return memory_session(function(lines)
+      for _, line in ipairs(lines) do
+        table.insert(written, vim.json.decode(line))
+      end
+    end)
   end,
   register_on_key = function(callback)
     active_callback = callback
@@ -35,7 +49,6 @@ assert(instance:status().state == "recording")
 assert(instance:status().session_id == "session-one")
 assert(active_callback ~= nil, "start must register vim.on_key collection")
 assert(#written == 1 and written[1].event_type == "session_start")
-
 assert(active_callback("mapped", "typed") == nil, "collector callback must never consume input")
 assert(#written == 1, "lifecycle callback must not persist raw input")
 
@@ -64,8 +77,10 @@ local buffered = collector.new({
   new_session_id = function()
     return "session-two"
   end,
-  write = function(lines)
-    pending_writes = pending_writes + #lines
+  open_session = function()
+    return memory_session(function(lines)
+      pending_writes = pending_writes + #lines
+    end)
   end,
   register_on_key = function()
     return function() end
@@ -74,9 +89,8 @@ local buffered = collector.new({
 })
 
 buffered:start()
-assert(pending_writes == 0)
-assert(buffered:flush() == 1)
 assert(pending_writes == 1)
+assert(buffered:flush() == 0)
 buffered:stop()
 assert(pending_writes == 2)
 assert(buffered:flush() == 0)
@@ -86,8 +100,10 @@ local pause_buffered = collector.new({
   new_session_id = function()
     return "session-pause"
   end,
-  write = function(lines)
-    pause_writes = pause_writes + #lines
+  open_session = function()
+    return memory_session(function(lines)
+      pause_writes = pause_writes + #lines
+    end)
   end,
   register_on_key = function()
     return function() end
@@ -104,8 +120,10 @@ local excluded = collector.new({
   new_session_id = function()
     return "session-three"
   end,
-  write = function(lines)
-    vim.list_extend(excluded_writes, lines)
+  open_session = function()
+    return memory_session(function(lines)
+      vim.list_extend(excluded_writes, lines)
+    end)
   end,
   register_on_key = function(callback)
     excluded_callback = callback
@@ -122,15 +140,242 @@ assert(excluded_callback("mapped-secret", "typed-secret") == nil)
 assert(#excluded_writes == before, "sensitive buffers must not emit input events")
 excluded:stop()
 
+local start_aborted = false
+local start_registered = false
+local failing_start = collector.new({
+  new_session_id = function()
+    return "session-start-failure"
+  end,
+  open_session = function()
+    return {
+      write = function()
+        error("disk full")
+      end,
+      abort = function()
+        start_aborted = true
+      end,
+    }
+  end,
+  register_on_key = function()
+    start_registered = true
+    return function() end
+  end,
+})
+assert(pcall(function()
+  failing_start:start()
+end) == false)
+assert(failing_start:status().state == "stopped", "failed start must roll back state")
+assert(failing_start:status().pending_events == 0, "failed start must discard its incomplete boundary")
+assert(start_aborted == true, "failed start must quarantine or remove its partial file")
+assert(start_registered == false, "failed session_start must not attach input collection")
+
+local registration_aborted = false
+local registration_failure = collector.new({
+  new_session_id = function()
+    return "session-registration-failure"
+  end,
+  open_session = function()
+    return {
+      write = function() end,
+      abort = function()
+        registration_aborted = true
+      end,
+    }
+  end,
+  register_on_key = function()
+    error("registration failed")
+  end,
+})
+assert(pcall(function()
+  registration_failure:start()
+end) == false)
+assert(registration_failure:status().state == "stopped")
+assert(registration_aborted == true)
+
+local stop_attempt = 0
+local stopped_events = {}
+local finish_count = 0
+local failing_stop = collector.new({
+  new_session_id = function()
+    return "session-stop-failure"
+  end,
+  open_session = function()
+    return {
+      write = function(_, lines)
+        stop_attempt = stop_attempt + 1
+        if stop_attempt == 2 then
+          error("temporary write failure")
+        end
+        for _, line in ipairs(lines) do
+          table.insert(stopped_events, vim.json.decode(line))
+        end
+      end,
+      flush = function() end,
+      finish = function()
+        finish_count = finish_count + 1
+      end,
+      abort = function() end,
+    }
+  end,
+  register_on_key = function()
+    return function() end
+  end,
+})
+failing_stop:start()
+assert(pcall(function()
+  failing_stop:stop()
+end) == false)
+assert(failing_stop:status().state == "stopping")
+assert(failing_stop:stop() == true, "a failed stop must be retryable")
+assert(#stopped_events == 2)
+assert(stopped_events[1].event_type == "session_start")
+assert(stopped_events[2].event_type == "session_end")
+assert(finish_count == 1)
+
 local storage = require("key-insights.storage")
 local temporary_directory = vim.fn.tempname()
-local log_path = temporary_directory .. "/events.jsonl"
-local writer = storage.new({ path = log_path })
-writer:write({ "first\n", "second\n" })
-assert(vim.deep_equal(vim.fn.readfile(log_path), { "first", "second" }))
-local permissions = vim.uv.fs_stat(log_path).mode % 512
+local store = storage.new({ directory = temporary_directory })
+local first_session = store:open_session("storage-one")
+first_session:write({ schema.encode(schema.session_start("storage-one")) })
+local second_session = store:open_session("storage-two")
+second_session:write({ schema.encode(schema.session_start("storage-two")) })
+second_session:write({ schema.encode(schema.session_end("storage-two", 1)) })
+second_session:finish()
+
+local complete_logs = vim.fn.glob(temporary_directory .. "/*.jsonl", false, true)
+local incomplete_logs = vim.fn.glob(temporary_directory .. "/*.jsonl.part", false, true)
+assert(#complete_logs == 1, "only finalized sessions must be analyzer inputs")
+assert(#incomplete_logs == 1, "crashed sessions must remain quarantined")
+assert(vim.deep_equal(vim.fn.readfile(complete_logs[1]), {
+  vim.trim(schema.encode(schema.session_start("storage-two"))),
+  vim.trim(schema.encode(schema.session_end("storage-two", 1))),
+}))
+local permissions = vim.uv.fs_stat(complete_logs[1]).mode % 512
 assert(permissions == 384, "collector logs must be readable only by their owner")
+assert(pcall(function()
+  store:open_session("storage-two")
+end) == false, "a finalized session ID must never be reused or overwritten")
+first_session:abort()
 vim.fn.delete(temporary_directory, "rf")
+
+local short_write_chunks = {}
+local fake_fs = {
+  fs_stat = function()
+    return nil, "ENOENT"
+  end,
+  fs_open = function()
+    return 7
+  end,
+  fs_fchmod = function()
+    return true
+  end,
+  fs_write = function(_, payload)
+    local length = math.min(2, #payload)
+    table.insert(short_write_chunks, string.sub(payload, 1, length))
+    return length
+  end,
+  fs_fsync = function()
+    return true
+  end,
+  fs_close = function()
+    return true
+  end,
+  fs_rename = function()
+    return true
+  end,
+  fs_unlink = function()
+    return true
+  end,
+}
+local short_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = fake_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+local short_session = short_store:open_session("short-write")
+short_session:write({ "abcdef\n" })
+short_session:finish()
+assert(table.concat(short_write_chunks) == "abcdef\n", "short writes must be retried to completion")
+
+local interrupted_chunks = {}
+local interrupted_calls = 0
+local interrupted_fs = vim.tbl_extend("force", fake_fs, {
+  fs_write = function(_, payload)
+    interrupted_calls = interrupted_calls + 1
+    if interrupted_calls == 2 then
+      return nil, "temporary write failure"
+    end
+    local length = math.min(2, #payload)
+    table.insert(interrupted_chunks, string.sub(payload, 1, length))
+    return length
+  end,
+})
+local interrupted_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = interrupted_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+local interrupted_session = interrupted_store:open_session("interrupted-write")
+assert(pcall(function()
+  interrupted_session:write({ "abcdef\n" })
+end) == false)
+interrupted_session:write({ "abcdef\n" })
+interrupted_session:finish()
+assert(table.concat(interrupted_chunks) == "abcdef\n", "write retries must resume after partial progress")
+
+local close_calls = 0
+local close_rename_calls = 0
+local close_error_fs = vim.tbl_extend("force", fake_fs, {
+  fs_close = function()
+    close_calls = close_calls + 1
+    if close_calls == 2 then
+      return nil, "EIO after descriptor release"
+    end
+    return true
+  end,
+  fs_rename = function()
+    close_rename_calls = close_rename_calls + 1
+    return true
+  end,
+})
+local close_error_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = close_error_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+local close_error_session = close_error_store:open_session("close-error")
+close_error_session:write({ "complete\n" })
+assert(pcall(function()
+  close_error_session:finish()
+end) == false)
+close_error_session:finish()
+assert(close_calls == 2, "a possibly stale session descriptor must not be closed twice")
+assert(close_rename_calls == 1, "retry must proceed directly to publication")
+
+local hard_link_calls = 0
+local no_hard_link_fs = vim.tbl_extend("force", fake_fs, {
+  fs_link = function()
+    hard_link_calls = hard_link_calls + 1
+    return nil, "ENOTSUP"
+  end,
+})
+local portable_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = no_hard_link_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+local portable_session = portable_store:open_session("portable-finalize")
+portable_session:write({ "complete\n" })
+portable_session:finish()
+assert(hard_link_calls == 0, "session finalization must not depend on hard-link support")
 
 dofile("plugin/key-insights.lua")
 local commands = vim.api.nvim_get_commands({})
@@ -144,12 +389,13 @@ for _, name in ipairs({
 end
 
 local command_log_directory = vim.fn.tempname()
-local command_log_path = command_log_directory .. "/events.jsonl"
 local api = require("key-insights")
-api.setup({ storage = { path = command_log_path } })
+api.setup({ storage = { directory = command_log_directory } })
 vim.cmd.KeyInsightsStart()
 vim.cmd.KeyInsightsStop()
-local command_events = vim.fn.readfile(command_log_path)
+local command_logs = vim.fn.glob(command_log_directory .. "/*.jsonl", false, true)
+assert(#command_logs == 1)
+local command_events = vim.fn.readfile(command_logs[1])
 assert(#command_events == 2)
 local command_start = vim.json.decode(command_events[1])
 local command_end = vim.json.decode(command_events[2])
