@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/key-insights-cli"]
+resolver = "2"

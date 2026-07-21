@@ -1,0 +1,62 @@
+amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.12.4#/Taskfile.pkl"
+
+local rustSources: Listing<String> = new {
+  "Cargo.toml"
+  "Cargo.lock"
+  "crates/**/*.rs"
+  "crates/**/Cargo.toml"
+}
+
+local luaSources: Listing<String> = new {
+  "lua/**/*.lua"
+  "plugin/**/*.lua"
+  "tests/lua/**/*.lua"
+}
+
+local testRust: Task = new {
+  name = "test:rust"
+  description = "Run Rust unit and integration tests"
+  cmd = "cargo test --workspace"
+  inputs = rustSources
+}
+
+local testLua: Task = new {
+  name = "test:lua"
+  description = "Run headless Neovim collector tests"
+  cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/privacy_spec.lua"
+  inputs = luaSources
+}
+
+local formatCheck: Task = new {
+  name = "format:check"
+  description = "Check Rust formatting"
+  cmd = "cargo fmt --all -- --check"
+  inputs = rustSources
+}
+
+local lintRust: Task = new {
+  name = "lint:rust"
+  description = "Run Clippy with warnings denied"
+  cmd = "cargo clippy --workspace --all-targets -- -D warnings"
+  inputs = rustSources
+}
+
+local test: Task = new {
+  name = "test"
+  description = "Run all tests"
+  deps { testRust; testLua }
+}
+
+local check: Task = new {
+  name = "check"
+  description = "Run formatting, linting, and tests"
+  deps { formatCheck; lintRust; test }
+}
+
+local default: Task = new {
+  name = "default"
+  description = "Run the default project checks"
+  deps { check }
+}
+
+tasks { testRust; testLua; formatCheck; lintRust; test; check; default }
