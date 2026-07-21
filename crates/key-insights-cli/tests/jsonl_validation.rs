@@ -1,6 +1,8 @@
 use std::io::Cursor;
 
-use key_insights::{ValidationErrorKind, validate_jsonl};
+use key_insights::{
+    MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationErrorKind, validate_jsonl,
+};
 
 fn validate(input: &str) -> Result<key_insights::ValidationSummary, key_insights::ValidationError> {
     validate_jsonl(Cursor::new(input))
@@ -150,4 +152,59 @@ fn rejects_blank_lines_and_oversized_events() {
     let error = validate(&oversized).expect_err("event lines have a hard size limit");
     assert_eq!(error.line, 1);
     assert_eq!(error.kind, ValidationErrorKind::LineTooLong);
+}
+
+#[test]
+fn rejects_empty_key_sequence_payloads() {
+    for invalid_keys in ["[]", "[\"\"]"] {
+        let input = format!(
+            concat!(
+                r#"{{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}}"#,
+                "\n",
+                r#"{{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":1,"mode":"normal","keys":{},"duration_ms":0}}"#,
+                "\n",
+            ),
+            invalid_keys
+        );
+        let error = validate(&input).expect_err("empty keys are invalid");
+        assert_eq!(error.line, 2);
+        assert_eq!(error.kind, ValidationErrorKind::EmptyKeySequence);
+    }
+
+    let mapping = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"one","elapsed_ms":1,"mode":"normal","mapping_id":"map-1","typed_keys":[]}"#,
+        "\n",
+    );
+    let error = validate(mapping).expect_err("empty typed_keys are invalid");
+    assert_eq!(error.line, 2);
+    assert_eq!(error.kind, ValidationErrorKind::EmptyKeySequence);
+}
+
+#[test]
+fn bounds_memory_used_for_retained_session_ids() {
+    let long_id = "x".repeat(MAX_SESSION_ID_BYTES + 1);
+    let input = format!(
+        r#"{{"schema_version":1,"event_type":"session_start","session_id":"{long_id}","elapsed_ms":0}}"#
+    );
+    let error = validate(&input).expect_err("session IDs have a length limit");
+    assert_eq!(error.line, 1);
+    assert_eq!(error.kind, ValidationErrorKind::SessionIdTooLong);
+
+    let mut many_sessions = String::new();
+    for index in 0..=MAX_SESSIONS_PER_LOG {
+        many_sessions.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"session-{index}\",\"elapsed_ms\":0}}\n"
+        ));
+        if index < MAX_SESSIONS_PER_LOG {
+            many_sessions.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"session-{index}\",\"elapsed_ms\":1}}\n"
+            ));
+        }
+    }
+
+    let error = validate(&many_sessions).expect_err("retained session IDs have a count limit");
+    assert_eq!(error.line, MAX_SESSIONS_PER_LOG * 2 + 1);
+    assert_eq!(error.kind, ValidationErrorKind::TooManySessions);
 }

@@ -7,6 +7,8 @@ use std::{
 use crate::{Event, SCHEMA_VERSION};
 
 pub const MAX_EVENT_LINE_BYTES: usize = 64 * 1024;
+pub const MAX_SESSION_ID_BYTES: usize = 128;
+pub const MAX_SESSIONS_PER_LOG: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -27,12 +29,15 @@ pub enum ValidationErrorKind {
     MalformedEvent,
     UnsupportedSchema { found: u32 },
     EmptySessionId,
+    SessionIdTooLong,
+    EmptyKeySequence,
     InvalidSessionStartElapsed,
     ExpectedSessionStart,
     SessionAlreadyActive,
     SessionMismatch,
     ElapsedTimeWentBackward,
     ReusedSessionId,
+    TooManySessions,
     UnclosedSession,
 }
 
@@ -58,6 +63,8 @@ impl fmt::Display for ValidationErrorKind {
                 write!(formatter, "unsupported schema version {found}")
             }
             Self::EmptySessionId => formatter.write_str("session ID is empty"),
+            Self::SessionIdTooLong => formatter.write_str("session ID exceeds the size limit"),
+            Self::EmptyKeySequence => formatter.write_str("key sequence is empty"),
             Self::InvalidSessionStartElapsed => {
                 formatter.write_str("session_start elapsed_ms must be zero")
             }
@@ -66,6 +73,7 @@ impl fmt::Display for ValidationErrorKind {
             Self::SessionMismatch => formatter.write_str("session ID does not match"),
             Self::ElapsedTimeWentBackward => formatter.write_str("elapsed time moved backwards"),
             Self::ReusedSessionId => formatter.write_str("session ID was reused"),
+            Self::TooManySessions => formatter.write_str("session count exceeds the limit"),
             Self::UnclosedSession => formatter.write_str("session was not closed"),
         }
     }
@@ -150,6 +158,10 @@ fn validate_event(
     if event.session_id().is_empty() {
         return Err(error(line, ValidationErrorKind::EmptySessionId));
     }
+    if event.session_id().len() > MAX_SESSION_ID_BYTES {
+        return Err(error(line, ValidationErrorKind::SessionIdTooLong));
+    }
+    validate_payload(&event, line)?;
 
     match event {
         Event::SessionStart {
@@ -163,9 +175,13 @@ fn validate_event(
             if elapsed_ms != 0 {
                 return Err(error(line, ValidationErrorKind::InvalidSessionStartElapsed));
             }
-            if !seen_session_ids.insert(session_id.clone()) {
+            if seen_session_ids.contains(&session_id) {
                 return Err(error(line, ValidationErrorKind::ReusedSessionId));
             }
+            if seen_session_ids.len() >= MAX_SESSIONS_PER_LOG {
+                return Err(error(line, ValidationErrorKind::TooManySessions));
+            }
+            seen_session_ids.insert(session_id.clone());
             *active = Some(ActiveSession {
                 id: session_id,
                 last_elapsed_ms: elapsed_ms,
@@ -191,6 +207,20 @@ fn validate_event(
     }
 
     summary.events += 1;
+    Ok(())
+}
+
+fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
+    let keys = match event {
+        Event::KeySequence { keys, .. } => Some(keys),
+        Event::MappingUse { typed_keys, .. } => Some(typed_keys),
+        _ => None,
+    };
+
+    if keys.is_some_and(|values| values.is_empty() || values.iter().any(String::is_empty)) {
+        return Err(error(line, ValidationErrorKind::EmptyKeySequence));
+    }
+
     Ok(())
 }
 
