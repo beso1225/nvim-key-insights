@@ -23,4 +23,9 @@ grep -Fq '"flake.nix"' "$taskfile"
 grep -Fq '"flake.lock"' "$taskfile"
 grep -Fq "...toolchainSources" "$taskfile"
 
+grep -Fq 'pkfire.inputs.nixpkgs.follows = "nixpkgs"' flake.nix || {
+  echo "pkfire must share the project nixpkgs closure" >&2
+  exit 1
+}
+
 echo "CI security contract: ok"
