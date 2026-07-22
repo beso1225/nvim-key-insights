@@ -19,7 +19,7 @@ The default session directory is:
 stdpath("state")/key-insights/sessions/
 ```
 
-Each Neovim session first reserves its opaque ID with an exclusively created `<session_id>.lock`, then writes `<session_id>.jsonl.part` as mode `0600`. A clean stop flushes `session_end`, closes the file, atomically renames it to `<session_id>.jsonl`, and releases the reservation. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave `.lock` and `.jsonl.part` files, which analyzers must ignore.
+Each Neovim session first reserves its opaque ID with an exclusively created `<session_id>.lock`, then writes `<session_id>.jsonl.part` as mode `0600`. A clean stop flushes `session_end`, closes the file, atomically renames it to `<session_id>.jsonl`, releases the reservation, and fsyncs the parent directory before reporting success. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave `.lock` and `.jsonl.part` files, which analyzers must ignore.
 
 A custom directory can be supplied through `setup`:
 

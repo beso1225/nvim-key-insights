@@ -327,12 +327,21 @@ interrupted_session:write({ "abcdef\n" })
 interrupted_session:finish()
 assert(table.concat(interrupted_chunks) == "abcdef\n", "write retries must resume after partial progress")
 
-local close_calls = 0
+local close_next_descriptor = 0
+local close_session_descriptor = nil
+local closed_descriptors = {}
 local close_rename_calls = 0
 local close_error_fs = vim.tbl_extend("force", fake_fs, {
-  fs_close = function()
-    close_calls = close_calls + 1
-    if close_calls == 2 then
+  fs_open = function(path)
+    close_next_descriptor = close_next_descriptor + 1
+    if string.match(path, "%.jsonl%.part$") ~= nil then
+      close_session_descriptor = close_next_descriptor
+    end
+    return close_next_descriptor
+  end,
+  fs_close = function(descriptor)
+    closed_descriptors[descriptor] = (closed_descriptors[descriptor] or 0) + 1
+    if descriptor == close_session_descriptor then
       return nil, "EIO after descriptor release"
     end
     return true
@@ -355,7 +364,7 @@ assert(pcall(function()
   close_error_session:finish()
 end) == false)
 close_error_session:finish()
-assert(close_calls == 2, "a possibly stale session descriptor must not be closed twice")
+assert(closed_descriptors[close_session_descriptor] == 1, "a possibly stale session descriptor must not be closed twice")
 assert(close_rename_calls == 1, "retry must proceed directly to publication")
 
 local hard_link_calls = 0
@@ -376,6 +385,58 @@ local portable_session = portable_store:open_session("portable-finalize")
 portable_session:write({ "complete\n" })
 portable_session:finish()
 assert(hard_link_calls == 0, "session finalization must not depend on hard-link support")
+
+local stat_error_unlinks = {}
+local stat_error_fs = vim.tbl_extend("force", fake_fs, {
+  fs_stat = function()
+    return nil, "EIO"
+  end,
+  fs_unlink = function(path)
+    table.insert(stat_error_unlinks, path)
+    return true
+  end,
+})
+local stat_error_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = stat_error_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+assert(pcall(function()
+  stat_error_store:open_session("stat-error")
+end) == false)
+assert(#stat_error_unlinks == 1, "failed final-path lookup must release its session reservation")
+assert(string.match(stat_error_unlinks[1], "%.lock$") ~= nil)
+
+local next_descriptor = 0
+local directory_descriptor = nil
+local synced_descriptors = {}
+local durable_fs = vim.tbl_extend("force", fake_fs, {
+  fs_open = function(path)
+    next_descriptor = next_descriptor + 1
+    if path == "/virtual/key-insights" then
+      directory_descriptor = next_descriptor
+    end
+    return next_descriptor
+  end,
+  fs_fsync = function(descriptor)
+    synced_descriptors[descriptor] = true
+    return true
+  end,
+})
+local durable_store = storage.new({
+  directory = "/virtual/key-insights",
+  fs = durable_fs,
+  mkdir = function()
+    return 1
+  end,
+})
+local durable_session = durable_store:open_session("durable-publish")
+durable_session:write({ "complete\n" })
+durable_session:finish()
+assert(directory_descriptor ~= nil, "finalization must open the parent directory")
+assert(synced_descriptors[directory_descriptor] == true, "finalization must fsync the parent directory")
 
 dofile("plugin/key-insights.lua")
 local commands = vim.api.nvim_get_commands({})

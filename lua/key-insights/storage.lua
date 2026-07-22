@@ -56,7 +56,12 @@ function Storage:open_session(session_id)
     error(lock_close_error or "failed to reserve collector session ID")
   end
 
-  if path_exists(self._fs, final_path) then
+  local lookup_ok, final_exists = pcall(path_exists, self._fs, final_path)
+  if not lookup_ok then
+    self._fs.fs_unlink(lock_path)
+    error(final_exists, 0)
+  end
+  if final_exists then
     self._fs.fs_unlink(lock_path)
     error("collector session log already exists")
   end
@@ -77,6 +82,8 @@ function Storage:open_session(session_id)
 
   return setmetatable({
     _descriptor = descriptor,
+    _directory = self.directory,
+    _directory_synced = false,
     _final_path = final_path,
     _finished = false,
     _fs = self._fs,
@@ -84,9 +91,19 @@ function Storage:open_session(session_id)
     _offset = 0,
     _partial_path = partial_path,
     _published = false,
+    _unlocked = false,
     _write_consumed = 0,
     _write_payload = nil,
   }, SessionStorage)
+end
+
+function SessionStorage:_sync_directory()
+  local descriptor, open_error = self._fs.fs_open(self._directory, "r", 0)
+  assert(descriptor ~= nil, open_error or "failed to open collector session directory")
+  local sync_ok, sync_error = self._fs.fs_fsync(descriptor)
+  local close_ok, close_error = self._fs.fs_close(descriptor)
+  assert(sync_ok, sync_error or "failed to make collector session publication durable")
+  assert(close_ok, close_error or "failed to close collector session directory")
 end
 
 function SessionStorage:write(lines)
@@ -142,8 +159,16 @@ function SessionStorage:finish()
     self._published = true
   end
 
-  local unlock_ok, unlock_error = self._fs.fs_unlink(self._lock_path)
-  assert(unlock_ok, unlock_error or "failed to release collector session reservation")
+  if not self._unlocked then
+    local unlock_ok, unlock_error = self._fs.fs_unlink(self._lock_path)
+    assert(unlock_ok, unlock_error or "failed to release collector session reservation")
+    self._unlocked = true
+  end
+
+  if not self._directory_synced then
+    self:_sync_directory()
+    self._directory_synced = true
+  end
   self._finished = true
 end
 
