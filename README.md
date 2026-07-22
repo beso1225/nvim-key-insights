@@ -23,6 +23,26 @@ pkf run test
 
 Individual tasks are available through `pkf list`.
 
+## Collector lifecycle
+
+The collector can be loaded with lazy.nvim without starting collection automatically:
+
+```lua
+{
+  "beso1225/nvim-key-insights",
+  opts = {},
+}
+```
+
+The current implementation provides these commands:
+
+- `:KeyInsightsStart` starts a new session or resumes a paused session;
+- `:KeyInsightsPause` detaches the input callback and flushes pending events;
+- `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
+- `:KeyInsightsStatus` displays the current lifecycle state.
+
+Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+
 ## Repository layout
 
 ```text
@@ -34,4 +54,4 @@ docs/                         Public design contracts
 
 ## Status
 
-The current implementation establishes privacy defaults, strict event construction, and a bounded streaming JSONL validator with session-aware validation. Input collection, deterministic reporting, and Codex integration will be implemented incrementally with TDD.
+The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, and the collector lifecycle with durable session boundaries. The installed `vim.on_key` callback currently enforces exclusion boundaries but deliberately does not persist individual inputs; sequence aggregation, deterministic reporting, and Codex integration will be implemented incrementally with TDD.

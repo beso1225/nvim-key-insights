@@ -25,6 +25,8 @@ Every event rejects unknown fields. Key sequences and mapping key lists must be 
 
 The streaming validator accepts up to 4,096 complete sessions in one file, but requires matching session IDs and non-decreasing `elapsed_ms` values within each session. The session limit bounds memory retained for reuse detection. It rejects nested sessions, reused session IDs, events outside a session, and end-of-file with an unclosed session.
 
+The collector stores one session per finalized `.jsonl` file. The validator also accepts multiple complete sessions in one stream so analyzers can concatenate finalized files without weakening session-boundary checks. Files ending in `.jsonl.part` are incomplete collector artifacts and must not be analyzed.
+
 ## Privacy invariants
 
 - Raw per-key logging is disabled unless explicitly opted in.

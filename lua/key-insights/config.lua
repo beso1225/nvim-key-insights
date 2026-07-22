@@ -25,10 +25,17 @@ local DEFAULTS = {
   collection = {
     exclude_special_buffers = true,
   },
+  storage = {
+    directory = nil,
+  },
 }
 
 function M.defaults()
   return vim.deepcopy(DEFAULTS)
+end
+
+function M.resolve(options)
+  return vim.tbl_deep_extend("force", M.defaults(), options or {})
 end
 
 function M.is_excluded_buffer(buffer, options)
