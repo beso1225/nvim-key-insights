@@ -274,6 +274,12 @@ local fake_fs = {
   fs_open = function()
     return 7
   end,
+  fs_scandir = function()
+    return {}
+  end,
+  fs_scandir_next = function()
+    return nil
+  end,
   fs_fchmod = function()
     return true
   end,

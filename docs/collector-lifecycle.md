@@ -27,11 +27,15 @@ A custom directory can be supplied through `setup`:
 require("key-insights").setup({
   storage = {
     directory = vim.fn.expand("~/.local/state/key-insights/sessions"),
+    retention = {
+      max_age_days = 30,
+      max_sessions = 100,
+    },
   },
 })
 ```
 
-The directory is local configuration and is never included in an event.
+The directory and retention policy are local configuration and are never included in an event. See [Storage retention](storage-retention.md) for pruning and concurrency guarantees.
 
 Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. A partially written batch must be retried byte-for-byte before the collector queues later events. If an automatic callback write fails, the collector records the error and ignores later input until pause or stop recovers the pending batch; pausing and starting again resumes collection after a successful recovery. Stop completes any pending batch first, then records its closing transition. Retrying after a transient failure neither changes the in-flight batch nor appends a duplicate `session_end`.
 

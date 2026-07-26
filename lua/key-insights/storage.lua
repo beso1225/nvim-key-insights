@@ -7,6 +7,11 @@ SessionStorage.__index = SessionStorage
 local OWNER_READ_WRITE = 384 -- 0600
 local OWNER_DIRECTORY = 448 -- 0700
 local MAX_SESSION_ID_BYTES = 128
+local DAY_SECONDS = 24 * 60 * 60
+local DEFAULT_RETENTION = {
+  max_age_days = 30,
+  max_sessions = 100,
+}
 
 local function default_directory()
   return vim.fs.joinpath(vim.fn.stdpath("state"), "key-insights", "sessions")
@@ -29,15 +34,107 @@ local function path_exists(fs, path)
   return false
 end
 
+local function is_enoent(error_message)
+  return error_message ~= nil and string.find(tostring(error_message), "ENOENT", 1, true) ~= nil
+end
+
+local function validate_positive_integer(value, name)
+  assert(
+    type(value) == "number" and value == math.floor(value) and value > 0,
+    name .. " must be a positive integer"
+  )
+end
+
 function M.new(options)
   local config = options or {}
   local directory = config.directory or default_directory()
+  local retention = vim.tbl_extend("force", DEFAULT_RETENTION, config.retention or {})
   assert(type(directory) == "string" and directory ~= "", "storage directory must be a non-empty string")
+  validate_positive_integer(retention.max_sessions, "storage.retention.max_sessions")
+  validate_positive_integer(retention.max_age_days, "storage.retention.max_age_days")
   return setmetatable({
     directory = directory,
     _fs = config.fs or vim.uv,
     _mkdir = config.mkdir or vim.fn.mkdir,
+    _now_seconds = config.now_seconds or os.time,
+    _retention = retention,
   }, Storage)
+end
+
+function Storage:_finalized_logs()
+  local request, scan_error = self._fs.fs_scandir(self.directory)
+  assert(request ~= nil, scan_error or "failed to scan collector log directory")
+
+  local logs = {}
+  local locked_sessions = {}
+  while true do
+    local name, entry_type = self._fs.fs_scandir_next(request)
+    if name == nil then
+      break
+    end
+    if entry_type == "file" and string.match(name, "^[%w_-]+%.lock$") ~= nil then
+      locked_sessions[string.sub(name, 1, -6)] = true
+    elseif entry_type == "file" and string.match(name, "^[%w_-]+%.jsonl$") ~= nil then
+      local path = vim.fs.joinpath(self.directory, name)
+      local stat, stat_error = self._fs.fs_stat(path)
+      if stat ~= nil then
+        assert(stat.mtime ~= nil and type(stat.mtime.sec) == "number", "collector log mtime is unavailable")
+        table.insert(logs, {
+          modified_at = stat.mtime.sec,
+          name = name,
+          path = path,
+        })
+      elseif not is_enoent(stat_error) then
+        error(stat_error or "failed to inspect collector log")
+      end
+    end
+  end
+  for _, log in ipairs(logs) do
+    local session_id = string.sub(log.name, 1, -7)
+    log.locked = locked_sessions[session_id] == true
+  end
+  return logs
+end
+
+function Storage:_unlink_log(path)
+  local unlinked, unlink_error = self._fs.fs_unlink(path)
+  if not unlinked and not is_enoent(unlink_error) then
+    error(unlink_error or "failed to prune collector log")
+  end
+end
+
+function Storage:_prune(protected_path)
+  local cutoff = self._now_seconds() - self._retention.max_age_days * DAY_SECONDS
+  local retained = {}
+  for _, log in ipairs(self:_finalized_logs()) do
+    if log.path ~= protected_path and not log.locked and log.modified_at < cutoff then
+      self:_unlink_log(log.path)
+    else
+      table.insert(retained, log)
+    end
+  end
+
+  table.sort(retained, function(left, right)
+    if left.modified_at == right.modified_at then
+      return left.name < right.name
+    end
+    return left.modified_at < right.modified_at
+  end)
+
+  while #retained > self._retention.max_sessions do
+    local delete_index = nil
+    for index, log in ipairs(retained) do
+      if log.path ~= protected_path and not log.locked then
+        delete_index = index
+        break
+      end
+    end
+    if delete_index == nil then
+      break
+    end
+    self:_unlink_log(retained[delete_index].path)
+    table.remove(retained, delete_index)
+  end
 end
 
 function Storage:open_session(session_id)
@@ -91,9 +188,13 @@ function Storage:open_session(session_id)
     _offset = 0,
     _partial_path = partial_path,
     _published = false,
+    _retention_done = false,
     _unlocked = false,
     _write_consumed = 0,
     _write_payload = nil,
+    _prune = function()
+      self:_prune(final_path)
+    end,
   }, SessionStorage)
 end
 
@@ -157,6 +258,11 @@ function SessionStorage:finish()
     local rename_ok, rename_error = self._fs.fs_rename(self._partial_path, self._final_path)
     assert(rename_ok, rename_error or "failed to publish collector session log")
     self._published = true
+  end
+
+  if not self._retention_done then
+    self._prune()
+    self._retention_done = true
   end
 
   if not self._unlocked then
