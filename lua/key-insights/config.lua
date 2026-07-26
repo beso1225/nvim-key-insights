@@ -58,12 +58,18 @@ function M.resolve(options)
   )
   local max_sessions = resolved.storage.retention.max_sessions
   assert(
-    type(max_sessions) == "number" and max_sessions == math.floor(max_sessions) and max_sessions > 0,
+    type(max_sessions) == "number"
+      and max_sessions < math.huge
+      and max_sessions == math.floor(max_sessions)
+      and max_sessions > 0,
     "storage.retention.max_sessions must be a positive integer"
   )
   local max_age_days = resolved.storage.retention.max_age_days
   assert(
-    type(max_age_days) == "number" and max_age_days == math.floor(max_age_days) and max_age_days > 0,
+    type(max_age_days) == "number"
+      and max_age_days < math.huge
+      and max_age_days == math.floor(max_age_days)
+      and max_age_days > 0,
     "storage.retention.max_age_days must be a positive integer"
   )
   return resolved

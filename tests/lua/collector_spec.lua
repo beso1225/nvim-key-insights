@@ -244,6 +244,12 @@ local storage = require("key-insights.storage")
 local temporary_directory = vim.fn.tempname()
 local store = storage.new({ directory = temporary_directory })
 local first_session = store:open_session("storage-one")
+local first_locks = vim.fn.glob(temporary_directory .. "/*.lock", false, true)
+assert(#first_locks == 1)
+assert(vim.startswith(vim.fs.basename(first_locks[1]), "nvim-key-insights-"))
+local first_lock_metadata = vim.json.decode(table.concat(vim.fn.readfile(first_locks[1]), "\n"))
+assert(first_lock_metadata.version == 1)
+assert(first_lock_metadata.pid == vim.fn.getpid())
 first_session:write({ schema.encode(schema.session_start("storage-one")) })
 local second_session = store:open_session("storage-two")
 second_session:write({ schema.encode(schema.session_start("storage-two")) })
@@ -254,6 +260,7 @@ local complete_logs = vim.fn.glob(temporary_directory .. "/*.jsonl", false, true
 local incomplete_logs = vim.fn.glob(temporary_directory .. "/*.jsonl.part", false, true)
 assert(#complete_logs == 1, "only finalized sessions must be analyzer inputs")
 assert(#incomplete_logs == 1, "crashed sessions must remain quarantined")
+assert(vim.startswith(vim.fs.basename(complete_logs[1]), "nvim-key-insights-"))
 assert(vim.deep_equal(vim.fn.readfile(complete_logs[1]), {
   vim.trim(schema.encode(schema.session_start("storage-two"))),
   vim.trim(schema.encode(schema.session_end("storage-two", 1))),
@@ -309,14 +316,19 @@ local short_store = storage.new({
   end,
 })
 local short_session = short_store:open_session("short-write")
+short_write_chunks = {}
 short_session:write({ "abcdef\n" })
 short_session:finish()
 assert(table.concat(short_write_chunks) == "abcdef\n", "short writes must be retried to completion")
 
 local interrupted_chunks = {}
 local interrupted_calls = 0
+local inject_interrupted_write = false
 local interrupted_fs = vim.tbl_extend("force", fake_fs, {
   fs_write = function(_, payload)
+    if not inject_interrupted_write then
+      return #payload
+    end
     interrupted_calls = interrupted_calls + 1
     if interrupted_calls == 2 then
       return nil, "temporary write failure"
@@ -334,6 +346,7 @@ local interrupted_store = storage.new({
   end,
 })
 local interrupted_session = interrupted_store:open_session("interrupted-write")
+inject_interrupted_write = true
 assert(pcall(function()
   interrupted_session:write({ "abcdef\n" })
 end) == false)

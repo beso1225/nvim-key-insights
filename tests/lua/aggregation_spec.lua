@@ -268,7 +268,8 @@ retry.callback("mapped-second-boundary-secret", "m")
 retry.now_ms = 2030
 assert(retry_collector:stop())
 
-local retry_lines = vim.fn.readfile(vim.fs.joinpath(retry_directory, "aggregation-retry.jsonl"))
+local retry_lines =
+  vim.fn.readfile(vim.fs.joinpath(retry_directory, "nvim-key-insights-aggregation-retry.jsonl"))
 local retry_events = vim.tbl_map(vim.json.decode, retry_lines)
 local retry_sequences = events_of_type(retry_events, "key_sequence")
 assert(#retry_sequences == 1, "a retried aggregation event must be persisted exactly once")

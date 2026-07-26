@@ -8,6 +8,10 @@ local OWNER_READ_WRITE = 384 -- 0600
 local OWNER_DIRECTORY = 448 -- 0700
 local MAX_SESSION_ID_BYTES = 128
 local DAY_SECONDS = 24 * 60 * 60
+local FILE_PREFIX = "nvim-key-insights-"
+local FILE_PREFIX_PATTERN = "nvim%-key%-insights%-"
+local LOCK_METADATA_VERSION = 1
+local MAX_LOCK_METADATA_BYTES = 1024
 local DEFAULT_RETENTION = {
   max_age_days = 30,
   max_sessions = 100,
@@ -40,9 +44,34 @@ end
 
 local function validate_positive_integer(value, name)
   assert(
-    type(value) == "number" and value == math.floor(value) and value > 0,
+    type(value) == "number" and value < math.huge and value == math.floor(value) and value > 0,
     name .. " must be a positive integer"
   )
+end
+
+local function default_is_process_alive(pid)
+  local result, error_message = vim.uv.kill(pid, 0)
+  if result == 0 then
+    return true
+  end
+  return not is_enoent(error_message) and string.find(tostring(error_message), "ESRCH", 1, true) == nil
+end
+
+local function write_all(fs, descriptor, payload)
+  local offset = 0
+  while offset < #payload do
+    local remaining = string.sub(payload, offset + 1)
+    local bytes_written, write_error = fs.fs_write(descriptor, remaining, offset)
+    assert(
+      bytes_written ~= nil and bytes_written > 0 and bytes_written <= #remaining,
+      write_error or "failed to write collector lock metadata"
+    )
+    offset = offset + bytes_written
+  end
+end
+
+local function storage_name(session_id, suffix)
+  return FILE_PREFIX .. session_id .. suffix
 end
 
 function M.new(options)
@@ -52,13 +81,70 @@ function M.new(options)
   assert(type(directory) == "string" and directory ~= "", "storage directory must be a non-empty string")
   validate_positive_integer(retention.max_sessions, "storage.retention.max_sessions")
   validate_positive_integer(retention.max_age_days, "storage.retention.max_age_days")
+  local process_id = config.process_id or vim.fn.getpid()
+  validate_positive_integer(process_id, "collector process ID")
   return setmetatable({
     directory = directory,
     _fs = config.fs or vim.uv,
+    _is_process_alive = config.is_process_alive or default_is_process_alive,
     _mkdir = config.mkdir or vim.fn.mkdir,
     _now_seconds = config.now_seconds or os.time,
+    _process_id = process_id,
     _retention = retention,
   }, Storage)
+end
+
+function Storage:_entry_type(name, entry_type)
+  if entry_type ~= nil then
+    return entry_type
+  end
+  local path = vim.fs.joinpath(self.directory, name)
+  local stat, stat_error = self._fs.fs_lstat(path)
+  if stat ~= nil then
+    return stat.type
+  end
+  if is_enoent(stat_error) then
+    return nil
+  end
+  error(stat_error or "failed to inspect collector directory entry")
+end
+
+function Storage:_lock_owner_alive(path)
+  local stat, stat_error = self._fs.fs_lstat(path)
+  if stat == nil then
+    if is_enoent(stat_error) then
+      return false
+    end
+    error(stat_error or "failed to inspect collector lock")
+  end
+  if stat.type ~= "file" or stat.size <= 0 or stat.size > MAX_LOCK_METADATA_BYTES then
+    return false
+  end
+
+  local descriptor, open_error = self._fs.fs_open(path, "r", 0)
+  if descriptor == nil then
+    if is_enoent(open_error) then
+      return false
+    end
+    error(open_error or "failed to open collector lock")
+  end
+  local payload, read_error = self._fs.fs_read(descriptor, stat.size, 0)
+  local close_ok, close_error = self._fs.fs_close(descriptor)
+  assert(close_ok, close_error or "failed to close collector lock")
+  assert(payload ~= nil, read_error or "failed to read collector lock")
+
+  local decoded_ok, metadata = pcall(vim.json.decode, payload)
+  if not decoded_ok
+    or type(metadata) ~= "table"
+    or metadata.version ~= LOCK_METADATA_VERSION
+    or type(metadata.pid) ~= "number"
+    or metadata.pid >= math.huge
+    or metadata.pid ~= math.floor(metadata.pid)
+    or metadata.pid <= 0
+  then
+    return false
+  end
+  return self._is_process_alive(metadata.pid) == true
 end
 
 function Storage:_finalized_logs()
@@ -66,15 +152,22 @@ function Storage:_finalized_logs()
   assert(request ~= nil, scan_error or "failed to scan collector log directory")
 
   local logs = {}
-  local locked_sessions = {}
+  local lock_paths = {}
   while true do
     local name, entry_type = self._fs.fs_scandir_next(request)
     if name == nil then
       break
     end
-    if entry_type == "file" and string.match(name, "^[%w_-]+%.lock$") ~= nil then
-      locked_sessions[string.sub(name, 1, -6)] = true
-    elseif entry_type == "file" and string.match(name, "^[%w_-]+%.jsonl$") ~= nil then
+    entry_type = self:_entry_type(name, entry_type)
+    local lock_session_id = entry_type == "file"
+        and string.match(name, "^" .. FILE_PREFIX_PATTERN .. "([%w_-]+)%.lock$")
+      or nil
+    local log_session_id = entry_type == "file"
+        and string.match(name, "^" .. FILE_PREFIX_PATTERN .. "([%w_-]+)%.jsonl$")
+      or nil
+    if lock_session_id ~= nil then
+      lock_paths[lock_session_id] = vim.fs.joinpath(self.directory, name)
+    elseif log_session_id ~= nil then
       local path = vim.fs.joinpath(self.directory, name)
       local stat, stat_error = self._fs.fs_stat(path)
       if stat ~= nil then
@@ -83,6 +176,7 @@ function Storage:_finalized_logs()
           modified_at = stat.mtime.sec,
           name = name,
           path = path,
+          session_id = log_session_id,
         })
       elseif not is_enoent(stat_error) then
         error(stat_error or "failed to inspect collector log")
@@ -90,8 +184,8 @@ function Storage:_finalized_logs()
     end
   end
   for _, log in ipairs(logs) do
-    local session_id = string.sub(log.name, 1, -7)
-    log.locked = locked_sessions[session_id] == true
+    local lock_path = lock_paths[log.session_id]
+    log.locked = lock_path ~= nil and self:_lock_owner_alive(lock_path)
   end
   return logs
 end
@@ -142,15 +236,25 @@ function Storage:open_session(session_id)
   local directory_created = self._mkdir(self.directory, "p", OWNER_DIRECTORY)
   assert(directory_created >= 0, "failed to create collector log directory")
 
-  local partial_path = vim.fs.joinpath(self.directory, session_id .. ".jsonl.part")
-  local final_path = vim.fs.joinpath(self.directory, session_id .. ".jsonl")
-  local lock_path = vim.fs.joinpath(self.directory, session_id .. ".lock")
+  local partial_path = vim.fs.joinpath(self.directory, storage_name(session_id, ".jsonl.part"))
+  local final_path = vim.fs.joinpath(self.directory, storage_name(session_id, ".jsonl"))
+  local lock_path = vim.fs.joinpath(self.directory, storage_name(session_id, ".lock"))
   local lock_descriptor, lock_error = self._fs.fs_open(lock_path, "wx", OWNER_READ_WRITE)
   assert(lock_descriptor ~= nil, lock_error or "collector session ID is already reserved")
+  local lock_payload = vim.json.encode({
+    pid = self._process_id,
+    version = LOCK_METADATA_VERSION,
+  }) .. "\n"
+  local lock_write_ok, lock_write_error = pcall(write_all, self._fs, lock_descriptor, lock_payload)
+  if lock_write_ok then
+    local sync_ok, sync_error = self._fs.fs_fsync(lock_descriptor)
+    lock_write_ok = sync_ok == true or sync_ok == 0
+    lock_write_error = sync_error or "failed to flush collector lock metadata"
+  end
   local lock_close_ok, lock_close_error = self._fs.fs_close(lock_descriptor)
-  if not lock_close_ok then
+  if not lock_write_ok or not lock_close_ok then
     self._fs.fs_unlink(lock_path)
-    error(lock_close_error or "failed to reserve collector session ID")
+    error(lock_write_error or lock_close_error or "failed to reserve collector session ID")
   end
 
   local lookup_ok, final_exists = pcall(path_exists, self._fs, final_path)

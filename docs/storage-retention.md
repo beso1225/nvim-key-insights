@@ -21,14 +21,14 @@ Both values must be positive integers. A log is age-expired only when its modifi
 
 The collector:
 
-1. scans regular files whose names match the opaque session-log format;
+1. scans regular files in the `nvim-key-insights-<session_id>.jsonl` namespace;
 2. removes age-expired finalized logs;
 3. orders the remaining logs by modification time and then filename;
 4. removes the oldest entries until at most `max_sessions` remain.
 
-The session being finalized is always protected. A finalized log with a corresponding `.lock` is also protected so concurrent Neovim processes cannot delete one another's in-progress publications. This can temporarily leave more than `max_sessions` logs; a later successful finalization converges the directory to the configured bound.
+The session being finalized is always protected. A finalized log whose versioned lock identifies a live owner process is also protected so concurrent Neovim processes cannot delete one another's in-progress publications. This can temporarily exceed `max_sessions`; after the owner exits, a later successful finalization converges to the configured bound. Stale, empty, or malformed locks do not exempt a finalized log from retention. A reused process ID can conservatively delay pruning until that process exits, but it cannot cause an unrelated file to be deleted.
 
-Retention never removes `.jsonl.part`, `.lock`, symlinks, or unrelated files. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
+Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
 
 ## Failure behavior
 

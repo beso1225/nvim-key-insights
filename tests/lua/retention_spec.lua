@@ -4,6 +4,19 @@ local storage = require("key-insights.storage")
 
 local DAY_SECONDS = 24 * 60 * 60
 local NOW_SECONDS = 2000000000
+local FILE_PREFIX = "nvim-key-insights-"
+
+local function log_name(session_id)
+  return FILE_PREFIX .. session_id .. ".jsonl"
+end
+
+local function partial_name(session_id)
+  return FILE_PREFIX .. session_id .. ".jsonl.part"
+end
+
+local function lock_name(session_id)
+  return FILE_PREFIX .. session_id .. ".lock"
+end
 
 local function write_at(path, contents, modified_at)
   vim.fn.writefile({ contents }, path)
@@ -33,8 +46,10 @@ assert(defaults.storage.retention.max_age_days == 30)
 for _, invalid in ipairs({
   { max_sessions = 0 },
   { max_sessions = 1.5 },
+  { max_sessions = math.huge },
   { max_age_days = 0 },
   { max_age_days = 1.5 },
+  { max_age_days = math.huge },
 }) do
   assert(pcall(function()
     config.resolve({ storage = { retention = invalid } })
@@ -43,14 +58,15 @@ end
 
 local directory = vim.fn.tempname()
 vim.fn.mkdir(directory, "p", 448)
-write_at(vim.fs.joinpath(directory, "expired.jsonl"), "expired", NOW_SECONDS - 31 * DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "count-old.jsonl"), "count-old", NOW_SECONDS - 10 * DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "recent-a.jsonl"), "recent-a", NOW_SECONDS - 2 * DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "recent-b.jsonl"), "recent-b", NOW_SECONDS - DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "boundary.jsonl"), "boundary", NOW_SECONDS - 30 * DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "crashed.jsonl.part"), "partial", NOW_SECONDS - 90 * DAY_SECONDS)
-write_at(vim.fs.joinpath(directory, "crashed.lock"), "lock", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, log_name("expired")), "expired", NOW_SECONDS - 31 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, log_name("count-old")), "count-old", NOW_SECONDS - 10 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, log_name("recent-a")), "recent-a", NOW_SECONDS - 2 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, log_name("recent-b")), "recent-b", NOW_SECONDS - DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, log_name("boundary")), "boundary", NOW_SECONDS - 30 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, partial_name("crashed")), "partial", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, lock_name("crashed")), "lock", NOW_SECONDS - 90 * DAY_SECONDS)
 write_at(vim.fs.joinpath(directory, "notes.jsonl.backup"), "unrelated", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(vim.fs.joinpath(directory, "report.jsonl"), "unrelated", NOW_SECONDS - 90 * DAY_SECONDS)
 
 local store = storage.new({
   directory = directory,
@@ -66,19 +82,20 @@ finalize(store, "current")
 
 local retained_names = basenames(directory .. "/*.jsonl")
 assert(vim.deep_equal(retained_names, {
-  "count-old.jsonl",
-  "current.jsonl",
-  "recent-a.jsonl",
-  "recent-b.jsonl",
+  log_name("count-old"),
+  log_name("current"),
+  log_name("recent-a"),
+  log_name("recent-b"),
+  "report.jsonl",
 }), "retention must remove expired logs before pruning the oldest excess sessions: " .. vim.inspect(retained_names))
-for _, protected_name in ipairs({ "crashed.jsonl.part", "crashed.lock", "notes.jsonl.backup" }) do
+for _, protected_name in ipairs({ partial_name("crashed"), lock_name("crashed"), "notes.jsonl.backup", "report.jsonl" }) do
   assert(vim.uv.fs_stat(vim.fs.joinpath(directory, protected_name)) ~= nil, protected_name .. " must not be pruned")
 end
 vim.fn.delete(directory, "rf")
 
 local boundary_directory = vim.fn.tempname()
 vim.fn.mkdir(boundary_directory, "p", 448)
-write_at(vim.fs.joinpath(boundary_directory, "boundary.jsonl"), "boundary", NOW_SECONDS - 30 * DAY_SECONDS)
+write_at(vim.fs.joinpath(boundary_directory, log_name("boundary")), "boundary", NOW_SECONDS - 30 * DAY_SECONDS)
 local boundary_store = storage.new({
   directory = boundary_directory,
   now_seconds = function()
@@ -91,17 +108,33 @@ local boundary_store = storage.new({
 })
 finalize(boundary_store, "current")
 assert(vim.deep_equal(basenames(boundary_directory .. "/*.jsonl"), {
-  "boundary.jsonl",
-  "current.jsonl",
+  log_name("boundary"),
+  log_name("current"),
 }), "a log exactly at the age boundary must be retained")
 vim.fn.delete(boundary_directory, "rf")
 
 local locked_directory = vim.fn.tempname()
 vim.fn.mkdir(locked_directory, "p", 448)
-write_at(vim.fs.joinpath(locked_directory, "locked.jsonl"), "locked", NOW_SECONDS - 90 * DAY_SECONDS)
-write_at(vim.fs.joinpath(locked_directory, "locked.lock"), "lock", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(vim.fs.joinpath(locked_directory, log_name("active")), "active", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(
+  vim.fs.joinpath(locked_directory, lock_name("active")),
+  vim.json.encode({ pid = 123, version = 1 }),
+  NOW_SECONDS - 90 * DAY_SECONDS
+)
+write_at(vim.fs.joinpath(locked_directory, log_name("stale")), "stale", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(
+  vim.fs.joinpath(locked_directory, lock_name("stale")),
+  vim.json.encode({ pid = 456, version = 1 }),
+  NOW_SECONDS - 90 * DAY_SECONDS
+)
+write_at(vim.fs.joinpath(locked_directory, log_name("malformed")), "malformed", NOW_SECONDS - 90 * DAY_SECONDS)
+write_at(vim.fs.joinpath(locked_directory, lock_name("malformed")), "not-json", NOW_SECONDS - 90 * DAY_SECONDS)
+local active_process_alive = true
 local locked_store = storage.new({
   directory = locked_directory,
+  is_process_alive = function(pid)
+    return active_process_alive and pid == 123
+  end,
   now_seconds = function()
     return NOW_SECONDS
   end,
@@ -112,18 +145,43 @@ local locked_store = storage.new({
 })
 finalize(locked_store, "current")
 assert(vim.deep_equal(basenames(locked_directory .. "/*.jsonl"), {
-  "current.jsonl",
-  "locked.jsonl",
+  log_name("active"),
+  log_name("current"),
 }), "a finalized log with an active lock must remain protected")
-vim.uv.fs_unlink(vim.fs.joinpath(locked_directory, "locked.lock"))
+active_process_alive = false
 finalize(locked_store, "later")
-assert(vim.deep_equal(basenames(locked_directory .. "/*.jsonl"), { "later.jsonl" }))
+assert(vim.deep_equal(basenames(locked_directory .. "/*.jsonl"), { log_name("later") }))
 vim.fn.delete(locked_directory, "rf")
+
+local unknown_type_directory = vim.fn.tempname()
+vim.fn.mkdir(unknown_type_directory, "p", 448)
+write_at(vim.fs.joinpath(unknown_type_directory, log_name("old")), "old", NOW_SECONDS - 90 * DAY_SECONDS)
+local unknown_type_fs = setmetatable({}, { __index = vim.uv })
+unknown_type_fs.fs_scandir_next = function(request)
+  local name = vim.uv.fs_scandir_next(request)
+  return name, nil
+end
+local unknown_type_store = storage.new({
+  directory = unknown_type_directory,
+  fs = unknown_type_fs,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 1,
+  },
+})
+finalize(unknown_type_store, "current")
+assert(vim.deep_equal(basenames(unknown_type_directory .. "/*.jsonl"), {
+  log_name("current"),
+}), "unknown dirent types must fall back to lstat")
+vim.fn.delete(unknown_type_directory, "rf")
 
 local tie_directory = vim.fn.tempname()
 vim.fn.mkdir(tie_directory, "p", 448)
-write_at(vim.fs.joinpath(tie_directory, "alpha.jsonl"), "alpha", NOW_SECONDS - DAY_SECONDS)
-write_at(vim.fs.joinpath(tie_directory, "bravo.jsonl"), "bravo", NOW_SECONDS - DAY_SECONDS)
+write_at(vim.fs.joinpath(tie_directory, log_name("alpha")), "alpha", NOW_SECONDS - DAY_SECONDS)
+write_at(vim.fs.joinpath(tie_directory, log_name("bravo")), "bravo", NOW_SECONDS - DAY_SECONDS)
 local tie_store = storage.new({
   directory = tie_directory,
   now_seconds = function()
@@ -136,14 +194,14 @@ local tie_store = storage.new({
 })
 finalize(tie_store, "current")
 assert(vim.deep_equal(basenames(tie_directory .. "/*.jsonl"), {
-  "bravo.jsonl",
-  "current.jsonl",
+  log_name("bravo"),
+  log_name("current"),
 }), "filename must deterministically break equal-mtime retention ties")
 vim.fn.delete(tie_directory, "rf")
 
 local retry_directory = vim.fn.tempname()
 vim.fn.mkdir(retry_directory, "p", 448)
-local retry_old_path = vim.fs.joinpath(retry_directory, "old.jsonl")
+local retry_old_path = vim.fs.joinpath(retry_directory, log_name("old"))
 write_at(retry_old_path, "old", NOW_SECONDS - DAY_SECONDS)
 local fail_prune_once = true
 local retry_fs = setmetatable({}, { __index = vim.uv })
@@ -171,11 +229,11 @@ retry_session:write({
   schema.encode(schema.session_end("current", 1)),
 })
 assert(not pcall(retry_session.finish, retry_session), "retention failure must be reported")
-assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, "current.jsonl")) ~= nil)
-assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, "current.lock")) ~= nil)
+assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, log_name("current"))) ~= nil)
+assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) ~= nil)
 retry_session:finish()
-assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { "current.jsonl" }))
-assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, "current.lock")) == nil)
+assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { log_name("current") }))
+assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) == nil)
 vim.fn.delete(retry_directory, "rf")
 
 print("Lua retention contract: ok")
