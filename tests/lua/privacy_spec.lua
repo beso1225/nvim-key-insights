@@ -10,6 +10,8 @@ assert(defaults.privacy.capture_search_text == false, "search text must not be c
 assert(defaults.privacy.store_file_paths == false, "file paths must not be stored")
 assert(defaults.collection.max_sequence_keys == 64)
 assert(defaults.collection.sequence_timeout_ms == 1000)
+assert(defaults.storage.retention.max_age_days == 30)
+assert(defaults.storage.retention.max_sessions == 100)
 assert(pcall(config.resolve, { collection = { max_sequence_keys = 0 } }) == false)
 assert(pcall(config.resolve, { collection = { sequence_timeout_ms = -1 } }) == false)
 

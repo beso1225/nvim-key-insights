@@ -19,7 +19,7 @@ The default session directory is:
 stdpath("state")/key-insights/sessions/
 ```
 
-Each Neovim session first reserves its opaque ID with an exclusively created `<session_id>.lock`, then writes `<session_id>.jsonl.part` as mode `0600`. A clean stop flushes `session_end`, closes the file, atomically renames it to `<session_id>.jsonl`, releases the reservation, and fsyncs the parent directory before reporting success. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave `.lock` and `.jsonl.part` files, which analyzers must ignore.
+Each Neovim session first reserves its opaque ID with an exclusively created `nvim-key-insights-<session_id>.lock`, then writes `nvim-key-insights-<session_id>.jsonl.part` as mode `0600`. The lock contains versioned owner-process metadata and is flushed before collection starts. A clean stop flushes `session_end`, closes the file, atomically renames it to `nvim-key-insights-<session_id>.jsonl`, releases the reservation, and fsyncs the parent directory before reporting success. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave namespaced `.lock` and `.jsonl.part` files, which analyzers must ignore.
 
 A custom directory can be supplied through `setup`:
 
@@ -27,11 +27,15 @@ A custom directory can be supplied through `setup`:
 require("key-insights").setup({
   storage = {
     directory = vim.fn.expand("~/.local/state/key-insights/sessions"),
+    retention = {
+      max_age_days = 30,
+      max_sessions = 100,
+    },
   },
 })
 ```
 
-The directory is local configuration and is never included in an event.
+The directory and retention policy are local configuration and are never included in an event. See [Storage retention](storage-retention.md) for pruning and concurrency guarantees.
 
 Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. A partially written batch must be retried byte-for-byte before the collector queues later events. If an automatic callback write fails, the collector records the error and ignores later input until pause or stop recovers the pending batch; pausing and starting again resumes collection after a successful recovery. Stop completes any pending batch first, then records its closing transition. Retrying after a transient failure neither changes the in-flight batch nor appends a duplicate `session_end`.
 

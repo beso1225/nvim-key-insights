@@ -41,7 +41,7 @@ The current implementation provides these commands:
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
 - `:KeyInsightsStatus` displays the current lifecycle state.
 
-Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Finalized logs are retained for at most 30 days and the newest 100 sessions by default. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
 
 ## Repository layout
 
@@ -54,4 +54,4 @@ docs/                         Public design contracts
 
 ## Status
 
-The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, and privacy-safe input aggregation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, deterministic reporting, and Codex integration will be implemented incrementally with TDD.
+The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, bounded log retention, and privacy-safe input aggregation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, deterministic reporting, and Codex integration will be implemented incrementally with TDD.

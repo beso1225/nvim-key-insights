@@ -1,0 +1,35 @@
+# Storage retention
+
+The collector bounds finalized local logs by age and session count. Retention runs only after a session has been durably written and atomically published as `.jsonl`.
+
+## Defaults
+
+```lua
+require("key-insights").setup({
+  storage = {
+    retention = {
+      max_age_days = 30,
+      max_sessions = 100,
+    },
+  },
+})
+```
+
+Both values must be positive integers. A log is age-expired only when its modification time is strictly older than `max_age_days`; a log exactly on the boundary remains eligible for count-based retention.
+
+## Deterministic pruning
+
+The collector:
+
+1. scans regular files in the `nvim-key-insights-<session_id>.jsonl` namespace;
+2. removes age-expired finalized logs;
+3. orders the remaining logs by modification time and then filename;
+4. removes the oldest entries until at most `max_sessions` remain.
+
+The session being finalized is always protected. A finalized log whose versioned lock identifies a live owner process is also protected so concurrent Neovim processes cannot delete one another's in-progress publications. This can temporarily exceed `max_sessions`; after the owner exits, a later successful finalization converges to the configured bound. Stale, empty, or malformed locks do not exempt a finalized log from retention. A reused process ID can conservatively delay pruning until that process exits, but it cannot cause an unrelated file to be deleted.
+
+Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. In the collector-owned default directory only, it also recognizes the previous 32-character lowercase hexadecimal filename format so upgrades do not exempt historical logs from the privacy boundary. Legacy-shaped files in a custom directory remain untouched. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
+
+## Failure behavior
+
+Pruning failures are reported as finalization failures. The completed `.jsonl` and its reservation remain intact, and retrying stop resumes pruning without rewriting or republishing the session. All successful publication, pruning, and reservation changes are covered by the final parent-directory sync.
