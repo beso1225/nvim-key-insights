@@ -49,27 +49,35 @@ assert(instance:status().state == "recording")
 assert(instance:status().session_id == "session-one")
 assert(active_callback ~= nil, "start must register vim.on_key collection")
 assert(#written == 1 and written[1].event_type == "session_start")
-assert(active_callback("mapped", "typed") == nil, "collector callback must never consume input")
-assert(#written == 1, "lifecycle callback must not persist raw input")
+assert(active_callback("mapped", "t") == nil, "collector callback must never consume input")
+assert(#written == 1, "input aggregation must remain buffered until a sequence boundary")
 
 now_ms = 10
 assert(instance:pause() == true)
 assert(instance:status().state == "paused")
 assert(active_callback == nil, "pause must detach collection")
 assert(unregister_count == 1)
+assert(written[2].event_type == "key_sequence")
+assert(vim.deep_equal(written[2].keys, { "t" }))
 
 now_ms = 25
 assert(instance:start() == true, "start must resume a paused session")
 assert(instance:status().session_id == "session-one", "resume must preserve the session boundary")
-assert(#written == 1, "resume must not write a second session_start")
+local session_starts = 0
+for _, event in ipairs(written) do
+  if event.event_type == "session_start" then
+    session_starts = session_starts + 1
+  end
+end
+assert(session_starts == 1, "resume must not write a second session_start")
 
 now_ms = 40
 assert(instance:stop() == true)
 assert(instance:status().state == "stopped")
 assert(active_callback == nil)
 assert(unregister_count == 2)
-assert(#written == 2 and written[2].event_type == "session_end")
-assert(written[2].elapsed_ms == 40)
+assert(#written == 3 and written[3].event_type == "session_end")
+assert(written[3].elapsed_ms == 40)
 assert(instance:stop() == false, "stop must be idempotent")
 
 local pending_writes = 0

@@ -37,6 +37,6 @@ Start is failure-atomic: storage or callback-registration failures remove the in
 
 ## Current collection boundary
 
-The callback always returns `nil`, so it cannot consume or replace editor input. It checks the current buffer before any future input aggregation. Special buffers and sensitive filenames or filetypes are force-excluded.
+The callback always returns `nil`, so it cannot consume or replace editor input. It checks the current buffer before aggregation. Special buffers and sensitive filenames or filetypes are force-excluded.
 
-This lifecycle slice records only `session_start` and `session_end`. It does not yet persist Normal-mode sequences, Insert-mode text-run metrics, or mapping usage. Those event producers will be added behind the same exclusion boundary.
+Normal, Visual, and Operator-pending typed keys are grouped into sequences. The mapping-applied callback value is never stored, preventing mapping right-hand sides from entering a sequence. Insert, Replace, and Select input is reduced to key count and duration; Command and Search input content is discarded. See [Input aggregation](input-aggregation.md) for sequence boundaries and configuration.

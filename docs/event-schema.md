@@ -16,8 +16,8 @@ The default event stream does not contain an absolute timestamp or file path. Pr
 ## Initial event types
 
 - `session_start` and `session_end` define hard aggregation boundaries. `session_start` may include an anonymized `project_id`.
-- `key_sequence` represents a completed Normal, Visual, or Operator-pending sequence with canonical `keys` and `duration_ms`.
-- `text_run` records Insert-mode `key_count` and `duration_ms`, never its text.
+- `key_sequence` represents a completed Normal, Visual, or Operator-pending sequence with canonical pre-mapping typed `keys` and `duration_ms`.
+- `text_run` records Insert-, Replace-, or Select-mode `key_count` and `duration_ms`, never its text.
 - `mode_transition` records `from` and `to` modes.
 - `mapping_use` records a collector-generated opaque `mapping_id` and `typed_keys`. It does not record the mapping right-hand side because that value may contain commands, paths, or inserted text.
 

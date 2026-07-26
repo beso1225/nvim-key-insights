@@ -24,6 +24,8 @@ local DEFAULTS = {
   },
   collection = {
     exclude_special_buffers = true,
+    max_sequence_keys = 64,
+    sequence_timeout_ms = 1000,
   },
   storage = {
     directory = nil,
@@ -35,7 +37,22 @@ function M.defaults()
 end
 
 function M.resolve(options)
-  return vim.tbl_deep_extend("force", M.defaults(), options or {})
+  local resolved = vim.tbl_deep_extend("force", M.defaults(), options or {})
+  local max_sequence_keys = resolved.collection.max_sequence_keys
+  assert(
+    type(max_sequence_keys) == "number"
+      and max_sequence_keys == math.floor(max_sequence_keys)
+      and max_sequence_keys > 0,
+    "collection.max_sequence_keys must be a positive integer"
+  )
+  local sequence_timeout_ms = resolved.collection.sequence_timeout_ms
+  assert(
+    type(sequence_timeout_ms) == "number"
+      and sequence_timeout_ms == math.floor(sequence_timeout_ms)
+      and sequence_timeout_ms >= 0,
+    "collection.sequence_timeout_ms must be a non-negative integer"
+  )
+  return resolved
 end
 
 function M.is_excluded_buffer(buffer, options)

@@ -8,6 +8,10 @@ assert(defaults.privacy.capture_insert_text == false, "insert text must not be c
 assert(defaults.privacy.capture_command_text == false, "command text must not be captured")
 assert(defaults.privacy.capture_search_text == false, "search text must not be captured")
 assert(defaults.privacy.store_file_paths == false, "file paths must not be stored")
+assert(defaults.collection.max_sequence_keys == 64)
+assert(defaults.collection.sequence_timeout_ms == 1000)
+assert(pcall(config.resolve, { collection = { max_sequence_keys = 0 } }) == false)
+assert(pcall(config.resolve, { collection = { sequence_timeout_ms = -1 } }) == false)
 
 assert(config.is_excluded_buffer({ buftype = "terminal", filetype = "" }, defaults))
 assert(config.is_excluded_buffer({ buftype = "prompt", filetype = "" }, defaults))
