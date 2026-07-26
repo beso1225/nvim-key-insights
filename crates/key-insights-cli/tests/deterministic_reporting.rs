@@ -7,8 +7,8 @@ use std::{
 };
 
 use key_insights::{
-    MAX_DISTINCT_ITEMS, MAX_KEY_TOKEN_BYTES, MAX_MAPPING_ID_BYTES, MAX_RANKED_ITEMS, analyze_jsonl,
-    render_markdown, render_summary_json,
+    AnalysisError, MAX_DISTINCT_ITEMS, MAX_KEY_TOKEN_BYTES, MAX_MAPPING_ID_BYTES, MAX_RANKED_ITEMS,
+    analyze_jsonl, render_markdown, render_summary_json,
 };
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
@@ -119,6 +119,13 @@ fn invalid_input_does_not_create_outputs() {
 }
 
 #[test]
+fn analyzer_rejects_an_empty_stream() {
+    let error = analyze_jsonl(Cursor::new("")).expect_err("at least one session is required");
+
+    assert_eq!(error, AnalysisError::NoSessions);
+}
+
+#[test]
 fn cli_rejects_incomplete_collector_artifacts() {
     let directory = temporary_directory("incomplete-input");
     fs::create_dir(&directory).expect("create test directory");
@@ -151,6 +158,29 @@ fn report_escapes_untrusted_key_tokens() {
 
     assert!(report.contains("<code>&#124;&lt;script&gt;\\n</code>"));
     assert!(!report.contains("<script>"));
+}
+
+#[test]
+fn report_escapes_terminal_control_characters_in_tokens() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":1,"mode":"normal","keys":["\u001b[31m","\t"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"one","elapsed_ms":2,"mode":"normal","mapping_id":"map-\u0000","typed_keys":["g"]}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":3}"#,
+        "\n",
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid input");
+    let report = render_markdown(&summary);
+
+    assert!(report.contains(r"<code>\u{1b}[31m</code>"));
+    assert!(report.contains(r"<code>\t</code>"));
+    assert!(report.contains(r"<code>map-\u{0}</code>"));
+    assert!(!report.contains('\u{001b}'));
+    assert!(!report.contains('\t'));
+    assert!(!report.contains('\0'));
 }
 
 #[test]

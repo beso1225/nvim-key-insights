@@ -12,6 +12,7 @@ pub const MAX_DISTINCT_ITEMS: usize = 4096;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnalysisError {
     Validation(ValidationError),
+    NoSessions,
     TooManyDistinctKeys,
     TooManyDistinctMappings,
     TooManyDistinctRepeatedKeys,
@@ -21,6 +22,7 @@ impl std::fmt::Display for AnalysisError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Validation(error) => error.fmt(formatter),
+            Self::NoSessions => formatter.write_str("analysis input contains no complete sessions"),
             Self::TooManyDistinctKeys => write!(
                 formatter,
                 "analysis input exceeds the distinct key limit of {MAX_DISTINCT_ITEMS}"
@@ -128,6 +130,9 @@ struct Accumulator {
 pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisError> {
     let mut accumulator = Accumulator::default();
     let validation = for_each_validated_event(reader, |event| accumulator.observe(event))?;
+    if validation.sessions == 0 {
+        return Err(AnalysisError::NoSessions);
+    }
     if let Some(error) = accumulator.limit_error.take() {
         return Err(error);
     }
@@ -419,6 +424,7 @@ fn html_code(value: &str) -> String {
             '|' => escaped.push_str("&#124;"),
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
+            character if character.is_control() => escaped.extend(character.escape_default()),
             _ => escaped.push(character),
         }
     }
