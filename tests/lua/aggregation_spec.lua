@@ -1,5 +1,7 @@
 local collector = require("key-insights.collector")
 local config = require("key-insights.config")
+local schema = require("key-insights.schema")
+local storage = require("key-insights.storage")
 
 local function new_harness(session_id, options)
   local state = {
@@ -203,12 +205,24 @@ local select_runs = events_of_type(select_mode.events, "text_run")
 assert(#select_runs == 1 and select_runs[1].key_count == vim.fn.strchars("select-secret"))
 assert(string.find(vim.json.encode(select_mode.events), "select-secret", 1, true) == nil)
 
-local retry = {
-  callback = nil,
-  events = {},
-  fail_next_sequence_write = true,
-  now_ms = 0,
-}
+local retry = { callback = nil, now_ms = 0, write_state = "partial" }
+local retry_directory = vim.fn.tempname()
+local retry_fs = setmetatable({}, { __index = vim.uv })
+retry_fs.fs_write = function(descriptor, data, offset)
+  if retry.write_state == "partial" and string.find(data, '"event_type":"key_sequence"', 1, true) ~= nil then
+    local partial = string.sub(data, 1, 8)
+    local bytes_written, write_error = vim.uv.fs_write(descriptor, partial, offset)
+    assert(bytes_written ~= nil, write_error)
+    retry.write_state = "fail"
+    return bytes_written
+  end
+  if retry.write_state == "fail" then
+    retry.write_state = "recover"
+    return nil, "injected aggregation write failure"
+  end
+  return vim.uv.fs_write(descriptor, data, offset)
+end
+local retry_store = storage.new({ directory = retry_directory, fs = retry_fs })
 local retry_collector = collector.new({
   clock_ms = function()
     return retry.now_ms
@@ -229,22 +243,7 @@ local retry_collector = collector.new({
     return "aggregation-retry"
   end,
   open_session = function()
-    return {
-      write = function(_, lines)
-        local decoded = {}
-        for _, line in ipairs(lines) do
-          table.insert(decoded, vim.json.decode(line))
-        end
-        if retry.fail_next_sequence_write and decoded[1].event_type == "key_sequence" then
-          retry.fail_next_sequence_write = false
-          error("injected aggregation write failure")
-        end
-        vim.list_extend(retry.events, decoded)
-      end,
-      flush = function() end,
-      finish = function() end,
-      abort = function() end,
-    }
+    return retry_store:open_session("aggregation-retry")
   end,
   register_on_key = function(callback)
     retry.callback = callback
@@ -265,11 +264,33 @@ assert(retry_collector:status().pending_events == 1)
 retry.now_ms = 30
 assert(retry_collector:stop())
 
-local retry_sequences = events_of_type(retry.events, "key_sequence")
+local retry_lines = vim.fn.readfile(vim.fs.joinpath(retry_directory, "aggregation-retry.jsonl"))
+local retry_events = vim.tbl_map(vim.json.decode, retry_lines)
+local retry_sequences = events_of_type(retry_events, "key_sequence")
 assert(#retry_sequences == 1, "a retried aggregation event must be persisted exactly once")
 assert(vim.deep_equal(retry_sequences[1].keys, { "j" }))
-assert(#events_of_type(retry.events, "session_start") == 1)
-assert(#events_of_type(retry.events, "session_end") == 1)
-assert(string.find(vim.json.encode(retry.events), "retry-secret", 1, true) == nil)
+assert(#events_of_type(retry_events, "session_start") == 1)
+assert(#events_of_type(retry_events, "session_end") == 1)
+assert(string.find(vim.json.encode(retry_events), "retry-secret", 1, true) == nil)
+vim.fn.delete(retry_directory, "rf")
+
+local oversized_collector, oversized = new_harness(
+  "aggregation-size-limit",
+  config.resolve({ collection = { max_sequence_keys = 20000 } })
+)
+oversized_collector:start()
+oversized.now_ms = 10
+oversized.callback("mapped-oversized-secret", string.rep("j", 20000))
+oversized.now_ms = 20
+oversized_collector:stop()
+local oversized_sequences = events_of_type(oversized.events, "key_sequence")
+assert(#oversized_sequences > 1, "encoded event byte limit must split a large sequence")
+local oversized_key_count = 0
+for _, event in ipairs(oversized_sequences) do
+  local encoded = schema.encode(event)
+  assert(#encoded <= schema.MAX_EVENT_LINE_BYTES, "collector event must fit the analyzer line limit")
+  oversized_key_count = oversized_key_count + #event.keys
+end
+assert(oversized_key_count == 20000, "byte-size splitting must preserve every typed key")
 
 print("Lua aggregation contract: ok")

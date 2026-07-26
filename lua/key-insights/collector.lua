@@ -10,6 +10,7 @@ local SEQUENCE_MODES = {
   operator_pending = true,
   visual = true,
 }
+local MAX_KEY_NOTATION_BYTES = 256
 
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
@@ -114,13 +115,66 @@ function Collector:_emit_sequence(elapsed_ms)
     return
   end
   self._sequence = nil
-  self:_queue(schema.key_sequence(
-    self._session_id,
-    elapsed_ms,
-    sequence.mode,
-    sequence.keys,
-    sequence.last_ms - sequence.started_ms
-  ))
+
+  local events = {}
+  local chunk_keys = {}
+  local chunk_size = 0
+  local chunk_started_ms = nil
+  local chunk_last_ms = nil
+
+  local function finish_chunk()
+    if #chunk_keys == 0 then
+      return
+    end
+    local event = schema.key_sequence(
+      self._session_id,
+      elapsed_ms,
+      sequence.mode,
+      chunk_keys,
+      chunk_last_ms - chunk_started_ms
+    )
+    assert(#schema.encode(event) <= schema.MAX_EVENT_LINE_BYTES, "key sequence exceeds the event line limit")
+    table.insert(events, event)
+    chunk_keys = {}
+    chunk_size = 0
+    chunk_started_ms = nil
+    chunk_last_ms = nil
+  end
+
+  for index, key in ipairs(sequence.keys) do
+    local key_elapsed_ms = sequence.key_elapsed_ms[index]
+    if #chunk_keys == 0 then
+      local event = schema.key_sequence(self._session_id, elapsed_ms, sequence.mode, { key }, 0)
+      chunk_size = #schema.encode(event)
+      assert(chunk_size <= schema.MAX_EVENT_LINE_BYTES, "key token exceeds the event line limit")
+      chunk_started_ms = key_elapsed_ms
+      chunk_last_ms = key_elapsed_ms
+      table.insert(chunk_keys, key)
+    else
+      local old_duration_ms = chunk_last_ms - chunk_started_ms
+      local new_duration_ms = key_elapsed_ms - chunk_started_ms
+      local candidate_size = chunk_size
+        + 1
+        + #vim.json.encode(key)
+        + #tostring(new_duration_ms)
+        - #tostring(old_duration_ms)
+      if candidate_size > schema.MAX_EVENT_LINE_BYTES then
+        finish_chunk()
+        local event = schema.key_sequence(self._session_id, elapsed_ms, sequence.mode, { key }, 0)
+        chunk_size = #schema.encode(event)
+        assert(chunk_size <= schema.MAX_EVENT_LINE_BYTES, "key token exceeds the event line limit")
+        chunk_started_ms = key_elapsed_ms
+        chunk_last_ms = key_elapsed_ms
+        table.insert(chunk_keys, key)
+      else
+        table.insert(chunk_keys, key)
+        chunk_size = candidate_size
+        chunk_last_ms = key_elapsed_ms
+      end
+    end
+  end
+  finish_chunk()
+  self:_queue_many(events)
 end
 
 function Collector:_emit_text_run(elapsed_ms)
@@ -160,8 +214,9 @@ function Collector:_typed_tokens(typed)
       while closing <= #characters and characters[closing] ~= ">" do
         closing = closing + 1
       end
-      if closing <= #characters then
-        table.insert(tokens, table.concat(characters, "", index, closing))
+      local notation = closing <= #characters and table.concat(characters, "", index, closing) or nil
+      if notation ~= nil and #notation <= MAX_KEY_NOTATION_BYTES then
+        table.insert(tokens, notation)
         index = closing + 1
       else
         table.insert(tokens, characters[index])
@@ -189,6 +244,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms)
 
     if sequence == nil then
       sequence = {
+        key_elapsed_ms = {},
         keys = {},
         last_ms = elapsed_ms,
         mode = mode,
@@ -197,6 +253,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms)
       self._sequence = sequence
     end
     table.insert(sequence.keys, key)
+    table.insert(sequence.key_elapsed_ms, elapsed_ms)
     sequence.last_ms = elapsed_ms
   end
 end
@@ -224,11 +281,17 @@ function Collector:_elapsed_ms()
   return math.max(0, math.floor(self._clock_ms() - self._started_at_ms))
 end
 
-function Collector:_queue(event)
-  table.insert(self._pending, schema.encode(event))
+function Collector:_queue_many(events)
+  for _, event in ipairs(events) do
+    table.insert(self._pending, schema.encode(event))
+  end
   if self._auto_flush then
     self:_write_pending()
   end
+end
+
+function Collector:_queue(event)
+  self:_queue_many({ event })
 end
 
 function Collector:_write_pending()
@@ -381,6 +444,7 @@ function Collector:stop()
   local ok, error_message = pcall(function()
     self:_detach()
     self._last_mode = nil
+    self:_write_pending()
     if not self._end_queued then
       self:_flush_input(self:_elapsed_ms())
       self._end_queued = true

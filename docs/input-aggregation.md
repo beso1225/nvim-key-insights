@@ -18,6 +18,7 @@ A typed-key sequence ends when:
 - the normalized mode changes;
 - the next key arrives after `sequence_timeout_ms`;
 - the sequence reaches `max_sequence_keys`;
+- its encoded JSONL event would exceed the 64 KiB collector/analyzer limit;
 - collection is paused, stopped, or explicitly flushed;
 - input moves into an excluded buffer.
 
@@ -32,7 +33,7 @@ require("key-insights").setup({
 })
 ```
 
-`sequence_timeout_ms` must be a non-negative integer, and `max_sequence_keys` must be a positive integer.
+`sequence_timeout_ms` must be a non-negative integer, and `max_sequence_keys` must be a positive integer. Byte-size splitting is always enforced, including when `max_sequence_keys` is configured above its default. It preserves every typed key and computes duration independently for each resulting chunk.
 
 An idle sequence is retained in memory until the next boundary; the collector does not create a timer for every key. Pause, stop, explicit flush, and Neovim shutdown all flush it.
 

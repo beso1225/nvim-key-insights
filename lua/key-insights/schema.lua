@@ -1,6 +1,7 @@
 local M = {}
 
 M.VERSION = 1
+M.MAX_EVENT_LINE_BYTES = 64 * 1024
 
 local sequence_modes = {
   normal = true,
