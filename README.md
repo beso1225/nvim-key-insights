@@ -54,4 +54,4 @@ docs/                         Public design contracts
 
 ## Status
 
-The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, and the collector lifecycle with durable session boundaries. The installed `vim.on_key` callback currently enforces exclusion boundaries but deliberately does not persist individual inputs; sequence aggregation, deterministic reporting, and Codex integration will be implemented incrementally with TDD.
+The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, and privacy-safe input aggregation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, deterministic reporting, and Codex integration will be implemented incrementally with TDD.

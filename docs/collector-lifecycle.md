@@ -33,10 +33,10 @@ require("key-insights").setup({
 
 The directory is local configuration and is never included in an event.
 
-Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. Stop records its closing transition, so retrying after a transient write failure flushes the existing `session_end` instead of appending a duplicate.
+Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. A partially written batch must be retried byte-for-byte before the collector queues later events. If an automatic callback write fails, the collector records the error and ignores later input until pause or stop recovers the pending batch; pausing and starting again resumes collection after a successful recovery. Stop completes any pending batch first, then records its closing transition. Retrying after a transient failure neither changes the in-flight batch nor appends a duplicate `session_end`.
 
 ## Current collection boundary
 
-The callback always returns `nil`, so it cannot consume or replace editor input. It checks the current buffer before any future input aggregation. Special buffers and sensitive filenames or filetypes are force-excluded.
+The callback always returns `nil`, so it cannot consume or replace editor input. It checks the current buffer before aggregation. Special buffers and sensitive filenames or filetypes are force-excluded.
 
-This lifecycle slice records only `session_start` and `session_end`. It does not yet persist Normal-mode sequences, Insert-mode text-run metrics, or mapping usage. Those event producers will be added behind the same exclusion boundary.
+Normal, Visual, and Operator-pending typed keys are grouped into sequences. The mapping-applied callback value is never stored, preventing mapping right-hand sides from entering a sequence. Insert, Replace, and Select input is reduced to key count and duration; Command and Search input content is discarded. See [Input aggregation](input-aggregation.md) for sequence boundaries and configuration.
