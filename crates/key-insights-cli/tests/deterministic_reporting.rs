@@ -119,6 +119,24 @@ fn invalid_input_does_not_create_outputs() {
 }
 
 #[test]
+fn cli_rejects_incomplete_collector_artifacts() {
+    let directory = temporary_directory("incomplete-input");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("nvim-key-insights-session.jsonl.part");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write complete but unpublished input");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("incomplete collector artifact"));
+    assert!(!summary.exists());
+    assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
 fn report_escapes_untrusted_key_tokens() {
     let input = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
@@ -289,6 +307,39 @@ fn cli_refuses_dangling_output_symlinks() {
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn cli_refuses_existing_non_regular_output_files() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let directory = temporary_directory("special-output");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary_fifo = directory.join("summary.fifo");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write input");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&summary_fifo)
+            .status()
+            .expect("run mkfifo")
+            .success(),
+        "create output FIFO"
+    );
+
+    let output = run_cli(&input, &summary_fifo, &report);
+
+    assert!(!output.status.success());
+    assert!(
+        fs::symlink_metadata(&summary_fifo)
+            .expect("FIFO survives")
+            .file_type()
+            .is_fifo()
+    );
+    assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
 #[test]
 fn analyzer_rejects_oversized_retained_tokens() {
     let oversized_key = "k".repeat(MAX_KEY_TOKEN_BYTES + 1);
@@ -333,6 +384,12 @@ fn analyzer_rejects_oversized_retained_tokens() {
 fn cli_rejects_absent_output_names_that_differ_only_by_ascii_case() {
     let directory = temporary_directory("case-collision");
     fs::create_dir(&directory).expect("create test directory");
+    let upper_probe = directory.join("CaseProbe");
+    let lower_probe = directory.join("caseprobe");
+    fs::write(&upper_probe, "probe").expect("write case probe");
+    let case_insensitive = lower_probe.exists();
+    fs::remove_file(&upper_probe).expect("remove case probe");
+
     let input = directory.join("input.jsonl");
     let summary = directory.join("result");
     let report = directory.join("RESULT");
@@ -340,8 +397,62 @@ fn cli_rejects_absent_output_names_that_differ_only_by_ascii_case() {
 
     let output = run_cli(&input, &summary, &report);
 
-    assert!(!output.status.success());
-    assert!(!summary.exists());
+    assert_eq!(
+        output.status.success(),
+        !case_insensitive,
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if case_insensitive {
+        assert!(!summary.exists());
+    } else {
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read distinct summary"),
+            EXPECTED_SUMMARY
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read distinct report"),
+            EXPECTED_REPORT
+        );
+    }
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn output_alias_detection_follows_filesystem_unicode_normalization() {
+    let directory = temporary_directory("unicode-collision");
+    fs::create_dir(&directory).expect("create test directory");
+    let composed_probe = directory.join("probe-\u{00e9}");
+    let decomposed_probe = directory.join("probe-e\u{0301}");
+    fs::write(&composed_probe, "probe").expect("write normalization probe");
+    let normalization_insensitive = decomposed_probe.exists();
+    fs::remove_file(&composed_probe).expect("remove normalization probe");
+
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("result-\u{00e9}");
+    let report = directory.join("result-e\u{0301}");
+    fs::write(&input, INPUT).expect("write input");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert_eq!(
+        output.status.success(),
+        !normalization_insensitive,
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if normalization_insensitive {
+        assert!(!summary.exists());
+    } else {
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read distinct summary"),
+            EXPECTED_SUMMARY
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read distinct report"),
+            EXPECTED_REPORT
+        );
+    }
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 

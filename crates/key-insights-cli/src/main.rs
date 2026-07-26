@@ -67,14 +67,13 @@ struct ResolvedPaths {
 }
 
 fn resolve_paths(input: &Path, summary: &Path, report: &Path) -> Result<ResolvedPaths, String> {
-    let input = fs::canonicalize(input)
-        .map_err(|error| format!("failed to resolve input {}: {error}", input.display()))?;
+    let input = resolve_input_path(input)?;
     let summary = resolve_output_path(summary)?;
     let report = resolve_output_path(report)?;
     if same_file(&input, &summary) || same_file(&input, &report) {
         return Err("output paths must not overwrite the input log".to_owned());
     }
-    if output_paths_may_collide(&summary, &report) {
+    if output_paths_may_collide(&summary, &report)? {
         return Err("summary and report paths must be different".to_owned());
     }
     Ok(ResolvedPaths {
@@ -82,6 +81,26 @@ fn resolve_paths(input: &Path, summary: &Path, report: &Path) -> Result<Resolved
         summary,
         report,
     })
+}
+
+fn resolve_input_path(path: &Path) -> Result<PathBuf, String> {
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| format!("failed to resolve input {}: {error}", path.display()))?;
+    if resolved
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with(".jsonl.part"))
+    {
+        return Err(format!(
+            "input is an incomplete collector artifact: {}",
+            path.display()
+        ));
+    }
+    let metadata = fs::metadata(&resolved)
+        .map_err(|error| format!("failed to inspect input {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("input must be a regular file: {}", path.display()));
+    }
+    Ok(resolved)
 }
 
 fn resolve_output_path(path: &Path) -> Result<PathBuf, String> {
@@ -92,6 +111,10 @@ fn resolve_output_path(path: &Path) -> Result<PathBuf, String> {
         )),
         Ok(metadata) if metadata.is_dir() => Err(format!(
             "output path must not be a directory: {}",
+            path.display()
+        )),
+        Ok(metadata) if !metadata.is_file() => Err(format!(
+            "output path must be a regular file: {}",
             path.display()
         )),
         Ok(_) => fs::canonicalize(path)
@@ -123,21 +146,23 @@ fn same_file(left: &Path, right: &Path) -> bool {
     same_file_metadata(left, right)
 }
 
-fn output_paths_may_collide(left: &Path, right: &Path) -> bool {
+fn output_paths_may_collide(left: &Path, right: &Path) -> Result<bool, String> {
     if same_file(left, right) {
-        return true;
+        return Ok(true);
     }
-    let same_parent = match (left.parent(), right.parent()) {
-        (Some(left), Some(right)) => same_file(left, right),
-        _ => false,
+    let (Some(left_parent), Some(right_parent)) = (left.parent(), right.parent()) else {
+        return Ok(false);
     };
-    same_parent
-        && match (left.file_name(), right.file_name()) {
-            (Some(left), Some(right)) => left
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&right.to_string_lossy()),
-            _ => false,
-        }
+    if !same_file(left_parent, right_parent) {
+        return Ok(false);
+    }
+    let left_name = left
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", left.display()))?;
+    let right_name = right
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", right.display()))?;
+    probe_name_collision(left_parent, left_name, right_name)
 }
 
 #[cfg(unix)]
@@ -153,6 +178,82 @@ fn same_file_metadata(left: &Path, right: &Path) -> bool {
 #[cfg(not(unix))]
 fn same_file_metadata(_left: &Path, _right: &Path) -> bool {
     false
+}
+
+struct NameProbeDirectory {
+    path: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+impl NameProbeDirectory {
+    fn create(parent: &Path) -> Result<Self, String> {
+        for _attempt in 0..100 {
+            let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(
+                ".key-insights.name-probe-{}-{identifier}",
+                std::process::id()
+            ));
+            match create_private_directory(&path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        path,
+                        files: Vec::new(),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "failed to create output-name probe in {}: {error}",
+                        parent.display()
+                    ));
+                }
+            }
+        }
+        Err(format!(
+            "failed to reserve output-name probe in {}",
+            parent.display()
+        ))
+    }
+}
+
+impl Drop for NameProbeDirectory {
+    fn drop(&mut self) {
+        for path in self.files.iter().rev() {
+            let _ = fs::remove_file(path);
+        }
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+fn probe_name_collision(
+    parent: &Path,
+    left_name: &std::ffi::OsStr,
+    right_name: &std::ffi::OsStr,
+) -> Result<bool, String> {
+    let mut probe = NameProbeDirectory::create(parent)?;
+    let left = probe.path.join(left_name);
+    let left_file = open_private_new_file(&left).map_err(|error| {
+        format!(
+            "failed to probe output name {}: {error}",
+            left_name.to_string_lossy()
+        )
+    })?;
+    drop(left_file);
+    probe.files.push(left);
+
+    let right = probe.path.join(right_name);
+    match open_private_new_file(&right) {
+        Ok(file) => {
+            drop(file);
+            probe.files.push(right);
+            Ok(false)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(true),
+        Err(error) => Err(format!(
+            "failed to probe output name {}: {error}",
+            right_name.to_string_lossy()
+        )),
+    }
 }
 
 struct StagedOutput {
@@ -386,6 +487,16 @@ fn open_private_new_file(path: &Path) -> std::io::Result<File> {
         options.mode(0o600);
     }
     options.open(path)
+}
+
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
 }
 
 fn usage() -> String {

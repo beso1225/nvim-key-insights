@@ -13,7 +13,7 @@ key-insights analyze <input.jsonl> \
   --report <report.md>
 ```
 
-The input may contain one or more complete sessions accepted by the streaming schema validator. The analyzer completes validation and aggregation before it creates either output. Output paths must be different from one another and from the input path. Output symlinks and names that differ only by ASCII case are rejected for portable behavior on case-insensitive filesystems.
+The input may contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules.
 
 ## Current metrics
 
