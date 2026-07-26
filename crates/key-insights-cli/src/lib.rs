@@ -5,8 +5,8 @@ mod event;
 mod validator;
 
 pub use analyzer::{
-    AnalysisSummary, KeyCount, MAX_RANKED_ITEMS, MappingCount, ModeStats, RepeatedKeyStats,
-    analyze_jsonl, render_markdown, render_summary_json,
+    AnalysisError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MappingCount,
+    ModeStats, RepeatedKeyStats, analyze_jsonl, render_markdown, render_summary_json,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use validator::{

@@ -6,7 +6,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use key_insights::{MAX_RANKED_ITEMS, analyze_jsonl, render_markdown, render_summary_json};
+use key_insights::{
+    MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, analyze_jsonl, render_markdown, render_summary_json,
+};
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
 const EXPECTED_SUMMARY: &str = include_str!("fixtures/summary.json");
@@ -54,6 +56,41 @@ fn cli_writes_the_same_deterministic_outputs() {
     );
     assert_eq!(
         fs::read_to_string(report).expect("read report"),
+        EXPECTED_REPORT
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn cli_accepts_bare_relative_paths() {
+    let directory = temporary_directory("relative-paths");
+    fs::create_dir(&directory).expect("create test directory");
+    fs::write(directory.join("input.jsonl"), INPUT).expect("write input fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .current_dir(&directory)
+        .args([
+            "analyze",
+            "input.jsonl",
+            "--summary",
+            "summary.json",
+            "--report",
+            "report.md",
+        ])
+        .output()
+        .expect("run analyzer CLI");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("summary.json")).expect("read summary"),
+        EXPECTED_SUMMARY
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("report.md")).expect("read report"),
         EXPECTED_REPORT
     );
     fs::remove_dir_all(directory).expect("remove test directory");
@@ -156,6 +193,97 @@ fn cli_refuses_normalized_aliases_of_the_input_log() {
 
     assert!(!output.status.success());
     assert_eq!(fs::read_to_string(&input).expect("input survives"), INPUT);
+    assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn analyzer_rejects_unbounded_distinct_key_cardinality() {
+    let mut input =
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..=MAX_DISTINCT_ITEMS {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"one\",\"elapsed_ms\":{},\"mode\":\"normal\",\"keys\":[\"key-{index:05}\"],\"duration_ms\":0}}\n",
+            index + 1
+        ));
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+        MAX_DISTINCT_ITEMS + 2
+    ));
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("cardinality must be bounded");
+
+    assert!(error.to_string().contains("distinct key limit"));
+}
+
+#[test]
+fn analyzer_rejects_unbounded_distinct_mapping_cardinality() {
+    let mut input =
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..=MAX_DISTINCT_ITEMS {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"mapping_use\",\"session_id\":\"one\",\"elapsed_ms\":{},\"mode\":\"normal\",\"mapping_id\":\"map-{index:05}\",\"typed_keys\":[\"g\"]}}\n",
+            index + 1
+        ));
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+        MAX_DISTINCT_ITEMS + 2
+    ));
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("cardinality must be bounded");
+
+    assert!(error.to_string().contains("distinct mapping limit"));
+}
+
+#[test]
+fn output_setup_failure_preserves_existing_artifacts() {
+    let directory = temporary_directory("atomic-output");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report_directory = directory.join("report-directory");
+    fs::write(&input, INPUT).expect("write input");
+    fs::write(&summary, "previous summary\n").expect("write prior summary");
+    fs::create_dir(&report_directory).expect("create invalid report destination");
+
+    let output = run_cli(&input, &summary, &report_directory);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(&summary).expect("summary survives"),
+        "previous summary\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_refuses_dangling_output_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary_directory("dangling-symlink");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write input");
+    symlink(&report, &summary).expect("create dangling output symlink");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(
+        fs::symlink_metadata(&summary)
+            .expect("symlink survives")
+            .file_type()
+            .is_symlink()
+    );
     assert!(!report.exists());
     fs::remove_dir_all(directory).expect("remove test directory");
 }

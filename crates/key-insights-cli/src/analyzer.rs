@@ -7,6 +7,43 @@ use crate::{
 };
 
 pub const MAX_RANKED_ITEMS: usize = 100;
+pub const MAX_DISTINCT_ITEMS: usize = 4096;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnalysisError {
+    Validation(ValidationError),
+    TooManyDistinctKeys,
+    TooManyDistinctMappings,
+    TooManyDistinctRepeatedKeys,
+}
+
+impl std::fmt::Display for AnalysisError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Validation(error) => error.fmt(formatter),
+            Self::TooManyDistinctKeys => write!(
+                formatter,
+                "analysis input exceeds the distinct key limit of {MAX_DISTINCT_ITEMS}"
+            ),
+            Self::TooManyDistinctMappings => write!(
+                formatter,
+                "analysis input exceeds the distinct mapping limit of {MAX_DISTINCT_ITEMS}"
+            ),
+            Self::TooManyDistinctRepeatedKeys => write!(
+                formatter,
+                "analysis input exceeds the distinct repeated-key limit of {MAX_DISTINCT_ITEMS}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AnalysisError {}
+
+impl From<ValidationError> for AnalysisError {
+    fn from(error: ValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AnalysisSummary {
@@ -72,6 +109,7 @@ struct RepeatedAccumulator {
 
 #[derive(Default)]
 struct Accumulator {
+    limit_error: Option<AnalysisError>,
     total_session_duration_ms: u64,
     key_sequences: u64,
     sequence_keys: u64,
@@ -87,9 +125,12 @@ struct Accumulator {
     repeated_keys: BTreeMap<String, RepeatedAccumulator>,
 }
 
-pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, ValidationError> {
+pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisError> {
     let mut accumulator = Accumulator::default();
     let validation = for_each_validated_event(reader, |event| accumulator.observe(event))?;
+    if let Some(error) = accumulator.limit_error.take() {
+        return Err(error);
+    }
     Ok(accumulator.finish(validation.sessions, validation.events))
 }
 
@@ -108,7 +149,9 @@ impl Accumulator {
                 stats.sequences = stats.sequences.saturating_add(1);
                 stats.keys = stats.keys.saturating_add(keys.len() as u64);
                 for key in keys {
-                    increment(&mut self.keys, key, 1);
+                    if !increment_bounded(&mut self.keys, key, 1) {
+                        self.record_limit_error(AnalysisError::TooManyDistinctKeys);
+                    }
                 }
                 self.observe_repeated_keys(keys);
             }
@@ -121,7 +164,9 @@ impl Accumulator {
             }
             Event::MappingUse { mapping_id, .. } => {
                 self.mapping_uses = self.mapping_uses.saturating_add(1);
-                increment(&mut self.mappings, mapping_id, 1);
+                if !increment_bounded(&mut self.mappings, mapping_id, 1) {
+                    self.record_limit_error(AnalysisError::TooManyDistinctMappings);
+                }
             }
             Event::SessionStart { .. } => {}
         }
@@ -138,11 +183,20 @@ impl Accumulator {
             if presses >= 2 {
                 self.repeated_key_runs = self.repeated_key_runs.saturating_add(1);
                 self.repeated_key_presses = self.repeated_key_presses.saturating_add(presses);
-                let repeated = self.repeated_keys.entry(keys[index].clone()).or_default();
-                repeated.runs = repeated.runs.saturating_add(1);
-                repeated.presses = repeated.presses.saturating_add(presses);
+                if let Some(repeated) = bounded_entry(&mut self.repeated_keys, &keys[index]) {
+                    repeated.runs = repeated.runs.saturating_add(1);
+                    repeated.presses = repeated.presses.saturating_add(presses);
+                } else {
+                    self.record_limit_error(AnalysisError::TooManyDistinctRepeatedKeys);
+                }
             }
             index = end;
+        }
+    }
+
+    fn record_limit_error(&mut self, error: AnalysisError) {
+        if self.limit_error.is_none() {
+            self.limit_error = Some(error);
         }
     }
 
@@ -204,9 +258,22 @@ impl Accumulator {
     }
 }
 
-fn increment(counts: &mut BTreeMap<String, u64>, key: &str, amount: u64) {
-    let count = counts.entry(key.to_owned()).or_default();
+fn increment_bounded(counts: &mut BTreeMap<String, u64>, key: &str, amount: u64) -> bool {
+    let Some(count) = bounded_entry(counts, key) else {
+        return false;
+    };
     *count = count.saturating_add(amount);
+    true
+}
+
+fn bounded_entry<'a, T: Default>(
+    values: &'a mut BTreeMap<String, T>,
+    key: &str,
+) -> Option<&'a mut T> {
+    if !values.contains_key(key) && values.len() >= MAX_DISTINCT_ITEMS {
+        return None;
+    }
+    Some(values.entry(key.to_owned()).or_default())
 }
 
 fn ranked(counts: BTreeMap<String, u64>) -> Vec<(String, u64)> {
