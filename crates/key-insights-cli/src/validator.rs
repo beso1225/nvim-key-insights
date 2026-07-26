@@ -33,6 +33,7 @@ pub enum ValidationErrorKind {
     EmptySessionId,
     SessionIdTooLong,
     EmptyKeySequence,
+    EmptyMappingId,
     KeyTokenTooLong,
     MappingIdTooLong,
     InvalidSessionStartElapsed,
@@ -69,6 +70,7 @@ impl fmt::Display for ValidationErrorKind {
             Self::EmptySessionId => formatter.write_str("session ID is empty"),
             Self::SessionIdTooLong => formatter.write_str("session ID exceeds the size limit"),
             Self::EmptyKeySequence => formatter.write_str("key sequence is empty"),
+            Self::EmptyMappingId => formatter.write_str("mapping ID is empty"),
             Self::KeyTokenTooLong => formatter.write_str("key token exceeds the size limit"),
             Self::MappingIdTooLong => formatter.write_str("mapping ID exceeds the size limit"),
             Self::InvalidSessionStartElapsed => {
@@ -240,6 +242,12 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
     }
     if keys.is_some_and(|values| values.iter().any(|value| value.len() > MAX_KEY_TOKEN_BYTES)) {
         return Err(error(line, ValidationErrorKind::KeyTokenTooLong));
+    }
+    if matches!(
+        event,
+        Event::MappingUse { mapping_id, .. } if mapping_id.is_empty()
+    ) {
+        return Err(error(line, ValidationErrorKind::EmptyMappingId));
     }
     if matches!(
         event,
