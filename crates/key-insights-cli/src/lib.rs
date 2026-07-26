@@ -5,13 +5,14 @@ mod event;
 mod validator;
 
 pub use analyzer::{
-    AnalysisError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MappingCount,
-    ModeStats, RepeatedKeyStats, analyze_jsonl, render_markdown, render_summary_json,
+    AnalysisError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS,
+    MAX_RETAINED_TOKEN_BYTES, MappingCount, ModeStats, RepeatedKeyStats, analyze_jsonl,
+    render_markdown, render_summary_json,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use validator::{
-    MAX_EVENT_LINE_BYTES, MAX_KEY_TOKEN_BYTES, MAX_MAPPING_ID_BYTES, MAX_SESSION_ID_BYTES,
-    MAX_SESSIONS_PER_LOG, ValidationError, ValidationErrorKind, ValidationSummary, validate_jsonl,
+    MAX_EVENT_LINE_BYTES, MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationError,
+    ValidationErrorKind, ValidationSummary, validate_jsonl,
 };
 
 /// Version of the collector/analyzer event contract.

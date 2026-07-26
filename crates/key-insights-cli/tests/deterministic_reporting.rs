@@ -7,8 +7,8 @@ use std::{
 };
 
 use key_insights::{
-    AnalysisError, MAX_DISTINCT_ITEMS, MAX_KEY_TOKEN_BYTES, MAX_MAPPING_ID_BYTES, MAX_RANKED_ITEMS,
-    analyze_jsonl, render_markdown, render_summary_json,
+    AnalysisError, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, analyze_jsonl,
+    render_markdown, render_summary_json,
 };
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
@@ -371,43 +371,81 @@ fn cli_refuses_existing_non_regular_output_files() {
 }
 
 #[test]
-fn analyzer_rejects_oversized_retained_tokens() {
-    let oversized_key = "k".repeat(MAX_KEY_TOKEN_BYTES + 1);
+fn analyzer_bounds_total_retained_token_bytes_across_categories() {
+    let token_size = 60 * 1024;
+    let token_count = MAX_RETAINED_TOKEN_BYTES / token_size + 2;
+    let mut input =
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..token_count {
+        let token = format!("{index:04}-{}", "x".repeat(token_size - 5));
+        let event = if index % 2 == 0 {
+            serde_json::json!({
+                "schema_version": 1,
+                "event_type": "key_sequence",
+                "session_id": "one",
+                "elapsed_ms": index + 1,
+                "mode": "normal",
+                "keys": [token],
+                "duration_ms": 0
+            })
+        } else {
+            serde_json::json!({
+                "schema_version": 1,
+                "event_type": "mapping_use",
+                "session_id": "one",
+                "elapsed_ms": index + 1,
+                "mode": "normal",
+                "mapping_id": token,
+                "typed_keys": ["g"]
+            })
+        };
+        input.push_str(&event.to_string());
+        input.push('\n');
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+        token_count + 1
+    ));
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("retained bytes must be bounded");
+
+    assert_eq!(error, AnalysisError::RetainedTokenBytesExceeded);
+}
+
+#[test]
+fn analyzer_accepts_long_schema_v1_tokens_within_the_event_limit() {
+    let long_key = format!("key-{}", "k".repeat(60 * 1024));
+    let long_mapping = format!("map-{}", "m".repeat(60 * 1024));
     let key_event = serde_json::json!({
         "schema_version": 1,
         "event_type": "key_sequence",
         "session_id": "one",
         "elapsed_ms": 1,
         "mode": "normal",
-        "keys": [oversized_key],
+        "keys": [long_key],
         "duration_ms": 0
     });
-    let key_input = format!(
-        "{}\n{key_event}\n{}\n",
-        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
-        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":2}"#
-    );
-    let key_error = analyze_jsonl(Cursor::new(key_input)).expect_err("key must be bounded");
-    assert!(key_error.to_string().contains("key token exceeds"));
-
-    let oversized_mapping = "m".repeat(MAX_MAPPING_ID_BYTES + 1);
     let mapping_event = serde_json::json!({
         "schema_version": 1,
         "event_type": "mapping_use",
         "session_id": "one",
-        "elapsed_ms": 1,
+        "elapsed_ms": 2,
         "mode": "normal",
-        "mapping_id": oversized_mapping,
+        "mapping_id": long_mapping,
         "typed_keys": ["g"]
     });
-    let mapping_input = format!(
-        "{}\n{mapping_event}\n{}\n",
+    let input = format!(
+        "{}\n{key_event}\n{mapping_event}\n{}\n",
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
-        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":2}"#
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":3}"#
     );
-    let mapping_error =
-        analyze_jsonl(Cursor::new(mapping_input)).expect_err("mapping ID must be bounded");
-    assert!(mapping_error.to_string().contains("mapping ID exceeds"));
+
+    let summary = analyze_jsonl(Cursor::new(input)).expect("schema-v1 long tokens remain valid");
+
+    assert_eq!(summary.unique_keys, 1);
+    assert_eq!(summary.unique_mappings, 1);
 }
 
 #[test]

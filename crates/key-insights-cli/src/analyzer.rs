@@ -8,6 +8,7 @@ use crate::{
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
+pub const MAX_RETAINED_TOKEN_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnalysisError {
@@ -16,6 +17,7 @@ pub enum AnalysisError {
     TooManyDistinctKeys,
     TooManyDistinctMappings,
     TooManyDistinctRepeatedKeys,
+    RetainedTokenBytesExceeded,
 }
 
 impl std::fmt::Display for AnalysisError {
@@ -34,6 +36,10 @@ impl std::fmt::Display for AnalysisError {
             Self::TooManyDistinctRepeatedKeys => write!(
                 formatter,
                 "analysis input exceeds the distinct repeated-key limit of {MAX_DISTINCT_ITEMS}"
+            ),
+            Self::RetainedTokenBytesExceeded => write!(
+                formatter,
+                "analysis input exceeds the retained token budget of {MAX_RETAINED_TOKEN_BYTES} bytes"
             ),
         }
     }
@@ -112,6 +118,7 @@ struct RepeatedAccumulator {
 #[derive(Default)]
 struct Accumulator {
     limit_error: Option<AnalysisError>,
+    retained_token_bytes: usize,
     total_session_duration_ms: u64,
     key_sequences: u64,
     sequence_keys: u64,
@@ -154,8 +161,15 @@ impl Accumulator {
                 stats.sequences = stats.sequences.saturating_add(1);
                 stats.keys = stats.keys.saturating_add(keys.len() as u64);
                 for key in keys {
-                    if !increment_bounded(&mut self.keys, key, 1) {
-                        self.record_limit_error(AnalysisError::TooManyDistinctKeys);
+                    match increment_bounded(&mut self.keys, &mut self.retained_token_bytes, key, 1)
+                    {
+                        Ok(()) => {}
+                        Err(BoundedEntryError::TooManyItems) => {
+                            self.record_limit_error(AnalysisError::TooManyDistinctKeys);
+                        }
+                        Err(BoundedEntryError::TooManyBytes) => {
+                            self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                        }
                     }
                 }
                 self.observe_repeated_keys(keys);
@@ -169,8 +183,19 @@ impl Accumulator {
             }
             Event::MappingUse { mapping_id, .. } => {
                 self.mapping_uses = self.mapping_uses.saturating_add(1);
-                if !increment_bounded(&mut self.mappings, mapping_id, 1) {
-                    self.record_limit_error(AnalysisError::TooManyDistinctMappings);
+                match increment_bounded(
+                    &mut self.mappings,
+                    &mut self.retained_token_bytes,
+                    mapping_id,
+                    1,
+                ) {
+                    Ok(()) => {}
+                    Err(BoundedEntryError::TooManyItems) => {
+                        self.record_limit_error(AnalysisError::TooManyDistinctMappings);
+                    }
+                    Err(BoundedEntryError::TooManyBytes) => {
+                        self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                    }
                 }
             }
             Event::SessionStart { .. } => {}
@@ -188,11 +213,21 @@ impl Accumulator {
             if presses >= 2 {
                 self.repeated_key_runs = self.repeated_key_runs.saturating_add(1);
                 self.repeated_key_presses = self.repeated_key_presses.saturating_add(presses);
-                if let Some(repeated) = bounded_entry(&mut self.repeated_keys, &keys[index]) {
-                    repeated.runs = repeated.runs.saturating_add(1);
-                    repeated.presses = repeated.presses.saturating_add(presses);
-                } else {
-                    self.record_limit_error(AnalysisError::TooManyDistinctRepeatedKeys);
+                match bounded_entry(
+                    &mut self.repeated_keys,
+                    &mut self.retained_token_bytes,
+                    &keys[index],
+                ) {
+                    Ok(repeated) => {
+                        repeated.runs = repeated.runs.saturating_add(1);
+                        repeated.presses = repeated.presses.saturating_add(presses);
+                    }
+                    Err(BoundedEntryError::TooManyItems) => {
+                        self.record_limit_error(AnalysisError::TooManyDistinctRepeatedKeys);
+                    }
+                    Err(BoundedEntryError::TooManyBytes) => {
+                        self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                    }
                 }
             }
             index = end;
@@ -263,22 +298,39 @@ impl Accumulator {
     }
 }
 
-fn increment_bounded(counts: &mut BTreeMap<String, u64>, key: &str, amount: u64) -> bool {
-    let Some(count) = bounded_entry(counts, key) else {
-        return false;
-    };
+enum BoundedEntryError {
+    TooManyItems,
+    TooManyBytes,
+}
+
+fn increment_bounded(
+    counts: &mut BTreeMap<String, u64>,
+    retained_bytes: &mut usize,
+    key: &str,
+    amount: u64,
+) -> Result<(), BoundedEntryError> {
+    let count = bounded_entry(counts, retained_bytes, key)?;
     *count = count.saturating_add(amount);
-    true
+    Ok(())
 }
 
 fn bounded_entry<'a, T: Default>(
     values: &'a mut BTreeMap<String, T>,
+    retained_bytes: &mut usize,
     key: &str,
-) -> Option<&'a mut T> {
-    if !values.contains_key(key) && values.len() >= MAX_DISTINCT_ITEMS {
-        return None;
+) -> Result<&'a mut T, BoundedEntryError> {
+    if values.contains_key(key) {
+        return Ok(values.get_mut(key).expect("existing key is retrievable"));
     }
-    Some(values.entry(key.to_owned()).or_default())
+    if values.len() >= MAX_DISTINCT_ITEMS {
+        return Err(BoundedEntryError::TooManyItems);
+    }
+    let new_retained_bytes = retained_bytes
+        .checked_add(key.len())
+        .filter(|bytes| *bytes <= MAX_RETAINED_TOKEN_BYTES)
+        .ok_or(BoundedEntryError::TooManyBytes)?;
+    *retained_bytes = new_retained_bytes;
+    Ok(values.entry(key.to_owned()).or_default())
 }
 
 fn ranked(counts: BTreeMap<String, u64>) -> Vec<(String, u64)> {

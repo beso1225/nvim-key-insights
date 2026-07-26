@@ -2,8 +2,6 @@ local M = {}
 
 M.VERSION = 1
 M.MAX_EVENT_LINE_BYTES = 64 * 1024
-M.MAX_KEY_TOKEN_BYTES = 256
-M.MAX_MAPPING_ID_BYTES = 256
 
 local sequence_modes = {
   normal = true,
@@ -44,7 +42,6 @@ local function copy_keys(keys, name)
   local result = {}
   for index, key in ipairs(keys) do
     assert_nonempty_string(key, name .. "[" .. index .. "]")
-    assert(#key <= M.MAX_KEY_TOKEN_BYTES, name .. "[" .. index .. "] exceeds the byte limit")
     result[index] = key
   end
   return result
@@ -97,7 +94,6 @@ end
 function M.mapping_use(session_id, elapsed_ms, mode, mapping_id, typed_keys)
   assert(sequence_modes[mode] == true, "mapping mode must not contain text")
   assert_nonempty_string(mapping_id, "mapping_id")
-  assert(#mapping_id <= M.MAX_MAPPING_ID_BYTES, "mapping_id exceeds the byte limit")
 
   local event = envelope("mapping_use", session_id, elapsed_ms)
   event.mode = mode

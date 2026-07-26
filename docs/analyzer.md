@@ -28,7 +28,7 @@ The input may contain one or more complete finalized `.jsonl` sessions accepted 
 
 Rankings use descending count with lexical identifiers as the tie-break. The summary retains total unique-token cardinalities when ranked rows are truncated. Mode rows use lexical mode order. JSON object layout and Markdown sections are stable for identical validated input.
 
-The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers per input. Key tokens and mapping IDs are limited to 256 encoded bytes each. It rejects inputs outside either bound instead of retaining unbounded aggregation state.
+The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers per input and retains at most 1 MiB of unique token data across those categories. Individual schema-v1 tokens remain valid up to the existing 64 KiB event-line boundary. The analyzer rejects inputs outside the aggregate bounds instead of retaining unbounded state.
 
 Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is replaced rather than followed. If either publication fails, the CLI rolls back both destinations to their previous state.
 
