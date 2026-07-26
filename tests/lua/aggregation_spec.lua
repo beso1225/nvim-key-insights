@@ -256,12 +256,16 @@ local retry_collector = collector.new({
 retry_collector:start()
 retry.now_ms = 10
 retry.callback("mapped-retry-secret", "j")
-retry.now_ms = 20
-local pause_ok = pcall(retry_collector.pause, retry_collector)
-assert(not pause_ok, "the injected sequence write must fail")
-assert(retry_collector:status().state == "paused")
+retry.now_ms = 1011
+retry.callback("mapped-trigger-secret", "k")
+assert(retry_collector:status().state == "recording")
 assert(retry_collector:status().pending_events == 1)
-retry.now_ms = 30
+assert(string.find(retry_collector:status().last_error, "injected aggregation write failure", 1, true) ~= nil)
+retry.now_ms = 1020
+retry.callback("mapped-ignored-secret", "l")
+retry.now_ms = 2021
+retry.callback("mapped-second-boundary-secret", "m")
+retry.now_ms = 2030
 assert(retry_collector:stop())
 
 local retry_lines = vim.fn.readfile(vim.fs.joinpath(retry_directory, "aggregation-retry.jsonl"))
@@ -271,7 +275,10 @@ assert(#retry_sequences == 1, "a retried aggregation event must be persisted exa
 assert(vim.deep_equal(retry_sequences[1].keys, { "j" }))
 assert(#events_of_type(retry_events, "session_start") == 1)
 assert(#events_of_type(retry_events, "session_end") == 1)
-assert(string.find(vim.json.encode(retry_events), "retry-secret", 1, true) == nil)
+local retry_json = vim.json.encode(retry_events)
+for _, secret in ipairs({ "retry-secret", "trigger-secret", "ignored-secret", "second-boundary-secret" }) do
+  assert(string.find(retry_json, secret, 1, true) == nil)
+end
 vim.fn.delete(retry_directory, "rf")
 
 local oversized_collector, oversized = new_harness(

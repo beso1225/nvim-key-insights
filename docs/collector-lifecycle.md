@@ -33,7 +33,7 @@ require("key-insights").setup({
 
 The directory is local configuration and is never included in an event.
 
-Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. A partially written batch must be retried byte-for-byte before the collector queues later events. Stop therefore completes any pending batch first, then records its closing transition. Retrying after a transient failure neither changes the in-flight batch nor appends a duplicate `session_end`.
+Start is failure-atomic: storage or callback-registration failures remove the incomplete file and restore the stopped state. A partially written batch must be retried byte-for-byte before the collector queues later events. If an automatic callback write fails, the collector records the error and ignores later input until pause or stop recovers the pending batch; pausing and starting again resumes collection after a successful recovery. Stop completes any pending batch first, then records its closing transition. Retrying after a transient failure neither changes the in-flight batch nor appends a duplicate `session_end`.
 
 ## Current collection boundary
 

@@ -312,7 +312,7 @@ function Collector:_is_excluded()
 end
 
 function Collector:_handle_key(_mapped, typed)
-  if self._state ~= "recording" then
+  if self._state ~= "recording" or self._last_error ~= nil then
     return
   end
 
