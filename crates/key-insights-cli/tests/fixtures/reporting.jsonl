@@ -1,0 +1,12 @@
+{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0,"project_id":"project-a"}
+{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":40,"mode":"normal","keys":["j","j","d","d"],"duration_ms":30}
+{"schema_version":1,"event_type":"text_run","session_id":"one","elapsed_ms":70,"key_count":5,"duration_ms":20}
+{"schema_version":1,"event_type":"mode_transition","session_id":"one","elapsed_ms":80,"from":"normal","to":"insert"}
+{"schema_version":1,"event_type":"mapping_use","session_id":"one","elapsed_ms":90,"mode":"normal","mapping_id":"map-b","typed_keys":["g","g"]}
+{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":120}
+{"schema_version":1,"event_type":"session_start","session_id":"two","elapsed_ms":0}
+{"schema_version":1,"event_type":"key_sequence","session_id":"two","elapsed_ms":10,"mode":"visual","keys":["j","x"],"duration_ms":5}
+{"schema_version":1,"event_type":"key_sequence","session_id":"two","elapsed_ms":20,"mode":"operator_pending","keys":["d","w"],"duration_ms":4}
+{"schema_version":1,"event_type":"mapping_use","session_id":"two","elapsed_ms":25,"mode":"normal","mapping_id":"map-a","typed_keys":["<leader>","f"]}
+{"schema_version":1,"event_type":"mapping_use","session_id":"two","elapsed_ms":30,"mode":"normal","mapping_id":"map-b","typed_keys":["g","g"]}
+{"schema_version":1,"event_type":"session_end","session_id":"two","elapsed_ms":50}

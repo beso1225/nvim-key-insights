@@ -86,6 +86,17 @@ struct ActiveSession {
 }
 
 pub fn validate_jsonl<R: BufRead>(mut reader: R) -> Result<ValidationSummary, ValidationError> {
+    for_each_validated_event(&mut reader, |_| {})
+}
+
+pub(crate) fn for_each_validated_event<R, F>(
+    mut reader: R,
+    mut on_event: F,
+) -> Result<ValidationSummary, ValidationError>
+where
+    R: BufRead,
+    F: FnMut(&Event),
+{
     let mut summary = ValidationSummary {
         sessions: 0,
         events: 0,
@@ -122,12 +133,13 @@ pub fn validate_jsonl<R: BufRead>(mut reader: R) -> Result<ValidationSummary, Va
         let event: Event = serde_json::from_slice(&buffer)
             .map_err(|_| error(line_number, ValidationErrorKind::MalformedEvent))?;
         validate_event(
-            event,
+            &event,
             line_number,
             &mut active,
             &mut seen_session_ids,
             &mut summary,
         )?;
+        on_event(&event);
     }
 
     if let Some(session) = active {
@@ -141,7 +153,7 @@ pub fn validate_jsonl<R: BufRead>(mut reader: R) -> Result<ValidationSummary, Va
 }
 
 fn validate_event(
-    event: Event,
+    event: &Event,
     line: usize,
     active: &mut Option<ActiveSession>,
     seen_session_ids: &mut HashSet<String>,
@@ -161,7 +173,7 @@ fn validate_event(
     if event.session_id().len() > MAX_SESSION_ID_BYTES {
         return Err(error(line, ValidationErrorKind::SessionIdTooLong));
     }
-    validate_payload(&event, line)?;
+    validate_payload(event, line)?;
 
     match event {
         Event::SessionStart {
@@ -172,10 +184,10 @@ fn validate_event(
             if active.is_some() {
                 return Err(error(line, ValidationErrorKind::SessionAlreadyActive));
             }
-            if elapsed_ms != 0 {
+            if *elapsed_ms != 0 {
                 return Err(error(line, ValidationErrorKind::InvalidSessionStartElapsed));
             }
-            if seen_session_ids.contains(&session_id) {
+            if seen_session_ids.contains(session_id) {
                 return Err(error(line, ValidationErrorKind::ReusedSessionId));
             }
             if seen_session_ids.len() >= MAX_SESSIONS_PER_LOG {
@@ -183,8 +195,8 @@ fn validate_event(
             }
             seen_session_ids.insert(session_id.clone());
             *active = Some(ActiveSession {
-                id: session_id,
-                last_elapsed_ms: elapsed_ms,
+                id: session_id.clone(),
+                last_elapsed_ms: *elapsed_ms,
                 start_line: line,
             });
             summary.sessions += 1;

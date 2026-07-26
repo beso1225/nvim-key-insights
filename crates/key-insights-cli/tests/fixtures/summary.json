@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "ranking_limit": 100,
+  "sessions": 2,
+  "events": 12,
+  "total_session_duration_ms": 170,
+  "key_sequences": 3,
+  "sequence_keys": 8,
+  "text_runs": 1,
+  "text_keys": 5,
+  "mode_transitions": 1,
+  "mapping_uses": 3,
+  "repeated_key_runs": 2,
+  "repeated_key_presses": 4,
+  "unique_keys": 4,
+  "unique_mappings": 2,
+  "unique_repeated_keys": 2,
+  "modes": [
+    {
+      "mode": "normal",
+      "sequences": 1,
+      "keys": 4
+    },
+    {
+      "mode": "operator_pending",
+      "sequences": 1,
+      "keys": 2
+    },
+    {
+      "mode": "visual",
+      "sequences": 1,
+      "keys": 2
+    }
+  ],
+  "keys": [
+    {
+      "key": "d",
+      "count": 3
+    },
+    {
+      "key": "j",
+      "count": 3
+    },
+    {
+      "key": "w",
+      "count": 1
+    },
+    {
+      "key": "x",
+      "count": 1
+    }
+  ],
+  "mappings": [
+    {
+      "mapping_id": "map-b",
+      "count": 2
+    },
+    {
+      "mapping_id": "map-a",
+      "count": 1
+    }
+  ],
+  "repeated_keys": [
+    {
+      "key": "d",
+      "runs": 1,
+      "presses": 2
+    },
+    {
+      "key": "j",
+      "runs": 1,
+      "presses": 2
+    }
+  ]
+}

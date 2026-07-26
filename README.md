@@ -23,6 +23,18 @@ pkf run test
 
 Individual tasks are available through `pkf list`.
 
+## Deterministic analyzer
+
+Analyze a complete finalized JSONL stream without an AI service:
+
+```sh
+cargo run --bin key-insights -- analyze sessions.jsonl \
+  --summary summary.json \
+  --report report.md
+```
+
+The command validates the full stream before creating outputs. `summary.json` contains only aggregated counts and bounded rankings of sanitized tokens; it excludes session IDs, project IDs, raw sequences, Insert text, and command/search contents. `report.md` is rendered deterministically from the same in-memory summary.
+
 ## Collector lifecycle
 
 The collector can be loaded with lazy.nvim without starting collection automatically:
@@ -54,4 +66,4 @@ docs/                         Public design contracts
 
 ## Status
 
-The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, bounded log retention, and privacy-safe input aggregation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, deterministic reporting, and Codex integration will be implemented incrementally with TDD.
+The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, bounded log retention, privacy-safe input aggregation, and deterministic local summary/report generation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, richer ergonomic metrics, and Codex integration will be implemented incrementally with TDD.
