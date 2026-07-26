@@ -9,6 +9,8 @@ use crate::{Event, SCHEMA_VERSION};
 pub const MAX_EVENT_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_SESSION_ID_BYTES: usize = 128;
 pub const MAX_SESSIONS_PER_LOG: usize = 4096;
+pub const MAX_KEY_TOKEN_BYTES: usize = 256;
+pub const MAX_MAPPING_ID_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationSummary {
@@ -31,6 +33,8 @@ pub enum ValidationErrorKind {
     EmptySessionId,
     SessionIdTooLong,
     EmptyKeySequence,
+    KeyTokenTooLong,
+    MappingIdTooLong,
     InvalidSessionStartElapsed,
     ExpectedSessionStart,
     SessionAlreadyActive,
@@ -65,6 +69,8 @@ impl fmt::Display for ValidationErrorKind {
             Self::EmptySessionId => formatter.write_str("session ID is empty"),
             Self::SessionIdTooLong => formatter.write_str("session ID exceeds the size limit"),
             Self::EmptyKeySequence => formatter.write_str("key sequence is empty"),
+            Self::KeyTokenTooLong => formatter.write_str("key token exceeds the size limit"),
+            Self::MappingIdTooLong => formatter.write_str("mapping ID exceeds the size limit"),
             Self::InvalidSessionStartElapsed => {
                 formatter.write_str("session_start elapsed_ms must be zero")
             }
@@ -231,6 +237,15 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
 
     if keys.is_some_and(|values| values.is_empty() || values.iter().any(String::is_empty)) {
         return Err(error(line, ValidationErrorKind::EmptyKeySequence));
+    }
+    if keys.is_some_and(|values| values.iter().any(|value| value.len() > MAX_KEY_TOKEN_BYTES)) {
+        return Err(error(line, ValidationErrorKind::KeyTokenTooLong));
+    }
+    if matches!(
+        event,
+        Event::MappingUse { mapping_id, .. } if mapping_id.len() > MAX_MAPPING_ID_BYTES
+    ) {
+        return Err(error(line, ValidationErrorKind::MappingIdTooLong));
     }
 
     Ok(())

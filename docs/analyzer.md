@@ -13,7 +13,7 @@ key-insights analyze <input.jsonl> \
   --report <report.md>
 ```
 
-The input may contain one or more complete sessions accepted by the streaming schema validator. The analyzer completes validation and aggregation before it creates either output. Output paths must be different from one another and from the input path. Output symlinks are rejected.
+The input may contain one or more complete sessions accepted by the streaming schema validator. The analyzer completes validation and aggregation before it creates either output. Output paths must be different from one another and from the input path. Output symlinks and names that differ only by ASCII case are rejected for portable behavior on case-insensitive filesystems.
 
 ## Current metrics
 
@@ -28,9 +28,9 @@ The input may contain one or more complete sessions accepted by the streaming sc
 
 Rankings use descending count with lexical identifiers as the tie-break. The summary retains total unique-token cardinalities when ranked rows are truncated. Mode rows use lexical mode order. JSON object layout and Markdown sections are stable for identical validated input.
 
-The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers per input. It rejects higher-cardinality logs instead of retaining unbounded aggregation state.
+The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers per input. Key tokens and mapping IDs are limited to 256 encoded bytes each. It rejects inputs outside either bound instead of retaining unbounded aggregation state.
 
-Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is replaced rather than followed.
+Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is replaced rather than followed. If either publication fails, the CLI rolls back both destinations to their previous state.
 
 ## Privacy boundary
 

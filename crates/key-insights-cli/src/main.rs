@@ -56,8 +56,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let summary_output =
         StagedOutput::create(&paths.summary, render_summary_json(&summary).as_bytes())?;
     let report_output = StagedOutput::create(&paths.report, render_markdown(&summary).as_bytes())?;
-    summary_output.publish()?;
-    report_output.publish()?;
+    publish_pair(summary_output, report_output)?;
     Ok(())
 }
 
@@ -75,7 +74,7 @@ fn resolve_paths(input: &Path, summary: &Path, report: &Path) -> Result<Resolved
     if same_file(&input, &summary) || same_file(&input, &report) {
         return Err("output paths must not overwrite the input log".to_owned());
     }
-    if same_file(&summary, &report) {
+    if output_paths_may_collide(&summary, &report) {
         return Err("summary and report paths must be different".to_owned());
     }
     Ok(ResolvedPaths {
@@ -122,6 +121,23 @@ fn same_file(left: &Path, right: &Path) -> bool {
         return true;
     }
     same_file_metadata(left, right)
+}
+
+fn output_paths_may_collide(left: &Path, right: &Path) -> bool {
+    if same_file(left, right) {
+        return true;
+    }
+    let same_parent = match (left.parent(), right.parent()) {
+        (Some(left), Some(right)) => same_file(left, right),
+        _ => false,
+    };
+    same_parent
+        && match (left.file_name(), right.file_name()) {
+            (Some(left), Some(right)) => left
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&right.to_string_lossy()),
+            _ => false,
+        }
 }
 
 #[cfg(unix)]
@@ -215,6 +231,152 @@ impl Drop for StagedOutput {
     }
 }
 
+struct OutputBackup {
+    destination: PathBuf,
+    backup_path: Option<PathBuf>,
+}
+
+impl OutputBackup {
+    fn capture(destination: &Path) -> Result<Self, String> {
+        match fs::symlink_metadata(destination) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self {
+                destination: destination.to_owned(),
+                backup_path: None,
+            }),
+            Ok(metadata) if metadata.is_dir() => Err(format!(
+                "output destination became a directory: {}",
+                destination.display()
+            )),
+            Ok(_) => {
+                let backup_path = unused_sibling_path(destination, "backup")?;
+                fs::rename(destination, &backup_path).map_err(|error| {
+                    format!(
+                        "failed to preserve existing output {}: {error}",
+                        destination.display()
+                    )
+                })?;
+                Ok(Self {
+                    destination: destination.to_owned(),
+                    backup_path: Some(backup_path),
+                })
+            }
+            Err(error) => Err(format!(
+                "failed to inspect output {} before publication: {error}",
+                destination.display()
+            )),
+        }
+    }
+
+    fn restore(&mut self) -> Result<(), String> {
+        match fs::symlink_metadata(&self.destination) {
+            Ok(metadata) if metadata.is_dir() => {
+                return Err(format!(
+                    "cannot restore output over directory {}",
+                    self.destination.display()
+                ));
+            }
+            Ok(_) => fs::remove_file(&self.destination).map_err(|error| {
+                format!(
+                    "failed to remove unpublished output {}: {error}",
+                    self.destination.display()
+                )
+            })?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect output {} during rollback: {error}",
+                    self.destination.display()
+                ));
+            }
+        }
+        if let Some(backup_path) = self.backup_path.take() {
+            fs::rename(&backup_path, &self.destination).map_err(|error| {
+                format!(
+                    "failed to restore previous output {}: {error}",
+                    self.destination.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    fn discard(mut self) {
+        if let Some(backup_path) = self.backup_path.take() {
+            let _ = fs::remove_file(backup_path);
+        }
+    }
+}
+
+fn publish_pair(summary: StagedOutput, report: StagedOutput) -> Result<(), String> {
+    let mut summary_backup = OutputBackup::capture(&summary.destination)?;
+    let mut report_backup = match OutputBackup::capture(&report.destination) {
+        Ok(backup) => backup,
+        Err(error) => {
+            return Err(with_rollback(error, [&mut summary_backup]));
+        }
+    };
+
+    if let Err(error) = summary.publish() {
+        return Err(with_rollback(
+            error,
+            [&mut summary_backup, &mut report_backup],
+        ));
+    }
+    if let Err(error) = report.publish() {
+        return Err(with_rollback(
+            error,
+            [&mut summary_backup, &mut report_backup],
+        ));
+    }
+
+    summary_backup.discard();
+    report_backup.discard();
+    Ok(())
+}
+
+fn with_rollback<const N: usize>(error: String, backups: [&mut OutputBackup; N]) -> String {
+    let rollback_errors: Vec<_> = backups
+        .into_iter()
+        .filter_map(|backup| backup.restore().err())
+        .collect();
+    if rollback_errors.is_empty() {
+        error
+    } else {
+        format!("{error}; rollback failed: {}", rollback_errors.join("; "))
+    }
+}
+
+fn unused_sibling_path(destination: &Path, label: &str) -> Result<PathBuf, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?
+        .to_string_lossy();
+    for _attempt in 0..100 {
+        let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{name}.key-insights.{label}-{}-{identifier}",
+            std::process::id()
+        ));
+        match fs::symlink_metadata(&candidate) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to reserve sibling path for {}: {error}",
+                    destination.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "failed to reserve sibling path for {}",
+        destination.display()
+    ))
+}
+
 fn open_private_new_file(path: &Path) -> std::io::Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -239,7 +401,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{StagedOutput, resolve_paths};
+    use super::{StagedOutput, publish_pair, resolve_paths};
 
     #[test]
     fn atomic_publication_replaces_a_swapped_symlink_without_following_it() {
@@ -277,6 +439,45 @@ mod tests {
                 .expect("output metadata")
                 .file_type()
                 .is_symlink()
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn failed_second_publication_restores_the_previous_pair() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-rollback-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+        let summary_output =
+            StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+        let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+        fs::remove_file(
+            report_output
+                .temporary_path
+                .as_ref()
+                .expect("report temporary path"),
+        )
+        .expect("force second publication failure");
+
+        publish_pair(summary_output, report_output).expect_err("publication must fail");
+
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read summary"),
+            "old summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read report"),
+            "old report\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }

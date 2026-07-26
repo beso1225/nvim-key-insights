@@ -7,7 +7,8 @@ use std::{
 };
 
 use key_insights::{
-    MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, analyze_jsonl, render_markdown, render_summary_json,
+    MAX_DISTINCT_ITEMS, MAX_KEY_TOKEN_BYTES, MAX_MAPPING_ID_BYTES, MAX_RANKED_ITEMS, analyze_jsonl,
+    render_markdown, render_summary_json,
 };
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
@@ -285,6 +286,62 @@ fn cli_refuses_dangling_output_symlinks() {
             .is_symlink()
     );
     assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn analyzer_rejects_oversized_retained_tokens() {
+    let oversized_key = "k".repeat(MAX_KEY_TOKEN_BYTES + 1);
+    let key_event = serde_json::json!({
+        "schema_version": 1,
+        "event_type": "key_sequence",
+        "session_id": "one",
+        "elapsed_ms": 1,
+        "mode": "normal",
+        "keys": [oversized_key],
+        "duration_ms": 0
+    });
+    let key_input = format!(
+        "{}\n{key_event}\n{}\n",
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":2}"#
+    );
+    let key_error = analyze_jsonl(Cursor::new(key_input)).expect_err("key must be bounded");
+    assert!(key_error.to_string().contains("key token exceeds"));
+
+    let oversized_mapping = "m".repeat(MAX_MAPPING_ID_BYTES + 1);
+    let mapping_event = serde_json::json!({
+        "schema_version": 1,
+        "event_type": "mapping_use",
+        "session_id": "one",
+        "elapsed_ms": 1,
+        "mode": "normal",
+        "mapping_id": oversized_mapping,
+        "typed_keys": ["g"]
+    });
+    let mapping_input = format!(
+        "{}\n{mapping_event}\n{}\n",
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":2}"#
+    );
+    let mapping_error =
+        analyze_jsonl(Cursor::new(mapping_input)).expect_err("mapping ID must be bounded");
+    assert!(mapping_error.to_string().contains("mapping ID exceeds"));
+}
+
+#[test]
+fn cli_rejects_absent_output_names_that_differ_only_by_ascii_case() {
+    let directory = temporary_directory("case-collision");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("result");
+    let report = directory.join("RESULT");
+    fs::write(&input, INPUT).expect("write input");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(!summary.exists());
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 

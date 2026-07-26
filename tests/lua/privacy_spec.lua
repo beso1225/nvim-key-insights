@@ -44,11 +44,33 @@ assert(sequence.mapped == nil, "mapping RHS must not enter key_sequence events")
 
 local ok = pcall(schema.key_sequence, "session-one", 20, "insert", { "s" }, 1)
 assert(ok == false, "Insert-mode sequences must be rejected")
+assert(
+  pcall(
+    schema.key_sequence,
+    "session-one",
+    20,
+    "normal",
+    { string.rep("k", schema.MAX_KEY_TOKEN_BYTES + 1) },
+    1
+  ) == false,
+  "oversized key tokens must be rejected at the collector boundary"
+)
 
 local mapping = schema.mapping_use("session-one", 25, "normal", "mapping-42", { "<leader>", "f" })
 assert(mapping.mapping_id == "mapping-42")
 assert(mapping.typed_keys[1] == "<leader>")
 assert(mapping.mapped_keys == nil, "mapping RHS must not be stored")
+assert(
+  pcall(
+    schema.mapping_use,
+    "session-one",
+    25,
+    "normal",
+    string.rep("m", schema.MAX_MAPPING_ID_BYTES + 1),
+    { "g" }
+  ) == false,
+  "oversized mapping IDs must be rejected at the collector boundary"
+)
 
 local encoded = schema.encode(text_run)
 assert(string.sub(encoded, -1) == "\n", "JSONL records must end with one newline")
