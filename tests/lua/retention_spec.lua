@@ -67,6 +67,8 @@ write_at(vim.fs.joinpath(directory, partial_name("crashed")), "partial", NOW_SEC
 write_at(vim.fs.joinpath(directory, lock_name("crashed")), "lock", NOW_SECONDS - 90 * DAY_SECONDS)
 write_at(vim.fs.joinpath(directory, "notes.jsonl.backup"), "unrelated", NOW_SECONDS - 90 * DAY_SECONDS)
 write_at(vim.fs.joinpath(directory, "report.jsonl"), "unrelated", NOW_SECONDS - 90 * DAY_SECONDS)
+local custom_legacy_name = string.rep("f", 32) .. ".jsonl"
+write_at(vim.fs.joinpath(directory, custom_legacy_name), "unrelated", NOW_SECONDS - 90 * DAY_SECONDS)
 
 local store = storage.new({
   directory = directory,
@@ -82,16 +84,47 @@ finalize(store, "current")
 
 local retained_names = basenames(directory .. "/*.jsonl")
 assert(vim.deep_equal(retained_names, {
+  custom_legacy_name,
   log_name("count-old"),
   log_name("current"),
   log_name("recent-a"),
   log_name("recent-b"),
   "report.jsonl",
 }), "retention must remove expired logs before pruning the oldest excess sessions: " .. vim.inspect(retained_names))
-for _, protected_name in ipairs({ partial_name("crashed"), lock_name("crashed"), "notes.jsonl.backup", "report.jsonl" }) do
+for _, protected_name in ipairs({
+  partial_name("crashed"),
+  lock_name("crashed"),
+  "notes.jsonl.backup",
+  "report.jsonl",
+  custom_legacy_name,
+}) do
   assert(vim.uv.fs_stat(vim.fs.joinpath(directory, protected_name)) ~= nil, protected_name .. " must not be pruned")
 end
 vim.fn.delete(directory, "rf")
+
+local legacy_directory = vim.fn.tempname()
+vim.fn.mkdir(legacy_directory, "p", 448)
+local expired_legacy_name = string.rep("a", 32) .. ".jsonl"
+local excess_legacy_name = string.rep("b", 32) .. ".jsonl"
+write_at(vim.fs.joinpath(legacy_directory, expired_legacy_name), "expired", NOW_SECONDS - 31 * DAY_SECONDS)
+write_at(vim.fs.joinpath(legacy_directory, excess_legacy_name), "excess", NOW_SECONDS - DAY_SECONDS)
+local legacy_store = storage.new({
+  default_directory = function()
+    return legacy_directory
+  end,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 1,
+  },
+})
+finalize(legacy_store, "current")
+assert(vim.deep_equal(basenames(legacy_directory .. "/*.jsonl"), {
+  log_name("current"),
+}), "the default collector directory must continue pruning pre-namespace logs")
+vim.fn.delete(legacy_directory, "rf")
 
 local boundary_directory = vim.fn.tempname()
 vim.fn.mkdir(boundary_directory, "p", 448)

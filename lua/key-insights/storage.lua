@@ -76,7 +76,10 @@ end
 
 function M.new(options)
   local config = options or {}
-  local directory = config.directory or default_directory()
+  local directory_provider = config.default_directory or default_directory
+  local collector_directory = directory_provider()
+  local directory = config.directory or collector_directory
+  local uses_default_directory = directory == collector_directory
   local retention = vim.tbl_extend("force", DEFAULT_RETENTION, config.retention or {})
   assert(type(directory) == "string" and directory ~= "", "storage directory must be a non-empty string")
   validate_positive_integer(retention.max_sessions, "storage.retention.max_sessions")
@@ -86,6 +89,7 @@ function M.new(options)
   return setmetatable({
     directory = directory,
     _fs = config.fs or vim.uv,
+    _include_legacy_logs = uses_default_directory,
     _is_process_alive = config.is_process_alive or default_is_process_alive,
     _mkdir = config.mkdir or vim.fn.mkdir,
     _now_seconds = config.now_seconds or os.time,
@@ -165,6 +169,12 @@ function Storage:_finalized_logs()
     local log_session_id = entry_type == "file"
         and string.match(name, "^" .. FILE_PREFIX_PATTERN .. "([%w_-]+)%.jsonl$")
       or nil
+    if log_session_id == nil and self._include_legacy_logs and entry_type == "file" then
+      local legacy_session_id = string.match(name, "^([0-9a-f]+)%.jsonl$")
+      if legacy_session_id ~= nil and #legacy_session_id == 32 then
+        log_session_id = legacy_session_id
+      end
+    end
     if lock_session_id ~= nil then
       lock_paths[lock_session_id] = vim.fs.joinpath(self.directory, name)
     elseif log_session_id ~= nil then

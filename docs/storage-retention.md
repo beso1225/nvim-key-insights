@@ -28,7 +28,7 @@ The collector:
 
 The session being finalized is always protected. A finalized log whose versioned lock identifies a live owner process is also protected so concurrent Neovim processes cannot delete one another's in-progress publications. This can temporarily exceed `max_sessions`; after the owner exits, a later successful finalization converges to the configured bound. Stale, empty, or malformed locks do not exempt a finalized log from retention. A reused process ID can conservatively delay pruning until that process exits, but it cannot cause an unrelated file to be deleted.
 
-Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
+Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. In the collector-owned default directory only, it also recognizes the previous 32-character lowercase hexadecimal filename format so upgrades do not exempt historical logs from the privacy boundary. Legacy-shaped files in a custom directory remain untouched. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
 
 ## Failure behavior
 
