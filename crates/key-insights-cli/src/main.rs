@@ -348,14 +348,12 @@ impl OutputBackup {
                 "output destination became a directory: {}",
                 destination.display()
             )),
+            Ok(metadata) if !metadata.is_file() => Err(format!(
+                "output destination became a non-regular file: {}",
+                destination.display()
+            )),
             Ok(_) => {
-                let backup_path = unused_sibling_path(destination, "backup")?;
-                fs::rename(destination, &backup_path).map_err(|error| {
-                    format!(
-                        "failed to preserve existing output {}: {error}",
-                        destination.display()
-                    )
-                })?;
+                let backup_path = move_to_unused_sibling(destination, "backup")?;
                 Ok(Self {
                     destination: destination.to_owned(),
                     backup_path: Some(backup_path),
@@ -390,13 +388,14 @@ impl OutputBackup {
                 ));
             }
         }
-        if let Some(backup_path) = self.backup_path.take() {
-            fs::rename(&backup_path, &self.destination).map_err(|error| {
+        if let Some(backup_path) = &self.backup_path {
+            fs::rename(backup_path, &self.destination).map_err(|error| {
                 format!(
                     "failed to restore previous output {}: {error}",
                     self.destination.display()
                 )
             })?;
+            self.backup_path = None;
         }
         Ok(())
     }
@@ -447,7 +446,7 @@ fn with_rollback<const N: usize>(error: String, backups: [&mut OutputBackup; N])
     }
 }
 
-fn unused_sibling_path(destination: &Path, label: &str) -> Result<PathBuf, String> {
+fn move_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, String> {
     let parent = destination
         .parent()
         .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
@@ -461,20 +460,40 @@ fn unused_sibling_path(destination: &Path, label: &str) -> Result<PathBuf, Strin
             ".{name}.key-insights.{label}-{}-{identifier}",
             std::process::id()
         ));
-        match fs::symlink_metadata(&candidate) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
-            Ok(_) => continue,
+        match rename_without_replacement(destination, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(format!(
-                    "failed to reserve sibling path for {}: {error}",
+                    "failed to preserve existing output {}: {error}",
                     destination.display()
                 ));
             }
         }
     }
     Err(format!(
-        "failed to reserve sibling path for {}",
+        "failed to reserve a backup path for {}",
         destination.display()
+    ))
+}
+
+#[cfg(any(target_os = "linux", target_vendor = "apple"))]
+fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(Into::into)
+}
+
+#[cfg(windows)]
+fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
+fn rename_without_replacement(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
     ))
 }
 
@@ -512,7 +531,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{StagedOutput, publish_pair, resolve_paths};
+    use super::{
+        OutputBackup, StagedOutput, publish_pair, rename_without_replacement, resolve_paths,
+    };
 
     #[test]
     fn atomic_publication_replaces_a_swapped_symlink_without_following_it() {
@@ -589,6 +610,72 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&report).expect("read report"),
             "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn backup_rename_never_replaces_an_existing_entry() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-backup-reservation-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let source = directory.join("summary.json");
+        let occupied_backup = directory.join("occupied-backup");
+        fs::write(&source, "previous summary\n").expect("write prior output");
+        fs::write(&occupied_backup, "unrelated\n").expect("write unrelated file");
+
+        let error = rename_without_replacement(&source, &occupied_backup)
+            .expect_err("occupied backup path must not be replaced");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&source).expect("source survives"),
+            "previous summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&occupied_backup).expect("unrelated backup survives"),
+            "unrelated\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn backup_capture_refuses_a_swapped_output_symlink() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-backup-symlink-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let destination = directory.join("summary.json");
+        let target = directory.join("target");
+        fs::write(&target, "unrelated\n").expect("write symlink target");
+        symlink(&target, &destination).expect("swap destination to symlink");
+
+        let error = match OutputBackup::capture(&destination) {
+            Ok(_) => panic!("symlink must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("non-regular file"));
+        assert!(
+            fs::symlink_metadata(&destination)
+                .expect("symlink survives")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(&target).expect("read target"),
+            "unrelated\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }
