@@ -1,6 +1,7 @@
 use std::{cmp::Reverse, collections::BTreeMap, fmt::Write, io::BufRead};
 
 use serde::Serialize;
+use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
     Event, SCHEMA_VERSION, SequenceMode, ValidationError, validator::for_each_validated_event,
@@ -476,9 +477,21 @@ fn html_code(value: &str) -> String {
             '|' => escaped.push_str("&#124;"),
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
-            character if character.is_control() => escaped.extend(character.escape_default()),
+            character if must_escape_unicode_category(character) => {
+                escaped.extend(character.escape_default());
+            }
             _ => escaped.push(character),
         }
     }
     format!("<code>{escaped}</code>")
+}
+
+fn must_escape_unicode_category(character: char) -> bool {
+    matches!(
+        get_general_category(character),
+        GeneralCategory::Control
+            | GeneralCategory::Format
+            | GeneralCategory::LineSeparator
+            | GeneralCategory::ParagraphSeparator
+    )
 }

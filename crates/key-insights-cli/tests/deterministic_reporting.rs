@@ -184,6 +184,44 @@ fn report_escapes_terminal_control_characters_in_tokens() {
 }
 
 #[test]
+fn report_escapes_unicode_format_and_separator_characters_in_tokens() {
+    let format_controls = "\u{202e}\u{2066}";
+    let separators = "\u{2028}\u{2029}";
+    let key_event = serde_json::json!({
+        "schema_version": 1,
+        "event_type": "key_sequence",
+        "session_id": "one",
+        "elapsed_ms": 1,
+        "mode": "normal",
+        "keys": [format!("key-{format_controls}")],
+        "duration_ms": 0
+    });
+    let mapping_event = serde_json::json!({
+        "schema_version": 1,
+        "event_type": "mapping_use",
+        "session_id": "one",
+        "elapsed_ms": 2,
+        "mode": "normal",
+        "mapping_id": format!("map-{separators}"),
+        "typed_keys": ["g"]
+    });
+    let input = format!(
+        "{}\n{key_event}\n{mapping_event}\n{}\n",
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":3}"#
+    );
+
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid input");
+    let report = render_markdown(&summary);
+
+    assert!(report.contains(r"<code>key-\u{202e}\u{2066}</code>"));
+    assert!(report.contains(r"<code>map-\u{2028}\u{2029}</code>"));
+    for character in format_controls.chars().chain(separators.chars()) {
+        assert!(!report.contains(character));
+    }
+}
+
+#[test]
 fn cli_refuses_to_overwrite_the_input_log() {
     let directory = temporary_directory("overwrite");
     fs::create_dir(&directory).expect("create test directory");
