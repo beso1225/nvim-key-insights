@@ -72,6 +72,23 @@ pub(super) fn recover_outputs_anchored(
     summary: &ResolvedOutputPath,
     report: &ResolvedOutputPath,
 ) -> Result<(), String> {
+    recover_outputs_anchored_with_scavenger(
+        summary,
+        report,
+        current_unix_time_seconds()?,
+        staged_output_process_is_alive,
+    )
+}
+
+pub(super) fn recover_outputs_anchored_with_scavenger<F>(
+    summary: &ResolvedOutputPath,
+    report: &ResolvedOutputPath,
+    now_seconds: u64,
+    mut process_is_alive: F,
+) -> Result<(), String>
+where
+    F: FnMut(u32) -> bool,
+{
     summary.directory.verify_current()?;
     report.directory.verify_current()?;
     let _locks = OutputLocks::acquire_anchored(summary, report)?;
@@ -83,7 +100,13 @@ pub(super) fn recover_outputs_anchored(
     let paths = PairRecoveryPaths::new(summary.as_path(), report.as_path())?;
     recover_pair_anchored(summary, report, &paths)?;
     summary.directory.verify_current()?;
-    report.directory.verify_current()
+    report.directory.verify_current()?;
+    scavenge_staged_outputs(summary, now_seconds, &mut process_is_alive)?;
+    if same_file(&summary.directory.path, &report.directory.path) {
+        Ok(())
+    } else {
+        scavenge_staged_outputs(report, now_seconds, &mut process_is_alive)
+    }
 }
 
 pub(super) fn read_recovery_index_anchored(

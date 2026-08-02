@@ -384,6 +384,8 @@ impl ResolvedDirectory {
                 inode: metadata.st_ino,
                 mode: metadata.st_mode,
                 links: metadata.st_nlink,
+                owner: metadata.st_uid,
+                modified_seconds: metadata.st_mtime,
             }))
         } else {
             let error = std::io::Error::last_os_error();
@@ -423,6 +425,8 @@ pub(super) struct ChildMetadata {
     inode: libc::ino_t,
     mode: libc::mode_t,
     links: libc::nlink_t,
+    owner: libc::uid_t,
+    modified_seconds: libc::time_t,
 }
 
 #[cfg(unix)]
@@ -433,6 +437,21 @@ impl ChildMetadata {
 
     pub(super) fn same_identity(self, other: Self) -> bool {
         self.device == other.device && self.inode == other.inode
+    }
+
+    pub(super) fn is_private_file_owned_by_current_user(self) -> bool {
+        self.is_regular_file()
+            && self.links == 1
+            && self.mode & 0o777 == 0o600
+            && self.owner == unsafe { libc::geteuid() }
+    }
+
+    pub(super) fn is_at_least_age(self, now_seconds: u64, age_seconds: u64) -> bool {
+        u64::try_from(self.modified_seconds)
+            .ok()
+            .is_some_and(|modified| {
+                modified <= now_seconds && now_seconds - modified >= age_seconds
+            })
     }
 
     #[allow(clippy::unnecessary_cast)]
@@ -457,6 +476,14 @@ impl ChildMetadata {
     }
 
     pub(super) fn same_identity(self, _other: Self) -> bool {
+        false
+    }
+
+    pub(super) fn is_private_file_owned_by_current_user(self) -> bool {
+        false
+    }
+
+    pub(super) fn is_at_least_age(self, _now_seconds: u64, _age_seconds: u64) -> bool {
         false
     }
 

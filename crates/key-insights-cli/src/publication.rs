@@ -1,5 +1,10 @@
 use super::*;
 
+const STAGED_OUTPUT_VERSION: u8 = 1;
+const STALE_STAGE_AGE_SECONDS: u64 = 24 * 60 * 60;
+const MAX_STAGE_SCAN_ENTRIES: usize = 1024;
+pub(super) const MAX_STAGE_REMOVALS: usize = 128;
+
 pub(super) fn same_file(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -117,6 +122,135 @@ pub(super) fn probe_name_collision(
     }
 }
 
+pub(super) fn staged_output_name(
+    destination_name: &std::ffi::OsStr,
+    process_id: u32,
+    identifier: u64,
+) -> std::ffi::OsString {
+    staged_output_name_with_label(
+        &bounded_file_label(destination_name),
+        process_id,
+        identifier,
+    )
+}
+
+fn staged_output_name_with_label(
+    label: &str,
+    process_id: u32,
+    identifier: u64,
+) -> std::ffi::OsString {
+    format!(".key-insights.v{STAGED_OUTPUT_VERSION}.{label}.stage-{process_id}-{identifier}").into()
+}
+
+fn staged_output_process_id(name: &std::ffi::OsStr) -> Option<u32> {
+    let name = name.to_str()?;
+    let prefix = format!(".key-insights.v{STAGED_OUTPUT_VERSION}.");
+    let versioned_name = name.strip_prefix(&prefix)?;
+    let (label, suffix) = versioned_name.rsplit_once(".stage-")?;
+    if label.is_empty()
+        || label.len() > 96
+        || bounded_file_label(std::ffi::OsStr::new(label)) != label
+    {
+        return None;
+    }
+    let (process_id, identifier) = suffix.split_once('-')?;
+    if identifier.is_empty() || identifier.contains('-') || identifier.parse::<u64>().is_err() {
+        return None;
+    }
+    let process_id = process_id.parse::<u32>().ok()?;
+    (process_id > 0 && process_id <= i32::MAX as u32).then_some(process_id)
+}
+
+pub(super) fn current_unix_time_seconds() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))
+}
+
+#[cfg(unix)]
+pub(super) fn staged_output_process_is_alive(process_id: u32) -> bool {
+    let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+pub(super) fn staged_output_process_is_alive(_process_id: u32) -> bool {
+    true
+}
+
+pub(super) fn scavenge_staged_outputs<F>(
+    output: &ResolvedOutputPath,
+    now_seconds: u64,
+    process_is_alive: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(u32) -> bool,
+{
+    output.directory.verify_current()?;
+    let entries = fs::read_dir(&output.directory.path).map_err(|error| {
+        format!(
+            "failed to scan staged outputs in {}: {error}",
+            output.directory.path.display()
+        )
+    })?;
+    let mut candidates = Vec::new();
+    for entry in entries.take(MAX_STAGE_SCAN_ENTRIES) {
+        let name = entry
+            .map_err(|error| format!("failed to scan staged output entry: {error}"))?
+            .file_name();
+        if let Some(process_id) = staged_output_process_id(&name) {
+            candidates.push((name, process_id));
+        }
+    }
+    output.directory.verify_current()?;
+
+    let mut removals = 0;
+    for (name, process_id) in candidates {
+        if removals >= MAX_STAGE_REMOVALS || process_is_alive(process_id) {
+            continue;
+        }
+        let Some(metadata) = output
+            .directory
+            .child_metadata(&name)
+            .map_err(|error| format!("failed to inspect staged output: {error}"))?
+        else {
+            continue;
+        };
+        if !metadata.is_private_file_owned_by_current_user()
+            || !metadata.is_at_least_age(now_seconds, STALE_STAGE_AGE_SECONDS)
+        {
+            continue;
+        }
+        let Some(file) = output
+            .directory
+            .open_read_file(&name)
+            .map_err(|error| format!("failed to open stale staged output: {error}"))?
+        else {
+            continue;
+        };
+        if !output
+            .directory
+            .open_file_matches_child(&file, &name)
+            .map_err(|error| format!("failed to verify stale staged output: {error}"))?
+        {
+            return Err("staged output changed during scavenging".to_owned());
+        }
+        output
+            .directory
+            .remove_child(&name)
+            .map_err(|error| format!("failed to remove stale staged output: {error}"))?;
+        removals += 1;
+    }
+    if removals > 0 {
+        output
+            .directory
+            .sync()
+            .map_err(|error| format!("failed to sync staged output cleanup: {error}"))?;
+    }
+    output.directory.verify_current()
+}
+
 pub(super) struct StagedOutput {
     pub(super) temporary_name: Option<std::ffi::OsString>,
     pub(super) destination: PathBuf,
@@ -136,14 +270,10 @@ impl StagedOutput {
         let name = destination
             .file_name()
             .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?;
-        let label = bounded_file_label(name);
-
         for _attempt in 0..100 {
             let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let temporary_path = parent.join(format!(
-                ".key-insights.{label}.tmp-{}-{identifier}",
-                std::process::id()
-            ));
+            let temporary_path =
+                parent.join(staged_output_name(name, std::process::id(), identifier));
             let temporary_name = temporary_path
                 .file_name()
                 .expect("temporary output has a file name");

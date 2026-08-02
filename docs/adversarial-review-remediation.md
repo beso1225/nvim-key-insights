@@ -27,7 +27,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 | R3 | P1 | An output ancestor can be replaced after path resolution | Complete |
 | R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Complete |
 | R5 | P2 | Total session duration silently saturates on overflow | Complete |
-| R6 | P3 | Abrupt termination can leave staged output files indefinitely | Pending |
+| R6 | P3 | Abrupt termination can leave staged output files indefinitely | Complete |
 
 ## R1: Make recovery cleanup restartable
 
@@ -262,6 +262,15 @@ type, ownership assumptions, age or process liveness, and directory identity.
 - Stale owned staging files are eventually removed.
 - Current-process and unrelated files are never removed.
 - Cleanup is bounded in both directory work and retained metadata.
+
+Status: complete. Staged outputs use a bounded versioned name containing the
+creating process ID. Startup recovery scans at most 1,024 entries per output
+directory and removes at most 128 artifacts per pass while holding the
+publication locks. Removal requires an exact versioned name, a dead process,
+an age of at least 24 hours, current-user ownership, mode `0600`, a regular
+file with one link, and identity revalidation through the opened directory
+handle. Repeated passes provide eventual cleanup without unbounded retained
+metadata.
 
 ## Final verification
 

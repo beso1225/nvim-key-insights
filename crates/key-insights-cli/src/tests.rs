@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::symlink,
+    os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -9,6 +9,179 @@ use super::{
     OutputBackup, OutputLocks, StagedOutput, link_without_replacement, open_private_lock_file,
     output_lock_path, publish_pair, publish_pair_with_hook, resolve_paths,
 };
+
+#[test]
+fn startup_scavenging_removes_only_owned_stale_staged_outputs() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-stage-scavenging-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, "raw input\n").expect("write input");
+    let paths = resolve_paths(&input, &summary, &report).expect("resolve safe paths");
+    let dead_pid = if std::process::id() == 1 { 2 } else { 1 };
+    assert!(super::staged_output_process_is_alive(std::process::id()));
+
+    let stale_name =
+        super::staged_output_name(summary.file_name().expect("summary name"), dead_pid, 1);
+    drop(
+        paths
+            .summary
+            .directory
+            .open_private_new_file(&stale_name)
+            .expect("create stale staged output"),
+    );
+    let renamed_output_stale_name =
+        super::staged_output_name(std::ffi::OsStr::new("old-summary.json"), dead_pid, 1);
+    drop(
+        paths
+            .summary
+            .directory
+            .open_private_new_file(&renamed_output_stale_name)
+            .expect("create stale stage for a prior output name"),
+    );
+
+    let live = StagedOutput::create(&paths.report, b"live report\n").expect("create live stage");
+    let live_name = live
+        .temporary_name
+        .as_ref()
+        .expect("live stage name")
+        .clone();
+    assert!(live_name.to_string_lossy().starts_with(".key-insights.v1."));
+    assert!(live_name.len() <= 255);
+
+    let wrong_permissions_name =
+        super::staged_output_name(summary.file_name().expect("summary name"), dead_pid, 2);
+    let wrong_permissions_path = directory.join(&wrong_permissions_name);
+    fs::write(&wrong_permissions_path, "unrelated\n").expect("write unrelated file");
+    fs::set_permissions(&wrong_permissions_path, fs::Permissions::from_mode(0o644))
+        .expect("set unrelated permissions");
+    let linked_name =
+        super::staged_output_name(summary.file_name().expect("summary name"), dead_pid, 4);
+    let linked_path = directory.join(&linked_name);
+    drop(
+        paths
+            .summary
+            .directory
+            .open_private_new_file(&linked_name)
+            .expect("create linked unrelated file"),
+    );
+    let linked_peer = directory.join("unrelated-hard-link");
+    fs::hard_link(&linked_path, &linked_peer).expect("link unrelated file");
+    let malformed_name = format!(
+        ".key-insights.v1.{}.stage-not-a-process",
+        super::bounded_file_label(summary.file_name().expect("summary name"))
+    );
+    fs::write(directory.join(&malformed_name), "unrelated\n").expect("write malformed file");
+    let symlink_name =
+        super::staged_output_name(summary.file_name().expect("summary name"), dead_pid, 3);
+    symlink(&input, directory.join(&symlink_name)).expect("create unrelated symlink");
+
+    super::recover_outputs_anchored_with_scavenger(
+        &paths.summary,
+        &paths.report,
+        super::current_unix_time_seconds().expect("current time"),
+        |_| false,
+    )
+    .expect("preserve fresh staged outputs");
+
+    assert!(directory.join(&stale_name).exists());
+    assert!(directory.join(&renamed_output_stale_name).exists());
+
+    super::recover_outputs_anchored_with_scavenger(
+        &paths.summary,
+        &paths.report,
+        u64::MAX,
+        |pid| pid == std::process::id(),
+    )
+    .expect("recover and scavenge outputs");
+
+    assert!(!directory.join(stale_name).exists());
+    assert!(!directory.join(renamed_output_stale_name).exists());
+    assert!(directory.join(live_name).exists());
+    assert!(wrong_permissions_path.exists());
+    assert!(linked_path.exists());
+    assert!(linked_peer.exists());
+    assert!(directory.join(malformed_name).exists());
+    assert!(
+        fs::symlink_metadata(directory.join(symlink_name))
+            .expect("inspect unrelated symlink")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(&input).expect("read input"),
+        "raw input\n"
+    );
+
+    drop(live);
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn startup_scavenging_bounds_each_cleanup_pass() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-stage-cleanup-bound-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, "raw input\n").expect("write input");
+    let paths = resolve_paths(&input, &summary, &report).expect("resolve safe paths");
+    let dead_pid = if std::process::id() == 1 { 2 } else { 1 };
+    let names: Vec<_> = (0..=super::MAX_STAGE_REMOVALS)
+        .map(|identifier| {
+            super::staged_output_name(
+                summary.file_name().expect("summary name"),
+                dead_pid,
+                identifier as u64,
+            )
+        })
+        .collect();
+    for name in &names {
+        drop(
+            paths
+                .summary
+                .directory
+                .open_private_new_file(name)
+                .expect("create stale staged output"),
+        );
+    }
+
+    super::recover_outputs_anchored_with_scavenger(&paths.summary, &paths.report, u64::MAX, |_| {
+        false
+    })
+    .expect("run bounded cleanup pass");
+
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| directory.join(name).exists())
+            .count(),
+        1
+    );
+
+    super::recover_outputs_anchored_with_scavenger(&paths.summary, &paths.report, u64::MAX, |_| {
+        false
+    })
+    .expect("run eventual cleanup pass");
+    assert!(names.iter().all(|name| !directory.join(name).exists()));
+
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
 
 #[test]
 fn staged_output_rename_does_not_follow_a_swapped_symlink() {
