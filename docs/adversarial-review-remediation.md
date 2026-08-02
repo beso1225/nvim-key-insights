@@ -98,13 +98,14 @@ the temporary file; never replace an unrelated final entry.
 
 ### Result
 
-Completed with private same-directory staging and atomic no-replace rename.
-Sidecar contents are fully written and synced before the final name can become
-visible. Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses
-`renamex_np(RENAME_EXCL)`, Windows relies on its non-replacing rename behavior,
-and unsupported targets fail closed. Focused tests cover a partial persistence
-failure followed by a successful retry and preservation of an occupied final
-entry.
+Completed with private same-directory staging and atomic no-replace
+publication. Sidecar contents are fully written and synced before the final
+name can become visible. Production uses handle-relative `linkat` publication
+followed by removal of the temporary link. The pathname-only test seam uses
+`renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS, and
+non-replacing rename behavior on Windows; unsupported targets fail closed.
+Focused tests cover a partial persistence failure followed by a successful
+retry and preservation of an occupied final entry.
 
 ## R3: Bind output operations to resolved directories
 
