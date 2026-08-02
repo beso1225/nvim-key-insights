@@ -183,6 +183,20 @@ fn rejects_empty_key_sequence_payloads() {
 }
 
 #[test]
+fn rejects_empty_mapping_ids() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"one","elapsed_ms":1,"mode":"normal","mapping_id":"","typed_keys":["g"]}"#,
+        "\n",
+    );
+
+    let error = validate(input).expect_err("mapping IDs must be non-empty");
+    assert_eq!(error.line, 2);
+    assert_eq!(error.kind, ValidationErrorKind::EmptyMappingId);
+}
+
+#[test]
 fn bounds_memory_used_for_retained_session_ids() {
     let long_id = "x".repeat(MAX_SESSION_ID_BYTES + 1);
     let input = format!(

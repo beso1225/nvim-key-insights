@@ -1,8 +1,14 @@
 //! Deterministic analysis primitives shared by the CLI and its tests.
 
+mod analyzer;
 mod event;
 mod validator;
 
+pub use analyzer::{
+    AnalysisError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS,
+    MAX_RETAINED_TOKEN_BYTES, MappingCount, ModeStats, RepeatedKeyStats, analyze_jsonl,
+    render_markdown, render_summary_json,
+};
 pub use event::{Event, Mode, SequenceMode};
 pub use validator::{
     MAX_EVENT_LINE_BYTES, MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationError,

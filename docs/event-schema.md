@@ -21,7 +21,7 @@ The default event stream does not contain an absolute timestamp or file path. Pr
 - `mode_transition` records `from` and `to` modes.
 - `mapping_use` records a collector-generated opaque `mapping_id` and `typed_keys`. It does not record the mapping right-hand side because that value may contain commands, paths, or inserted text.
 
-Every event rejects unknown fields. Key sequences and mapping key lists must be non-empty and cannot contain empty tokens. Both collector and analyzer enforce a 64 KiB encoded event-line limit, and session IDs are limited to 128 bytes. The collector losslessly splits a large key sequence before it reaches that shared line boundary.
+Every event rejects unknown fields. Key sequences and mapping key lists must be non-empty and cannot contain empty tokens, and mapping IDs must be non-empty. Both collector and analyzer enforce a 64 KiB encoded event-line limit, and session IDs are limited to 128 bytes. The collector losslessly splits a large key sequence before it reaches that shared line boundary.
 
 The streaming validator accepts up to 4,096 complete sessions in one file, but requires matching session IDs and non-decreasing `elapsed_ms` values within each session. The session limit bounds memory retained for reuse detection. It rejects nested sessions, reused session IDs, events outside a session, and end-of-file with an unclosed session.
 
