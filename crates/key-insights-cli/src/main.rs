@@ -1,7 +1,7 @@
 use std::{
     env,
     fs::{self, File, OpenOptions},
-    io::{BufReader, Write},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::atomic::{AtomicU64, Ordering},
@@ -49,6 +49,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let summary_path = summary_path.ok_or_else(|| "missing --summary path".to_owned())?;
     let report_path = report_path.ok_or_else(|| "missing --report path".to_owned())?;
     let paths = resolve_paths(&input, &summary_path, &report_path)?;
+    recover_outputs(&paths.summary, &paths.report)?;
 
     let input_file = File::open(&paths.input)
         .map_err(|error| format!("failed to open {}: {error}", paths.input.display()))?;
@@ -338,7 +339,28 @@ struct OutputBackup {
 }
 
 impl OutputBackup {
+    #[cfg(test)]
     fn capture(destination: &Path) -> Result<Self, String> {
+        match fs::symlink_metadata(destination) {
+            Ok(metadata) if metadata.is_file() => {
+                let backup_path = link_to_unused_sibling(destination, "backup")?;
+                if let Err(error) = sync_parent_directory(destination) {
+                    let _ = fs::remove_file(&backup_path);
+                    return Err(format!(
+                        "failed to sync backup for {}: {error}",
+                        destination.display()
+                    ));
+                }
+                Ok(Self {
+                    destination: destination.to_owned(),
+                    backup_path: Some(backup_path),
+                })
+            }
+            _ => Self::capture_at(destination, unused_sibling_name(destination, "backup")?),
+        }
+    }
+
+    fn capture_at(destination: &Path, backup_path: PathBuf) -> Result<Self, String> {
         match fs::symlink_metadata(destination) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self {
                 destination: destination.to_owned(),
@@ -353,9 +375,19 @@ impl OutputBackup {
                 destination.display()
             )),
             Ok(_) => {
-                let backup_path = link_to_unused_sibling(destination, "backup")?;
+                match link_without_replacement(destination, &backup_path) {
+                    Ok(()) => {}
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::AlreadyExists
+                            && same_file(destination, &backup_path) => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "failed to link existing output {} into a backup: {error}",
+                            destination.display()
+                        ));
+                    }
+                }
                 if let Err(error) = sync_parent_directory(destination) {
-                    let _ = fs::remove_file(&backup_path);
                     return Err(format!(
                         "failed to sync backup for {}: {error}",
                         destination.display()
@@ -383,13 +415,6 @@ impl OutputBackup {
                     ));
                 }
                 Ok(_) if same_file(backup_path, &self.destination) => {
-                    fs::remove_file(backup_path).map_err(|error| {
-                        format!(
-                            "failed to remove redundant backup for {}: {error}",
-                            self.destination.display()
-                        )
-                    })?;
-                    self.backup_path = None;
                     return Ok(());
                 }
                 Ok(_) => {}
@@ -401,13 +426,14 @@ impl OutputBackup {
                     ));
                 }
             }
-            fs::rename(backup_path, &self.destination).map_err(|error| {
-                format!(
+            let restore_path = link_to_unused_sibling(backup_path, "restore")?;
+            if let Err(error) = fs::rename(&restore_path, &self.destination) {
+                let _ = fs::remove_file(&restore_path);
+                return Err(format!(
                     "failed to restore previous output {}: {error}",
                     self.destination.display()
-                )
-            })?;
-            self.backup_path = None;
+                ));
+            }
             sync_parent_directory(&self.destination).map_err(|error| {
                 format!(
                     "failed to sync restored output {}: {error}",
@@ -447,11 +473,372 @@ impl OutputBackup {
         Ok(())
     }
 
-    fn discard(mut self) {
-        if let Some(backup_path) = self.backup_path.take() {
-            let _ = fs::remove_file(backup_path);
+    fn discard(&mut self) -> Result<(), String> {
+        if let Some(backup_path) = &self.backup_path {
+            fs::remove_file(backup_path).map_err(|error| {
+                format!(
+                    "failed to remove publication backup {}: {error}",
+                    backup_path.display()
+                )
+            })?;
+            sync_parent_directory(backup_path)
+                .map_err(|error| format!("failed to sync publication backup cleanup: {error}"))?;
+            self.backup_path = None;
+        }
+        Ok(())
+    }
+}
+
+struct PairRecoveryPaths {
+    active: PathBuf,
+    committed: PathBuf,
+    summary_backup: PathBuf,
+    report_backup: PathBuf,
+}
+
+impl PairRecoveryPaths {
+    fn new(summary: &Path, report: &Path) -> Result<Self, String> {
+        let summary_parent = summary
+            .parent()
+            .ok_or_else(|| format!("output path has no parent: {}", summary.display()))?;
+        let report_parent = report
+            .parent()
+            .ok_or_else(|| format!("output path has no parent: {}", report.display()))?;
+        let identifier = pair_identifier(summary, report);
+        Ok(Self {
+            active: summary_parent.join(format!(".key-insights.pair-{identifier}.active")),
+            committed: summary_parent.join(format!(".key-insights.pair-{identifier}.committed")),
+            summary_backup: summary_parent
+                .join(format!(".key-insights.pair-{identifier}.summary.backup")),
+            report_backup: report_parent
+                .join(format!(".key-insights.pair-{identifier}.report.backup")),
+        })
+    }
+}
+
+struct PairPublication {
+    paths: PairRecoveryPaths,
+    summary_backup: OutputBackup,
+    report_backup: OutputBackup,
+}
+
+fn recover_outputs(summary: &Path, report: &Path) -> Result<(), String> {
+    let _locks = OutputLocks::acquire(summary, report)?;
+    let paths = PairRecoveryPaths::new(summary, report)?;
+    recover_pair(summary, report, &paths)
+}
+
+impl PairPublication {
+    fn begin(summary: &Path, report: &Path) -> Result<Self, String> {
+        let paths = PairRecoveryPaths::new(summary, report)?;
+        recover_pair(summary, report, &paths)?;
+        let mut summary_backup = OutputBackup::capture_at(summary, paths.summary_backup.clone())?;
+        let report_backup = match OutputBackup::capture_at(report, paths.report_backup.clone()) {
+            Ok(backup) => backup,
+            Err(error) => return Err(with_rollback(error, [&mut summary_backup])),
+        };
+        let previous_outputs = [
+            summary_backup.backup_path.is_some(),
+            report_backup.backup_path.is_some(),
+        ];
+        if let Err(error) = create_recovery_marker(&paths.active, previous_outputs) {
+            let mut report_backup = report_backup;
+            return Err(with_rollback(
+                error,
+                [&mut summary_backup, &mut report_backup],
+            ));
+        }
+        if let Err(error) = sync_parent_directory(&paths.active) {
+            let mut report_backup = report_backup;
+            let error = format!("failed to sync active publication marker: {error}");
+            let rollback = with_rollback(error, [&mut summary_backup, &mut report_backup]);
+            let _ = remove_recovery_marker(&paths.active);
+            return Err(rollback);
+        }
+        Ok(Self {
+            paths,
+            summary_backup,
+            report_backup,
+        })
+    }
+
+    fn rollback(mut self, error: String) -> String {
+        if let Err(rollback_error) =
+            restore_backups([&mut self.summary_backup, &mut self.report_backup])
+        {
+            return format!("{error}; rollback failed: {rollback_error}");
+        }
+        if let Err(marker_error) = remove_recovery_marker(&self.paths.active) {
+            return format!("{error}; failed to remove recovery marker: {marker_error}");
+        }
+        if let Err(cleanup_error) =
+            discard_backups([&mut self.summary_backup, &mut self.report_backup])
+        {
+            return format!("{error}; failed to clean rollback backups: {cleanup_error}");
+        }
+        error
+    }
+
+    fn commit(mut self) -> Result<(), String> {
+        link_without_replacement(&self.paths.active, &self.paths.committed)
+            .map_err(|error| format!("failed to commit publication recovery marker: {error}"))?;
+        sync_parent_directory(&self.paths.committed)
+            .map_err(|error| format!("failed to sync committed publication marker: {error}"))?;
+        fs::remove_file(&self.paths.active)
+            .map_err(|error| format!("failed to retire active publication marker: {error}"))?;
+        sync_parent_directory(&self.paths.committed)
+            .map_err(|error| format!("failed to sync retired publication marker: {error}"))?;
+
+        let summary = self.summary_backup.destination.clone();
+        let report = self.report_backup.destination.clone();
+        self.summary_backup.discard()?;
+        self.report_backup.discard()?;
+        sync_output_directories(&summary, &report)?;
+        remove_recovery_marker(&self.paths.committed)
+            .map_err(|error| format!("failed to remove committed publication marker: {error}"))
+    }
+}
+
+fn recover_pair(summary: &Path, report: &Path, paths: &PairRecoveryPaths) -> Result<(), String> {
+    let active = read_recovery_marker(&paths.active)?;
+    let committed = read_recovery_marker(&paths.committed)?;
+    if let (Some(active_state), Some(committed_state)) = (active, committed)
+        && (active_state != committed_state || !same_file(&paths.active, &paths.committed))
+    {
+        return Err("publication recovery markers do not describe one transaction".to_owned());
+    }
+    if let (Some(previous_outputs), None) = (active, committed) {
+        let mut summary_backup = OutputBackup {
+            destination: summary.to_owned(),
+            backup_path: recovery_backup(&paths.summary_backup, previous_outputs[0])?,
+        };
+        let mut report_backup = OutputBackup {
+            destination: report.to_owned(),
+            backup_path: recovery_backup(&paths.report_backup, previous_outputs[1])?,
+        };
+        restore_backups([&mut summary_backup, &mut report_backup]).map_err(|error| {
+            format!("failed to recover interrupted paired publication: {error}")
+        })?;
+        remove_recovery_marker(&paths.active)
+            .map_err(|error| format!("failed to remove recovered publication marker: {error}"))?;
+        discard_backups([&mut summary_backup, &mut report_backup])
+            .map_err(|error| format!("failed to clean recovered publication backups: {error}"))?;
+    } else if let Some(previous_outputs) = committed {
+        validate_committed_backup(&paths.summary_backup, previous_outputs[0])?;
+        validate_committed_backup(&paths.report_backup, previous_outputs[1])?;
+        remove_regular_file_if_present(&paths.summary_backup)?;
+        remove_regular_file_if_present(&paths.report_backup)?;
+        sync_output_directories(summary, report)?;
+        if active.is_some() {
+            remove_recovery_marker(&paths.active)?;
+        }
+        remove_recovery_marker(&paths.committed)?;
+    } else {
+        reject_unowned_backup(summary, &paths.summary_backup)?;
+        reject_unowned_backup(report, &paths.report_backup)?;
+    }
+    Ok(())
+}
+
+fn recovery_backup(path: &Path, expected: bool) -> Result<Option<PathBuf>, String> {
+    let backup = existing_regular_file(path)?;
+    match (expected, backup) {
+        (true, Some(path)) => Ok(Some(path)),
+        (false, None) => Ok(None),
+        (true, None) => Err(format!(
+            "required publication backup is missing: {}",
+            path.display()
+        )),
+        (false, Some(_)) => Err(format!(
+            "unexpected publication backup blocks recovery: {}",
+            path.display()
+        )),
+    }
+}
+
+fn validate_committed_backup(path: &Path, expected: bool) -> Result<(), String> {
+    let backup = existing_regular_file(path)?;
+    if !expected && backup.is_some() {
+        return Err(format!(
+            "unexpected publication backup blocks committed cleanup: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn reject_unowned_backup(destination: &Path, backup: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(backup) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(metadata) if metadata.is_file() && same_file(destination, backup) => {
+            fs::remove_file(backup).map_err(|error| {
+                format!(
+                    "failed to remove incomplete backup {}: {error}",
+                    backup.display()
+                )
+            })?;
+            sync_parent_directory(backup)
+                .map_err(|error| format!("failed to sync incomplete backup cleanup: {error}"))
+        }
+        Ok(_) => Err(format!(
+            "unowned publication backup blocks recovery: {}",
+            backup.display()
+        )),
+        Err(error) => Err(format!(
+            "failed to inspect publication backup {}: {error}",
+            backup.display()
+        )),
+    }
+}
+
+fn existing_regular_file(path: &Path) -> Result<Option<PathBuf>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(Some(path.to_owned())),
+        Ok(_) => Err(format!(
+            "publication backup is not a regular file: {}",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "failed to inspect publication backup {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn remove_regular_file_if_present(path: &Path) -> Result<(), String> {
+    if existing_regular_file(path)?.is_some() {
+        fs::remove_file(path).map_err(|error| {
+            format!(
+                "failed to remove publication backup {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn create_recovery_marker(path: &Path, previous_outputs: [bool; 2]) -> Result<(), String> {
+    let mut file = open_private_new_file(path)
+        .map_err(|error| format!("failed to create publication recovery marker: {error}"))?;
+    let contents = [
+        if previous_outputs[0] { b'1' } else { b'0' },
+        if previous_outputs[1] { b'1' } else { b'0' },
+        b'\n',
+    ];
+    file.write_all(&contents)
+        .map_err(|error| format!("failed to write publication recovery marker: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("failed to sync publication recovery marker: {error}"))
+}
+
+fn read_recovery_marker(path: &Path) -> Result<Option<[bool; 2]>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => Err(format!(
+            "publication recovery marker is not a regular file: {}",
+            path.display()
+        ))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect publication recovery marker {}: {error}",
+                path.display()
+            ));
         }
     }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).map_err(|error| {
+        format!(
+            "failed to open publication recovery marker {}: {error}",
+            path.display()
+        )
+    })?;
+    if !open_recovery_marker_matches_path(&file, path).map_err(|error| {
+        format!(
+            "failed to verify publication recovery marker {}: {error}",
+            path.display()
+        )
+    })? {
+        return Err(format!(
+            "publication recovery marker changed while opening it: {}",
+            path.display()
+        ));
+    }
+    let mut contents = Vec::new();
+    file.take(4).read_to_end(&mut contents).map_err(|error| {
+        format!(
+            "failed to read publication recovery marker {}: {error}",
+            path.display()
+        )
+    })?;
+    match contents.as_slice() {
+        [summary @ (b'0' | b'1'), report @ (b'0' | b'1'), b'\n'] => {
+            Ok(Some([*summary == b'1', *report == b'1']))
+        }
+        _ => Err(format!(
+            "publication recovery marker is invalid: {}",
+            path.display()
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn open_recovery_marker_matches_path(file: &File, path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let open = file.metadata()?;
+    let path = fs::metadata(path)?;
+    Ok(open.dev() == path.dev()
+        && open.ino() == path.ino()
+        && matches!(open.nlink(), 1 | 2)
+        && open.mode() & 0o077 == 0)
+}
+
+#[cfg(not(unix))]
+fn open_recovery_marker_matches_path(_file: &File, path: &Path) -> std::io::Result<bool> {
+    Ok(fs::metadata(path)?.is_file())
+}
+
+fn remove_recovery_marker(path: &Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+    sync_parent_directory(path).map_err(|error| format!("failed to sync marker directory: {error}"))
+}
+
+fn pair_identifier(summary: &Path, report: &Path) -> String {
+    let mut left = 0xcbf29ce484222325_u64;
+    let mut right = 0x84222325cbf29ce4_u64;
+    let summary = path_bytes(summary);
+    let report = path_bytes(report);
+    let bytes = (summary.len() as u64)
+        .to_le_bytes()
+        .into_iter()
+        .chain(summary)
+        .chain((report.len() as u64).to_le_bytes())
+        .chain(report);
+    for byte in bytes {
+        left = (left ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        right = (right ^ u64::from(byte)).wrapping_mul(0x9e3779b185ebca87);
+    }
+    format!("{left:016x}{right:016x}")
+}
+
+#[cfg(unix)]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(not(unix))]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    path.as_os_str().to_string_lossy().into_owned().into_bytes()
 }
 
 fn publish_pair(summary: StagedOutput, report: StagedOutput) -> Result<(), String> {
@@ -467,39 +854,23 @@ where
     F: FnOnce(),
 {
     let _locks = OutputLocks::acquire(&summary.destination, &report.destination)?;
-    let mut summary_backup = OutputBackup::capture(&summary.destination)?;
-    let mut report_backup = match OutputBackup::capture(&report.destination) {
-        Ok(backup) => backup,
-        Err(error) => {
-            return Err(with_rollback(error, [&mut summary_backup]));
-        }
-    };
+    let publication = PairPublication::begin(&summary.destination, &report.destination)?;
 
     if let Err(error) = summary.publish() {
-        return Err(with_rollback(
-            error,
-            [&mut summary_backup, &mut report_backup],
-        ));
+        return Err(publication.rollback(error));
     }
     after_summary();
     if let Err(error) = report.publish() {
-        return Err(with_rollback(
-            error,
-            [&mut summary_backup, &mut report_backup],
-        ));
+        return Err(publication.rollback(error));
     }
-    if let Err(error) =
-        sync_output_directories(&summary_backup.destination, &report_backup.destination)
-    {
-        return Err(with_rollback(
-            error,
-            [&mut summary_backup, &mut report_backup],
-        ));
+    if let Err(error) = sync_output_directories(
+        &publication.summary_backup.destination,
+        &publication.report_backup.destination,
+    ) {
+        return Err(publication.rollback(error));
     }
 
-    summary_backup.discard();
-    report_backup.discard();
-    Ok(())
+    publication.commit()
 }
 
 fn sync_output_directories(summary: &Path, report: &Path) -> Result<(), String> {
@@ -540,15 +911,77 @@ fn sync_parent_directory(_path: &Path) -> std::io::Result<()> {
 }
 
 fn with_rollback<const N: usize>(error: String, backups: [&mut OutputBackup; N]) -> String {
+    let mut backups = backups;
+    let rollback_errors: Vec<_> = backups
+        .iter_mut()
+        .filter_map(|backup| backup.restore().err())
+        .collect();
+    if !rollback_errors.is_empty() {
+        return format!("{error}; rollback failed: {}", rollback_errors.join("; "));
+    }
+    let cleanup_errors: Vec<_> = backups
+        .iter_mut()
+        .filter_map(|backup| backup.discard().err())
+        .collect();
+    if cleanup_errors.is_empty() {
+        error
+    } else {
+        format!(
+            "{error}; rollback cleanup failed: {}",
+            cleanup_errors.join("; ")
+        )
+    }
+}
+
+fn restore_backups<const N: usize>(backups: [&mut OutputBackup; N]) -> Result<(), String> {
     let rollback_errors: Vec<_> = backups
         .into_iter()
         .filter_map(|backup| backup.restore().err())
         .collect();
     if rollback_errors.is_empty() {
-        error
+        Ok(())
     } else {
-        format!("{error}; rollback failed: {}", rollback_errors.join("; "))
+        Err(rollback_errors.join("; "))
     }
+}
+
+fn discard_backups<const N: usize>(backups: [&mut OutputBackup; N]) -> Result<(), String> {
+    let cleanup_errors: Vec<_> = backups
+        .into_iter()
+        .filter_map(|backup| backup.discard().err())
+        .collect();
+    if cleanup_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cleanup_errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+fn unused_sibling_name(destination: &Path, label: &str) -> Result<PathBuf, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?;
+    let name = bounded_file_label(name);
+    for _attempt in 0..100 {
+        let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".key-insights.{name}.{label}-{}-{identifier}",
+            std::process::id()
+        ));
+        match fs::symlink_metadata(&candidate) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => continue,
+            Err(error) => return Err(format!("failed to inspect backup candidate: {error}")),
+        }
+    }
+    Err(format!(
+        "failed to reserve a backup path for {}",
+        destination.display()
+    ))
 }
 
 fn link_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, String> {
@@ -796,6 +1229,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&directory).expect("create test directory");
+        let directory = fs::canonicalize(directory).expect("canonicalize test directory");
         let summary = directory.join("summary.json");
         let report = directory.join("report.md");
         fs::write(&summary, "old summary\n").expect("write old summary");
@@ -819,6 +1253,209 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&report).expect("read report"),
+            "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn next_publication_recovers_a_pair_interrupted_after_the_summary() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-interrupted-pair-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let directory = fs::canonicalize(directory).expect("canonicalize test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+        let interrupted_summary =
+            StagedOutput::create(&summary, b"interrupted summary\n").expect("stage summary");
+        let interrupted_report =
+            StagedOutput::create(&report, b"interrupted report\n").expect("stage report");
+
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            publish_pair_with_hook(interrupted_summary, interrupted_report, || {
+                panic!("simulate process termination after summary publication");
+            })
+        }));
+        assert!(interrupted.is_err(), "publication must be interrupted");
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read interrupted summary"),
+            "interrupted summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read old report"),
+            "old report\n"
+        );
+
+        let empty_input = directory.join("empty.jsonl");
+        fs::write(&empty_input, "").expect("write invalid retry input");
+        let retry_error = super::run(vec![
+            "analyze".into(),
+            empty_input.into_os_string(),
+            "--summary".into(),
+            summary.clone().into_os_string(),
+            "--report".into(),
+            report.clone().into_os_string(),
+        ])
+        .expect_err("analysis must fail after startup recovery");
+        assert!(
+            retry_error.contains("session"),
+            "recovery must complete before validation: {retry_error}"
+        );
+
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read recovered summary"),
+            "old summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read recovered report"),
+            "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn interrupted_publication_recovers_outputs_that_were_previously_absent() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-interrupted-absent-pair-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+
+        let interrupted_summary =
+            StagedOutput::create(&summary, b"interrupted summary\n").expect("stage summary");
+        let interrupted_report =
+            StagedOutput::create(&report, b"interrupted report\n").expect("stage report");
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            publish_pair_with_hook(interrupted_summary, interrupted_report, || {
+                panic!("simulate process termination after summary publication");
+            })
+        }));
+        assert!(interrupted.is_err(), "publication must be interrupted");
+
+        let retry_summary =
+            StagedOutput::create(&summary, b"retry summary\n").expect("stage retry summary");
+        let retry_report =
+            StagedOutput::create(&report, b"retry report\n").expect("stage retry report");
+        fs::remove_file(
+            retry_summary
+                .temporary_path
+                .as_ref()
+                .expect("retry summary temporary path"),
+        )
+        .expect("force retry publication failure");
+        publish_pair(retry_summary, retry_report).expect_err("retry must fail after recovery");
+
+        assert!(!summary.exists(), "previously absent summary stays absent");
+        assert!(!report.exists(), "previously absent report stays absent");
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn committed_recovery_keeps_the_new_pair() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-committed-pair-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+        let summary_output =
+            StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+        let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+        let _locks = OutputLocks::acquire(&summary, &report).expect("acquire locks");
+        let publication = super::PairPublication::begin(&summary, &report).expect("begin pair");
+        summary_output.publish().expect("publish summary");
+        report_output.publish().expect("publish report");
+        super::sync_output_directories(&summary, &report).expect("sync pair");
+        link_without_replacement(&publication.paths.active, &publication.paths.committed)
+            .expect("install committed marker");
+        super::sync_parent_directory(&publication.paths.committed).expect("sync marker");
+        drop(publication);
+        drop(_locks);
+
+        let retry_summary =
+            StagedOutput::create(&summary, b"retry summary\n").expect("stage retry summary");
+        let retry_report =
+            StagedOutput::create(&report, b"retry report\n").expect("stage retry report");
+        fs::remove_file(
+            retry_summary
+                .temporary_path
+                .as_ref()
+                .expect("retry summary temporary path"),
+        )
+        .expect("force retry publication failure");
+        publish_pair(retry_summary, retry_report).expect_err("retry must fail after recovery");
+
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read committed summary"),
+            "new summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read committed report"),
+            "new report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn rollback_recovery_is_idempotent_after_one_output_was_restored() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-partial-recovery-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+        let summary_output =
+            StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+        let _locks = OutputLocks::acquire(&summary, &report).expect("acquire locks");
+        let mut publication = super::PairPublication::begin(&summary, &report).expect("begin pair");
+        summary_output.publish().expect("publish summary");
+        publication
+            .summary_backup
+            .restore()
+            .expect("partially restore summary");
+        drop(publication);
+        drop(_locks);
+
+        super::recover_outputs(&summary, &report).expect("repeat interrupted rollback");
+
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read restored summary"),
+            "old summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read restored report"),
             "old report\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
@@ -869,13 +1506,13 @@ mod tests {
         let destination = directory.join("summary.json");
         fs::write(&destination, "previous summary\n").expect("write prior output");
 
-        let backup = OutputBackup::capture(&destination).expect("capture output");
+        let mut backup = OutputBackup::capture(&destination).expect("capture output");
 
         assert_eq!(
             fs::read_to_string(&destination).expect("public output remains available"),
             "previous summary\n"
         );
-        backup.discard();
+        backup.discard().expect("discard backup");
         assert_eq!(
             fs::read_to_string(&destination).expect("public output survives cleanup"),
             "previous summary\n"
