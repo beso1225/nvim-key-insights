@@ -690,26 +690,8 @@ fn write_destination_recovery_index(
 ) -> Result<(), String> {
     let contents = serde_json::to_vec(index)
         .map_err(|error| format!("failed to encode destination recovery index: {error}"))?;
-    let mut file = open_private_new_file(path).map_err(|error| {
-        format!(
-            "failed to create destination recovery index {}: {error}",
-            path.display()
-        )
-    })?;
-    file.write_all(&contents)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| {
-            format!(
-                "failed to persist destination recovery index {}: {error}",
-                path.display()
-            )
-        })?;
-    sync_parent_directory(path).map_err(|error| {
-        format!(
-            "failed to sync destination recovery index {}: {error}",
-            path.display()
-        )
-    })
+    publish_private_sidecar(path, &contents)
+        .map_err(|error| format!("failed to publish destination recovery index: {error}"))
 }
 
 fn recover_destination(destination: &Path) -> Result<(), String> {
@@ -1134,18 +1116,83 @@ fn remove_regular_file_if_present(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn publish_private_sidecar(path: &Path, contents: &[u8]) -> Result<(), String> {
+    publish_private_sidecar_with(path, contents, |file, contents| {
+        file.write_all(contents)?;
+        file.sync_all()
+    })
+}
+
+fn publish_private_sidecar_with<F>(path: &Path, contents: &[u8], persist: F) -> Result<(), String>
+where
+    F: FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+{
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("sidecar path has no parent: {}", path.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("sidecar path has no file name: {}", path.display()))?;
+    let label = bounded_file_label(name);
+    let mut persist = Some(persist);
+    for _attempt in 0..100 {
+        let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary_path = parent.join(format!(
+            ".key-insights.sidecar-{label}.tmp-{}-{identifier}",
+            std::process::id()
+        ));
+        let mut file = match open_private_new_file(&temporary_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to create temporary sidecar for {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        let persist = persist.take().expect("sidecar persistence runs once");
+        if let Err(error) = persist(&mut file, contents) {
+            drop(file);
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!("failed to persist temporary sidecar: {error}"));
+        }
+        if let Err(error) = rename_without_replacement(&temporary_path, path) {
+            drop(file);
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!(
+                "failed to publish sidecar {}: {error}",
+                path.display()
+            ));
+        }
+        if let Err(error) = sync_parent_directory(path) {
+            let published_is_ours = open_file_matches_path(&file, path).unwrap_or(false);
+            drop(file);
+            if published_is_ours {
+                let _ = fs::remove_file(path);
+                let _ = sync_parent_directory(path);
+            }
+            return Err(format!(
+                "failed to sync published sidecar {}: {error}",
+                path.display()
+            ));
+        }
+        return Ok(());
+    }
+    Err(format!(
+        "failed to reserve a temporary sidecar for {}",
+        path.display()
+    ))
+}
+
 fn create_recovery_marker(path: &Path, previous_outputs: [bool; 2]) -> Result<(), String> {
-    let mut file = open_private_new_file(path)
-        .map_err(|error| format!("failed to create publication recovery marker: {error}"))?;
     let contents = [
         if previous_outputs[0] { b'1' } else { b'0' },
         if previous_outputs[1] { b'1' } else { b'0' },
         b'\n',
     ];
-    file.write_all(&contents)
-        .map_err(|error| format!("failed to write publication recovery marker: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("failed to sync publication recovery marker: {error}"))
+    publish_private_sidecar(path, &contents)
+        .map_err(|error| format!("failed to publish recovery marker: {error}"))
 }
 
 fn transition_recovery_marker(
@@ -1469,6 +1516,60 @@ fn link_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, St
 
 fn link_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::hard_link(source, destination)
+}
+
+#[cfg(target_os = "linux")]
+fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_without_replacement(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "atomic no-replace rename is unavailable on this platform",
+    ))
 }
 
 struct OutputLocks {
@@ -2057,6 +2158,81 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&report).expect("read recovered report"),
             "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn partial_sidecar_write_is_never_published_and_retry_succeeds() {
+        use std::io::Write;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-sidecar-write-failure-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let sidecar = directory.join("recovery-index");
+
+        super::publish_private_sidecar_with(&sidecar, b"complete", |file, _contents| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::StorageFull,
+                "injected sidecar write failure",
+            ))
+        })
+        .expect_err("partial sidecar write must fail");
+        assert!(
+            !sidecar.exists(),
+            "partial final sidecar must not be visible"
+        );
+
+        super::publish_private_sidecar_with(&sidecar, b"complete", |file, contents| {
+            file.write_all(contents)?;
+            file.sync_all()
+        })
+        .expect("retry sidecar publication");
+        assert_eq!(fs::read(&sidecar).expect("read sidecar"), b"complete");
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn sidecar_publication_never_replaces_an_existing_entry() {
+        use std::io::Write;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-occupied-sidecar-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let sidecar = directory.join("recovery-marker");
+        fs::write(&sidecar, "unrelated\n").expect("write occupied sidecar");
+
+        super::publish_private_sidecar_with(&sidecar, b"ours", |file, contents| {
+            file.write_all(contents)?;
+            file.sync_all()
+        })
+        .expect_err("occupied sidecar must reject publication");
+
+        assert_eq!(
+            fs::read_to_string(&sidecar).expect("read occupied sidecar"),
+            "unrelated\n"
+        );
+        let temporary_files = fs::read_dir(&directory)
+            .expect("read test directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        assert_eq!(
+            temporary_files, 0,
+            "failed publication cleans its temporary file"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }

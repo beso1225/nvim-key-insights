@@ -23,7 +23,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 | ID | Priority | Finding | Status |
 | --- | --- | --- | --- |
 | R1 | P1 | Recovery cleanup can become permanently unrecoverable after a second crash | Complete |
-| R2 | P1 | Recovery sidecar creation is not failure-atomic | Pending |
+| R2 | P1 | Recovery sidecar creation is not failure-atomic | Complete |
 | R3 | P1 | An output ancestor can be replaced after path resolution | Pending |
 | R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Pending |
 | R5 | P2 | Total session duration silently saturates on overflow | Pending |
@@ -95,6 +95,16 @@ the temporary file; never replace an unrelated final entry.
 - Partial index and marker contents are never visible at final paths.
 - Occupied final sidecar names are preserved and cause a closed failure.
 - Retry succeeds after every injected pre-publication failure.
+
+### Result
+
+Completed with private same-directory staging and atomic no-replace rename.
+Sidecar contents are fully written and synced before the final name can become
+visible. Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses
+`renamex_np(RENAME_EXCL)`, Windows relies on its non-replacing rename behavior,
+and unsupported targets fail closed. Focused tests cover a partial persistence
+failure followed by a successful retry and preservation of an occupied final
+entry.
 
 ## R3: Bind output operations to resolved directories
 
