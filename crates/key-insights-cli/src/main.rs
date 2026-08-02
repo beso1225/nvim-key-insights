@@ -268,13 +268,13 @@ impl StagedOutput {
             .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
         let name = destination
             .file_name()
-            .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?
-            .to_string_lossy();
+            .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?;
+        let label = bounded_file_label(name);
 
         for _attempt in 0..100 {
             let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
             let temporary_path = parent.join(format!(
-                ".{name}.key-insights.tmp-{}-{identifier}",
+                ".key-insights.{label}.tmp-{}-{identifier}",
                 std::process::id()
             ));
             match open_private_new_file(&temporary_path) {
@@ -353,7 +353,14 @@ impl OutputBackup {
                 destination.display()
             )),
             Ok(_) => {
-                let backup_path = move_to_unused_sibling(destination, "backup")?;
+                let backup_path = link_to_unused_sibling(destination, "backup")?;
+                if let Err(error) = sync_parent_directory(destination) {
+                    let _ = fs::remove_file(&backup_path);
+                    return Err(format!(
+                        "failed to sync backup for {}: {error}",
+                        destination.display()
+                    ));
+                }
                 Ok(Self {
                     destination: destination.to_owned(),
                     backup_path: Some(backup_path),
@@ -367,10 +374,53 @@ impl OutputBackup {
     }
 
     fn restore(&mut self) -> Result<(), String> {
+        if let Some(backup_path) = &self.backup_path {
+            match fs::symlink_metadata(&self.destination) {
+                Ok(metadata) if !metadata.is_file() => {
+                    return Err(format!(
+                        "cannot restore output over non-regular file {}",
+                        self.destination.display()
+                    ));
+                }
+                Ok(_) if same_file(backup_path, &self.destination) => {
+                    fs::remove_file(backup_path).map_err(|error| {
+                        format!(
+                            "failed to remove redundant backup for {}: {error}",
+                            self.destination.display()
+                        )
+                    })?;
+                    self.backup_path = None;
+                    return Ok(());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to inspect output {} during rollback: {error}",
+                        self.destination.display()
+                    ));
+                }
+            }
+            fs::rename(backup_path, &self.destination).map_err(|error| {
+                format!(
+                    "failed to restore previous output {}: {error}",
+                    self.destination.display()
+                )
+            })?;
+            self.backup_path = None;
+            sync_parent_directory(&self.destination).map_err(|error| {
+                format!(
+                    "failed to sync restored output {}: {error}",
+                    self.destination.display()
+                )
+            })?;
+            return Ok(());
+        }
+
         match fs::symlink_metadata(&self.destination) {
-            Ok(metadata) if metadata.is_dir() => {
+            Ok(metadata) if !metadata.is_file() => {
                 return Err(format!(
-                    "cannot restore output over directory {}",
+                    "cannot remove non-regular output during rollback: {}",
                     self.destination.display()
                 ));
             }
@@ -388,15 +438,12 @@ impl OutputBackup {
                 ));
             }
         }
-        if let Some(backup_path) = &self.backup_path {
-            fs::rename(backup_path, &self.destination).map_err(|error| {
-                format!(
-                    "failed to restore previous output {}: {error}",
-                    self.destination.display()
-                )
-            })?;
-            self.backup_path = None;
-        }
+        sync_parent_directory(&self.destination).map_err(|error| {
+            format!(
+                "failed to sync removed output {}: {error}",
+                self.destination.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -408,6 +455,18 @@ impl OutputBackup {
 }
 
 fn publish_pair(summary: StagedOutput, report: StagedOutput) -> Result<(), String> {
+    publish_pair_with_hook(summary, report, || {})
+}
+
+fn publish_pair_with_hook<F>(
+    summary: StagedOutput,
+    report: StagedOutput,
+    after_summary: F,
+) -> Result<(), String>
+where
+    F: FnOnce(),
+{
+    let _locks = OutputLocks::acquire(&summary.destination, &report.destination)?;
     let mut summary_backup = OutputBackup::capture(&summary.destination)?;
     let mut report_backup = match OutputBackup::capture(&report.destination) {
         Ok(backup) => backup,
@@ -422,7 +481,16 @@ fn publish_pair(summary: StagedOutput, report: StagedOutput) -> Result<(), Strin
             [&mut summary_backup, &mut report_backup],
         ));
     }
+    after_summary();
     if let Err(error) = report.publish() {
+        return Err(with_rollback(
+            error,
+            [&mut summary_backup, &mut report_backup],
+        ));
+    }
+    if let Err(error) =
+        sync_output_directories(&summary_backup.destination, &report_backup.destination)
+    {
         return Err(with_rollback(
             error,
             [&mut summary_backup, &mut report_backup],
@@ -431,6 +499,43 @@ fn publish_pair(summary: StagedOutput, report: StagedOutput) -> Result<(), Strin
 
     summary_backup.discard();
     report_backup.discard();
+    Ok(())
+}
+
+fn sync_output_directories(summary: &Path, report: &Path) -> Result<(), String> {
+    let summary_parent = summary
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", summary.display()))?;
+    let report_parent = report
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", report.display()))?;
+    sync_parent_directory(summary).map_err(|error| {
+        format!(
+            "failed to sync output directory {}: {error}",
+            summary_parent.display()
+        )
+    })?;
+    if !same_file(summary_parent, report_parent) {
+        sync_parent_directory(report).map_err(|error| {
+            format!(
+                "failed to sync output directory {}: {error}",
+                report_parent.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing parent"))?;
+    File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -446,26 +551,26 @@ fn with_rollback<const N: usize>(error: String, backups: [&mut OutputBackup; N])
     }
 }
 
-fn move_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, String> {
+fn link_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, String> {
     let parent = destination
         .parent()
         .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
     let name = destination
         .file_name()
-        .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?
-        .to_string_lossy();
+        .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?;
+    let name = bounded_file_label(name);
     for _attempt in 0..100 {
         let identifier = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let candidate = parent.join(format!(
-            ".{name}.key-insights.{label}-{}-{identifier}",
+            ".key-insights.{name}.{label}-{}-{identifier}",
             std::process::id()
         ));
-        match rename_without_replacement(destination, &candidate) {
+        match link_without_replacement(destination, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(format!(
-                    "failed to preserve existing output {}: {error}",
+                    "failed to link existing output {} into a backup: {error}",
                     destination.display()
                 ));
             }
@@ -477,24 +582,127 @@ fn move_to_unused_sibling(destination: &Path, label: &str) -> Result<PathBuf, St
     ))
 }
 
-#[cfg(any(target_os = "linux", target_vendor = "apple"))]
-fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use rustix::fs::{CWD, RenameFlags, renameat_with};
-
-    renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(Into::into)
+fn link_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::hard_link(source, destination)
 }
 
-#[cfg(windows)]
-fn rename_without_replacement(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
+struct OutputLocks {
+    _files: Vec<File>,
 }
 
-#[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
-fn rename_without_replacement(_source: &Path, _destination: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "atomic no-replace rename is unavailable on this platform",
-    ))
+impl OutputLocks {
+    fn acquire(summary: &Path, report: &Path) -> Result<Self, String> {
+        let mut lock_paths = vec![output_lock_path(summary)?, output_lock_path(report)?];
+        lock_paths.sort();
+        lock_paths.dedup();
+        if lock_paths.len() == 2 && output_paths_may_collide(&lock_paths[0], &lock_paths[1])? {
+            lock_paths.pop();
+        }
+
+        for lock_path in &lock_paths {
+            if output_paths_may_collide(lock_path, summary)?
+                || output_paths_may_collide(lock_path, report)?
+            {
+                return Err(format!(
+                    "output path collides with publication lock: {}",
+                    lock_path.display()
+                ));
+            }
+        }
+
+        let mut files = Vec::with_capacity(lock_paths.len());
+        for lock_path in lock_paths {
+            let file = open_private_lock_file(&lock_path).map_err(|error| {
+                format!(
+                    "failed to open publication lock {}: {error}",
+                    lock_path.display()
+                )
+            })?;
+            file.lock().map_err(|error| {
+                format!(
+                    "failed to acquire publication lock {}: {error}",
+                    lock_path.display()
+                )
+            })?;
+            if !open_file_matches_path(&file, &lock_path).map_err(|error| {
+                format!(
+                    "failed to verify publication lock {}: {error}",
+                    lock_path.display()
+                )
+            })? {
+                return Err(format!(
+                    "publication lock path changed while acquiring it: {}",
+                    lock_path.display()
+                ));
+            }
+            files.push(file);
+        }
+        Ok(Self { _files: files })
+    }
+}
+
+fn output_lock_path(destination: &Path) -> Result<PathBuf, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
+    let name = destination
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", destination.display()))?;
+    let label = bounded_file_label(name);
+    Ok(parent.join(format!(".key-insights.lock-{label}")))
+}
+
+fn bounded_file_label(name: &std::ffi::OsStr) -> String {
+    let mut label = String::new();
+    for character in name.to_string_lossy().chars() {
+        if label.len() + character.len_utf8() > 96 {
+            break;
+        }
+        label.push(character);
+    }
+    if label.is_empty() {
+        label.push_str("output");
+    }
+    label
+}
+
+fn open_private_lock_file(path: &Path) -> std::io::Result<File> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "lock path is not a regular file",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
+#[cfg(unix)]
+fn open_file_matches_path(file: &File, path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let open = file.metadata()?;
+    let path = fs::metadata(path)?;
+    Ok(open.dev() == path.dev()
+        && open.ino() == path.ino()
+        && open.nlink() == 1
+        && open.mode() & 0o077 == 0)
+}
+
+#[cfg(not(unix))]
+fn open_file_matches_path(_file: &File, path: &Path) -> std::io::Result<bool> {
+    Ok(fs::metadata(path)?.is_file())
 }
 
 fn open_private_new_file(path: &Path) -> std::io::Result<File> {
@@ -528,15 +736,17 @@ mod tests {
     use std::{
         fs,
         os::unix::fs::symlink,
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        OutputBackup, StagedOutput, publish_pair, rename_without_replacement, resolve_paths,
+        OutputBackup, OutputLocks, StagedOutput, link_without_replacement, open_private_lock_file,
+        output_lock_path, publish_pair, publish_pair_with_hook, resolve_paths,
     };
 
     #[test]
-    fn atomic_publication_replaces_a_swapped_symlink_without_following_it() {
+    fn staged_output_rename_does_not_follow_a_swapped_symlink() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
@@ -615,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_rename_never_replaces_an_existing_entry() {
+    fn backup_link_never_replaces_an_existing_entry() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
@@ -630,7 +840,7 @@ mod tests {
         fs::write(&source, "previous summary\n").expect("write prior output");
         fs::write(&occupied_backup, "unrelated\n").expect("write unrelated file");
 
-        let error = rename_without_replacement(&source, &occupied_backup)
+        let error = link_without_replacement(&source, &occupied_backup)
             .expect_err("occupied backup path must not be replaced");
 
         assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
@@ -641,6 +851,34 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&occupied_backup).expect("unrelated backup survives"),
             "unrelated\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn backup_capture_keeps_the_previous_output_at_its_public_path() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-linked-backup-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let destination = directory.join("summary.json");
+        fs::write(&destination, "previous summary\n").expect("write prior output");
+
+        let backup = OutputBackup::capture(&destination).expect("capture output");
+
+        assert_eq!(
+            fs::read_to_string(&destination).expect("public output remains available"),
+            "previous summary\n"
+        );
+        backup.discard();
+        assert_eq!(
+            fs::read_to_string(&destination).expect("public output survives cleanup"),
+            "previous summary\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }
@@ -678,5 +916,127 @@ mod tests {
             "unrelated\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn paired_publication_is_serialized_across_threads() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-pair-lock-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        let a_summary = StagedOutput::create(&summary, b"A summary\n").expect("stage A summary");
+        let a_report = StagedOutput::create(&report, b"A report\n").expect("stage A report");
+        let b_summary = StagedOutput::create(&summary, b"B summary\n").expect("stage B summary");
+        let b_report = StagedOutput::create(&report, b"B report\n").expect("stage B report");
+        let (a_reached_tx, a_reached_rx) = mpsc::channel();
+        let (release_a_tx, release_a_rx) = mpsc::channel();
+        let (b_done_tx, b_done_rx) = mpsc::channel();
+
+        let a = thread::spawn(move || {
+            publish_pair_with_hook(a_summary, a_report, || {
+                a_reached_tx.send(()).expect("signal A summary");
+                release_a_rx.recv().expect("release A report");
+            })
+        });
+        a_reached_rx.recv().expect("A published its summary");
+        let competing_lock = open_private_lock_file(
+            &output_lock_path(&summary).expect("derive competing summary lock"),
+        )
+        .expect("open competing summary lock");
+        assert!(
+            matches!(
+                competing_lock
+                    .try_lock()
+                    .expect_err("A still holds the summary lock"),
+                std::fs::TryLockError::WouldBlock
+            ),
+            "the competing lock must be blocked by A"
+        );
+        let b = thread::spawn(move || {
+            let result = publish_pair(b_summary, b_report);
+            b_done_tx.send(result).expect("signal B completion");
+        });
+
+        let early_b_result = b_done_rx.recv_timeout(Duration::from_millis(100)).ok();
+        let b_was_blocked = early_b_result.is_none();
+        release_a_tx.send(()).expect("release A");
+        a.join().expect("join A").expect("publish A pair");
+        let b_result = match early_b_result {
+            Some(result) => result,
+            None => b_done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("B completes after A"),
+        };
+        b_result.expect("publish B pair");
+        b.join().expect("join B");
+
+        assert!(
+            b_was_blocked,
+            "B must wait until A has published both artifacts"
+        );
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read summary"),
+            "B summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read report"),
+            "B report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn publication_lock_rejects_a_symlink_without_touching_its_target() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-lock-symlink-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        let target = directory.join("unrelated");
+        fs::write(&target, "unrelated\n").expect("write lock target");
+        let summary_lock = output_lock_path(&summary).expect("derive lock path");
+        symlink(&target, &summary_lock).expect("create lock symlink");
+
+        let error = match OutputLocks::acquire(&summary, &report) {
+            Ok(_) => panic!("symlink lock must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("lock path is not a regular file"));
+        assert_eq!(
+            fs::read_to_string(&target).expect("read lock target"),
+            "unrelated\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn publication_lock_names_remain_within_common_filesystem_limits() {
+        let destination = PathBuf::from("/tmp").join(format!("{}.json", "x".repeat(240)));
+
+        let lock = output_lock_path(&destination).expect("derive lock path");
+
+        assert!(
+            lock.file_name()
+                .expect("lock file name")
+                .to_string_lossy()
+                .len()
+                <= 128
+        );
     }
 }

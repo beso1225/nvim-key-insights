@@ -30,7 +30,9 @@ Rankings use descending count with lexical identifiers as the tie-break. The sum
 
 The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers per input and retains at most 1 MiB of unique token data across those categories. Individual schema-v1 tokens remain valid up to the existing 64 KiB event-line boundary. The analyzer rejects inputs outside the aggregate bounds instead of retaining unbounded state.
 
-Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is replaced rather than followed. If either publication fails, the CLI rolls back both destinations to their previous state.
+Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is rejected rather than followed. If either publication fails, the CLI rolls back both destinations to their previous state.
+
+Publication acquires persistent, private sidecar lock files for both destinations in stable path order. Cooperative analyzer processes targeting either output are therefore serialized, and operating-system lock release handles process termination. Existing outputs remain linked at their public paths while rollback hard links are prepared, and the containing directory is synced before replacement, so an interruption before replacement does not make an artifact disappear.
 
 ## Privacy boundary
 

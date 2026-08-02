@@ -98,6 +98,35 @@ fn cli_accepts_bare_relative_paths() {
 }
 
 #[test]
+fn cli_accepts_valid_long_output_file_names() {
+    let directory = temporary_directory("long-output-names");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join(format!("{}.json", "s".repeat(240)));
+    let report = directory.join(format!("{}.md", "r".repeat(240)));
+    fs::write(&input, INPUT).expect("write input fixture");
+    fs::write(&summary, "previous summary\n").expect("write prior summary");
+    fs::write(&report, "previous report\n").expect("write prior report");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read summary"),
+        EXPECTED_SUMMARY
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read report"),
+        EXPECTED_REPORT
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
 fn invalid_input_does_not_create_outputs() {
     let directory = temporary_directory("invalid");
     fs::create_dir(&directory).expect("create test directory");
