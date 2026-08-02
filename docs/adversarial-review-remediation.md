@@ -22,7 +22,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 
 | ID | Priority | Finding | Status |
 | --- | --- | --- | --- |
-| R1 | P1 | Recovery cleanup can become permanently unrecoverable after a second crash | In progress |
+| R1 | P1 | Recovery cleanup can become permanently unrecoverable after a second crash | Complete |
 | R2 | P1 | Recovery sidecar creation is not failure-atomic | Pending |
 | R3 | P1 | An output ancestor can be replaced after path resolution | Pending |
 | R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Pending |
@@ -61,6 +61,15 @@ after that transition must be idempotent.
 - Repeated recovery converges to the same previous output pair.
 - No active marker can require a backup that an earlier recovery step already
   removed.
+
+### Result
+
+Completed with a durable pair-level rollback decision. Recovery publishes this
+decision before restoring or consuming any destination backup. A destination
+with a recovery index continues the selected rollback, while a leftover
+rollback marker without indexes is treated as restartable metadata cleanup and
+never requires an already-consumed backup. Focused tests interrupt recovery
+after both the first and the last destination cleanup.
 
 ## R2: Publish sidecars failure-atomically
 

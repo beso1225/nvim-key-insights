@@ -493,6 +493,7 @@ impl OutputBackup {
 struct PairRecoveryPaths {
     active: PathBuf,
     committed: PathBuf,
+    rollback: PathBuf,
     summary_backup: PathBuf,
     report_backup: PathBuf,
     summary_index: PathBuf,
@@ -511,6 +512,7 @@ impl PairRecoveryPaths {
         Ok(Self {
             active: summary_parent.join(format!(".key-insights.pair-{identifier}.active")),
             committed: summary_parent.join(format!(".key-insights.pair-{identifier}.committed")),
+            rollback: summary_parent.join(format!(".key-insights.pair-{identifier}.rollback")),
             summary_backup: summary_parent
                 .join(format!(".key-insights.pair-{identifier}.summary.backup")),
             report_backup: report_parent
@@ -600,13 +602,15 @@ impl PairPublication {
     }
 
     fn rollback(mut self, error: String) -> String {
+        if let Err(marker_error) =
+            transition_recovery_marker(&self.paths.active, &self.paths.rollback, "rollback")
+        {
+            return format!("{error}; failed to commit rollback decision: {marker_error}");
+        }
         if let Err(rollback_error) =
             restore_backups([&mut self.summary_backup, &mut self.report_backup])
         {
             return format!("{error}; rollback failed: {rollback_error}");
-        }
-        if let Err(marker_error) = remove_recovery_marker(&self.paths.active) {
-            return format!("{error}; failed to remove recovery marker: {marker_error}");
         }
         if let Err(index_error) = remove_destination_recovery_indexes(&self.paths) {
             return format!("{error}; failed to remove recovery indexes: {index_error}");
@@ -615,6 +619,9 @@ impl PairPublication {
             discard_backups([&mut self.summary_backup, &mut self.report_backup])
         {
             return format!("{error}; failed to clean rollback backups: {cleanup_error}");
+        }
+        if let Err(marker_error) = remove_recovery_marker(&self.paths.rollback) {
+            return format!("{error}; failed to remove rollback marker: {marker_error}");
         }
         error
     }
@@ -706,6 +713,16 @@ fn write_destination_recovery_index(
 }
 
 fn recover_destination(destination: &Path) -> Result<(), String> {
+    recover_destination_with_hook(destination, || {})
+}
+
+fn recover_destination_with_hook<F>(
+    destination: &Path,
+    after_destination_cleanup: F,
+) -> Result<(), String>
+where
+    F: FnOnce(),
+{
     let index_path = output_recovery_index_path(destination)?;
     let Some(index) = read_destination_recovery_index(&index_path)? else {
         return Ok(());
@@ -730,6 +747,10 @@ fn recover_destination(destination: &Path) -> Result<(), String> {
         ".key-insights.pair-{}.committed",
         index.pair_identifier
     ));
+    let rollback = journal_parent.join(format!(
+        ".key-insights.pair-{}.rollback",
+        index.pair_identifier
+    ));
     let role = match index.role {
         RecoveryRole::Summary => "summary",
         RecoveryRole::Report => "report",
@@ -743,12 +764,21 @@ fn recover_destination(destination: &Path) -> Result<(), String> {
         ));
     let active_state = read_recovery_marker(&active)?;
     let committed_state = read_recovery_marker(&committed)?;
+    let rollback_state = read_recovery_marker(&rollback)?;
+    if committed_state.is_some() && rollback_state.is_some() {
+        return Err("transaction has conflicting commit and rollback markers".to_owned());
+    }
     if let (Some(active_state), Some(committed_state)) = (active_state, committed_state)
         && (active_state != committed_state || !same_file(&active, &committed))
     {
         return Err("destination recovery markers do not describe one transaction".to_owned());
     }
-    if let Some(marker_state) = active_state.or(committed_state) {
+    if let (Some(active_state), Some(rollback_state)) = (active_state, rollback_state)
+        && (active_state != rollback_state || !same_file(&active, &rollback))
+    {
+        return Err("destination rollback markers do not describe one transaction".to_owned());
+    }
+    if let Some(marker_state) = active_state.or(committed_state).or(rollback_state) {
         let marker_previous_output = match index.role {
             RecoveryRole::Summary => marker_state[0],
             RecoveryRole::Report => marker_state[1],
@@ -758,7 +788,12 @@ fn recover_destination(destination: &Path) -> Result<(), String> {
         }
     }
 
-    if active_state.is_some() && committed_state.is_none() {
+    let rollback_selected =
+        rollback_state.is_some() || (active_state.is_some() && committed_state.is_none());
+    if rollback_selected {
+        if rollback_state.is_none() {
+            transition_recovery_marker(&active, &rollback, "rollback")?;
+        }
         let mut output_backup = OutputBackup {
             destination: destination.to_owned(),
             backup_path: recovery_backup(&backup, index.previous_output)?,
@@ -793,11 +828,13 @@ fn recover_destination(destination: &Path) -> Result<(), String> {
         remove_file_and_sync(&index_path)?;
     }
 
+    after_destination_cleanup();
     let peer_uses_same_transaction = read_destination_recovery_index(&peer_index)?
         .is_some_and(|peer| peer.pair_identifier == index.pair_identifier);
     if !peer_uses_same_transaction {
         remove_file_if_present_and_sync(&active)?;
         remove_file_if_present_and_sync(&committed)?;
+        remove_file_if_present_and_sync(&rollback)?;
     }
     Ok(())
 }
@@ -964,12 +1001,29 @@ fn open_recovery_index_matches_path(_file: &File, path: &Path) -> std::io::Resul
 fn recover_pair(summary: &Path, report: &Path, paths: &PairRecoveryPaths) -> Result<(), String> {
     let active = read_recovery_marker(&paths.active)?;
     let committed = read_recovery_marker(&paths.committed)?;
+    let rollback = read_recovery_marker(&paths.rollback)?;
+    if committed.is_some() && rollback.is_some() {
+        return Err("transaction has conflicting commit and rollback markers".to_owned());
+    }
     if let (Some(active_state), Some(committed_state)) = (active, committed)
         && (active_state != committed_state || !same_file(&paths.active, &paths.committed))
     {
         return Err("publication recovery markers do not describe one transaction".to_owned());
     }
-    if let (Some(previous_outputs), None) = (active, committed) {
+    if let (Some(active_state), Some(rollback_state)) = (active, rollback)
+        && (active_state != rollback_state || !same_file(&paths.active, &paths.rollback))
+    {
+        return Err("publication rollback markers do not describe one transaction".to_owned());
+    }
+    if rollback.is_some() {
+        remove_regular_file_if_present(&paths.summary_backup)?;
+        remove_regular_file_if_present(&paths.report_backup)?;
+        sync_output_directories(summary, report)?;
+        if active.is_some() {
+            remove_recovery_marker(&paths.active)?;
+        }
+        remove_recovery_marker(&paths.rollback)?;
+    } else if let (Some(previous_outputs), None) = (active, committed) {
         let mut summary_backup = OutputBackup {
             destination: summary.to_owned(),
             backup_path: recovery_backup(&paths.summary_backup, previous_outputs[0])?,
@@ -1092,6 +1146,39 @@ fn create_recovery_marker(path: &Path, previous_outputs: [bool; 2]) -> Result<()
         .map_err(|error| format!("failed to write publication recovery marker: {error}"))?;
     file.sync_all()
         .map_err(|error| format!("failed to sync publication recovery marker: {error}"))
+}
+
+fn transition_recovery_marker(
+    source: &Path,
+    destination: &Path,
+    label: &str,
+) -> Result<(), String> {
+    match link_without_replacement(source, destination) {
+        Ok(()) => {}
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && same_file(source, destination) => {}
+        Err(error) => {
+            return Err(format!(
+                "failed to create {label} marker {}: {error}",
+                destination.display()
+            ));
+        }
+    }
+    sync_parent_directory(destination)
+        .map_err(|error| format!("failed to sync {label} marker: {error}"))?;
+    match fs::symlink_metadata(source) {
+        Ok(metadata) if metadata.is_file() && same_file(source, destination) => {
+            fs::remove_file(source)
+                .map_err(|error| format!("failed to retire active marker: {error}"))?;
+            sync_parent_directory(destination)
+                .map_err(|error| format!("failed to sync retired active marker: {error}"))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => return Err("active marker changed during state transition".to_owned()),
+        Err(error) => return Err(format!("failed to inspect active marker: {error}")),
+    }
+    Ok(())
 }
 
 fn read_recovery_marker(path: &Path) -> Result<Option<[bool; 2]>, String> {
@@ -1871,6 +1958,105 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&report_b).expect("read report B"),
             "report B\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn recovery_restarts_after_the_last_destination_cleanup() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-recovery-cleanup-crash-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            publish_pair_with_hook(
+                StagedOutput::create(&summary, b"new summary\n").expect("stage summary"),
+                StagedOutput::create(&report, b"new report\n").expect("stage report"),
+                || panic!("interrupt publication after summary"),
+            )
+        }));
+        assert!(interrupted.is_err(), "publication must be interrupted");
+        super::recover_destination(&summary).expect("recover first destination");
+
+        let cleanup_interrupted = catch_unwind(AssertUnwindSafe(|| {
+            super::recover_destination_with_hook(&report, || {
+                panic!("interrupt after final destination cleanup");
+            })
+        }));
+        assert!(
+            cleanup_interrupted.is_err(),
+            "recovery cleanup must be interrupted"
+        );
+
+        super::recover_outputs(&summary, &report).expect("restart recovery cleanup");
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read recovered summary"),
+            "old summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read recovered report"),
+            "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn recovery_restarts_after_the_first_destination_cleanup() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-first-recovery-cleanup-crash-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report = directory.join("report.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report, "old report\n").expect("write old report");
+
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            publish_pair_with_hook(
+                StagedOutput::create(&summary, b"new summary\n").expect("stage summary"),
+                StagedOutput::create(&report, b"new report\n").expect("stage report"),
+                || panic!("interrupt publication after summary"),
+            )
+        }));
+        assert!(interrupted.is_err(), "publication must be interrupted");
+
+        let cleanup_interrupted = catch_unwind(AssertUnwindSafe(|| {
+            super::recover_destination_with_hook(&summary, || {
+                panic!("interrupt after first destination cleanup");
+            })
+        }));
+        assert!(
+            cleanup_interrupted.is_err(),
+            "recovery cleanup must be interrupted"
+        );
+
+        super::recover_outputs(&summary, &report).expect("restart recovery cleanup");
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read recovered summary"),
+            "old summary\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&report).expect("read recovered report"),
+            "old report\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }
