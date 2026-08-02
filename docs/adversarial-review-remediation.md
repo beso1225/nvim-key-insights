@@ -162,6 +162,10 @@ module boundary. Before starting R5, extract the stable boundaries into
 This keeps the R4 security diff reviewable without mixing it with file moves and
 prevents R5 and R6 from extending the current monolithic entrypoint.
 
+Status: complete. The entrypoint now retains CLI parsing and path resolution,
+while directory-handle primitives, publication orchestration, recovery state,
+and unit tests live in dedicated source files.
+
 ## R4: Derive lock order from filesystem identity
 
 ### Failure sequence
