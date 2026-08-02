@@ -8,7 +8,7 @@ use std::{
 
 use key_insights::{
     AnalysisError, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, analyze_jsonl,
-    render_markdown, render_summary_json,
+    analyze_jsonl_inputs, render_markdown, render_summary_json,
 };
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
@@ -23,6 +23,90 @@ fn aggregates_validated_sessions_into_stable_outputs() {
     assert_eq!(render_markdown(&summary), EXPECTED_REPORT);
     assert!(!render_summary_json(&summary).contains("session_id"));
     assert!(!render_summary_json(&summary).contains("project-a"));
+}
+
+#[test]
+fn aggregates_multiple_input_readers_with_global_validation_state() {
+    let first = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":5,"mode":"normal","keys":["j"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":10}"#,
+        "\n",
+    );
+    let second = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"two","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"two","elapsed_ms":5,"mode":"normal","keys":["k"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"two","elapsed_ms":20}"#,
+        "\n",
+    );
+
+    let summary = analyze_jsonl_inputs([Cursor::new(first), Cursor::new(second)])
+        .expect("valid multi-input analysis");
+
+    assert_eq!(summary.sessions, 2);
+    assert_eq!(summary.events, 6);
+    assert_eq!(summary.total_session_duration_ms, 30);
+    assert_eq!(summary.sequence_keys, 2);
+    assert_eq!(
+        summary
+            .keys
+            .iter()
+            .map(|entry| (entry.key.as_str(), entry.count))
+            .collect::<Vec<_>>(),
+        [("j", 1), ("k", 1)]
+    );
+}
+
+#[test]
+fn multi_input_analysis_rejects_session_reuse_in_the_later_source() {
+    let session = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"same","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"same","elapsed_ms":1}"#,
+        "\n",
+    );
+
+    let error = analyze_jsonl_inputs([Cursor::new(session), Cursor::new(session)])
+        .expect_err("session IDs must be unique across inputs");
+
+    assert_eq!(error.input_index, Some(1));
+    assert!(matches!(
+        error.error,
+        AnalysisError::Validation(key_insights::ValidationError {
+            line: 1,
+            kind: key_insights::ValidationErrorKind::ReusedSessionId,
+        })
+    ));
+}
+
+#[test]
+fn multi_input_analysis_reports_an_unclosed_source_before_reading_the_next() {
+    let unclosed = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+    );
+    let valid = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"two","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"two","elapsed_ms":1}"#,
+        "\n",
+    );
+
+    let error = analyze_jsonl_inputs([Cursor::new(unclosed), Cursor::new(valid)])
+        .expect_err("each input must close its sessions");
+
+    assert_eq!(error.input_index, Some(0));
+    assert!(matches!(
+        error.error,
+        AnalysisError::Validation(key_insights::ValidationError {
+            line: 1,
+            kind: key_insights::ValidationErrorKind::UnclosedSession,
+        })
+    ));
 }
 
 #[test]
