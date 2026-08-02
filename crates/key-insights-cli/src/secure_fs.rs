@@ -439,6 +439,10 @@ impl ChildMetadata {
         self.device == other.device && self.inode == other.inode
     }
 
+    pub(super) fn same_regular_file(self, other: Self) -> bool {
+        self.is_regular_file() && other.is_regular_file() && self.same_identity(other)
+    }
+
     pub(super) fn is_private_file_owned_by_current_user(self) -> bool {
         self.is_regular_file()
             && self.links == 1
@@ -465,6 +469,29 @@ impl ChildMetadata {
     }
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use super::ChildMetadata;
+
+    #[test]
+    fn matching_inode_is_not_enough_when_the_current_file_type_changed() {
+        let regular = ChildMetadata {
+            device: 1,
+            inode: 2,
+            mode: libc::S_IFREG | 0o600,
+            links: 1,
+            owner: 3,
+            modified_seconds: 4,
+        };
+        let symlink = ChildMetadata {
+            mode: libc::S_IFLNK | 0o777,
+            ..regular
+        };
+
+        assert!(!regular.same_regular_file(symlink));
+    }
+}
+
 #[cfg(not(unix))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ChildMetadata;
@@ -476,6 +503,10 @@ impl ChildMetadata {
     }
 
     pub(super) fn same_identity(self, _other: Self) -> bool {
+        false
+    }
+
+    pub(super) fn same_regular_file(self, _other: Self) -> bool {
         false
     }
 

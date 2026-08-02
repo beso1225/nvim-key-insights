@@ -632,10 +632,10 @@ impl OutputBackup {
                     .directory
                     .child_metadata(&backup_name)
                     .map_err(|error| format!("failed to recheck publication backup: {error}"))?;
-                if !source_metadata.is_some_and(|metadata| metadata.same_identity(initial_metadata))
+                if !source_metadata
+                    .is_some_and(|metadata| metadata.same_regular_file(initial_metadata))
                     || !backup_metadata
-                        .is_some_and(|metadata| metadata.same_identity(initial_metadata))
-                    || !initial_metadata.is_regular_file()
+                        .is_some_and(|metadata| metadata.same_regular_file(initial_metadata))
                 {
                     let backup_is_owned = backup_metadata
                         .is_some_and(|metadata| metadata.same_identity(initial_metadata))
