@@ -67,3 +67,5 @@ docs/                         Public design contracts
 ## Status
 
 The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, bounded log retention, privacy-safe input aggregation, and deterministic local summary/report generation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, richer ergonomic metrics, and Codex integration will be implemented incrementally with TDD.
+
+See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered remaining milestones, dependencies, and completion gates.
