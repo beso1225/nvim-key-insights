@@ -79,8 +79,9 @@ legacy names safely in its owned default directory.
 
 ### Neovim command responsibilities
 
-- `:KeyInsightsReport` finalizes pending in-memory aggregation as required,
-  discovers finalized sessions, and runs deterministic local analysis.
+- `:KeyInsightsReport` discovers finalized sessions and runs deterministic local
+  analysis. It does not pause or stop an active collector; the current `.part`
+  session remains excluded until the user stops it explicitly.
 - `:KeyInsightsOpenReport` opens the configured Markdown report without running
   analysis.
 - `:KeyInsightsPurge` previews and confirms deletion of collector-owned session
@@ -118,7 +119,7 @@ Red tests:
 
 Green implementation:
 
-- add an analyzer entry point for an iterator of named readers;
+- add an analyzer entry point for an ordered iterator of readers;
 - keep `analyze_jsonl` as a compatibility wrapper over one source;
 - keep one accumulator for the complete input set;
 - do not concatenate input bytes or retain event streams.
@@ -134,8 +135,8 @@ Red tests:
 
 - the existing one-file syntax remains valid;
 - two input paths produce a combined report;
-- zero inputs, duplicate canonical inputs, `.jsonl.part`, symlinks, and
-  non-regular inputs fail;
+- zero inputs, duplicate canonical inputs, `.jsonl.part`, and non-regular inputs
+  fail;
 - either output aliasing any input fails before recovery or publication;
 - failure to open or validate the last input preserves existing outputs.
 
@@ -144,7 +145,12 @@ Green implementation:
 - parse positional inputs until the first option;
 - resolve all inputs and outputs before recovery and analysis;
 - reject duplicates by filesystem identity and canonical path;
-- open inputs read-only and pass named buffered readers to S1.
+- open inputs read-only, pass ordered buffered readers to S1, and map returned
+  source indices back to local paths in CLI errors.
+
+Explicit input symlinks retain the current canonicalization behavior. The stricter
+no-follow rule applies to automatic directory discovery, where the user did not
+select each leaf explicitly.
 
 ### S3: bounded session-directory discovery
 

@@ -109,11 +109,12 @@ impl JsonlValidator {
         &mut self,
         mut reader: R,
         mut on_event: F,
-    ) -> Result<(), ValidationError>
+    ) -> Result<u64, ValidationError>
     where
         R: BufRead,
         F: FnMut(&Event),
     {
+        let sessions_before = self.summary.sessions;
         let mut buffer = Vec::new();
         let mut line_number = 0;
 
@@ -160,7 +161,7 @@ impl JsonlValidator {
             ));
         }
 
-        Ok(())
+        Ok(self.summary.sessions - sessions_before)
     }
 
     pub(crate) fn finish(self) -> ValidationSummary {
@@ -168,20 +169,9 @@ impl JsonlValidator {
     }
 }
 
-pub fn validate_jsonl<R: BufRead>(mut reader: R) -> Result<ValidationSummary, ValidationError> {
-    for_each_validated_event(&mut reader, |_| {})
-}
-
-pub(crate) fn for_each_validated_event<R, F>(
-    reader: R,
-    on_event: F,
-) -> Result<ValidationSummary, ValidationError>
-where
-    R: BufRead,
-    F: FnMut(&Event),
-{
+pub fn validate_jsonl<R: BufRead>(reader: R) -> Result<ValidationSummary, ValidationError> {
     let mut validator = JsonlValidator::new();
-    validator.consume(reader, on_event)?;
+    validator.consume(reader, |_| {})?;
     Ok(validator.finish())
 }
 

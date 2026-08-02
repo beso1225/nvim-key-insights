@@ -7,8 +7,9 @@ use std::{
 };
 
 use key_insights::{
-    AnalysisError, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, analyze_jsonl,
-    analyze_jsonl_inputs, render_markdown, render_summary_json,
+    AnalysisError, MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES,
+    MAX_SESSIONS_PER_LOG, analyze_jsonl, analyze_jsonl_inputs, render_markdown,
+    render_summary_json,
 };
 
 const INPUT: &str = include_str!("fixtures/reporting.jsonl");
@@ -74,6 +75,10 @@ fn multi_input_analysis_rejects_session_reuse_in_the_later_source() {
         .expect_err("session IDs must be unique across inputs");
 
     assert_eq!(error.input_index, Some(1));
+    assert_eq!(
+        error.to_string(),
+        "analysis input 2: JSONL validation failed at line 1: session ID was reused"
+    );
     assert!(matches!(
         error.error,
         AnalysisError::Validation(key_insights::ValidationError {
@@ -107,6 +112,94 @@ fn multi_input_analysis_reports_an_unclosed_source_before_reading_the_next() {
             kind: key_insights::ValidationErrorKind::UnclosedSession,
         })
     ));
+}
+
+#[test]
+fn multi_input_analysis_rejects_an_empty_later_source() {
+    let valid = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":1}"#,
+        "\n",
+    );
+
+    let error = analyze_jsonl_inputs([Cursor::new(valid), Cursor::new("")])
+        .expect_err("each input must contain a complete session");
+
+    assert_eq!(error.input_index, Some(1));
+    assert_eq!(error.error, AnalysisError::NoSessions);
+}
+
+#[test]
+fn multi_input_analysis_applies_the_session_limit_across_sources() {
+    let inputs = (0..=MAX_SESSIONS_PER_LOG).map(|index| {
+        Cursor::new(format!(
+            concat!(
+                "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"session-{}\",\"elapsed_ms\":0}}\n",
+                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"session-{}\",\"elapsed_ms\":1}}\n",
+            ),
+            index, index
+        ))
+    });
+
+    let error = analyze_jsonl_inputs(inputs).expect_err("the session limit must be global");
+
+    assert_eq!(error.input_index, Some(MAX_SESSIONS_PER_LOG));
+    assert!(matches!(
+        error.error,
+        AnalysisError::Validation(key_insights::ValidationError {
+            line: 1,
+            kind: key_insights::ValidationErrorKind::TooManySessions,
+        })
+    ));
+}
+
+#[test]
+fn multi_input_validation_errors_take_precedence_over_earlier_analysis_errors() {
+    let overflowing = format!(
+        concat!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"two\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"two\",\"elapsed_ms\":1}}\n",
+        ),
+        u64::MAX
+    );
+
+    let error = analyze_jsonl_inputs([Cursor::new(overflowing), Cursor::new("not JSON\n".into())])
+        .expect_err("all input validation must finish before reporting analysis errors");
+
+    assert_eq!(error.input_index, Some(1));
+    assert!(matches!(
+        error.error,
+        AnalysisError::Validation(key_insights::ValidationError {
+            line: 1,
+            kind: key_insights::ValidationErrorKind::MalformedEvent,
+        })
+    ));
+}
+
+#[test]
+fn multi_input_analysis_checks_duration_overflow_across_sources() {
+    let first = format!(
+        concat!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+        ),
+        u64::MAX
+    );
+    let second = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"two","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"two","elapsed_ms":1}"#,
+        "\n",
+    );
+
+    let error = analyze_jsonl_inputs([Cursor::new(first), Cursor::new(second.into())])
+        .expect_err("duration limits must span every input");
+
+    assert_eq!(error.input_index, Some(1));
+    assert_eq!(error.error, AnalysisError::SessionDurationOverflow);
 }
 
 #[test]
