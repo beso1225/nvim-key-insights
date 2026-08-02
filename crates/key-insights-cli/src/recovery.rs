@@ -33,6 +33,33 @@ impl PairRecoveryPaths {
     }
 }
 
+pub(super) fn reject_recovery_artifact_collisions(
+    summary: &Path,
+    report: &Path,
+) -> Result<(), String> {
+    let paths = PairRecoveryPaths::new(summary, report)?;
+    let artifacts = [
+        paths.active.as_path(),
+        paths.committed.as_path(),
+        paths.rollback.as_path(),
+        paths.summary_backup.as_path(),
+        paths.report_backup.as_path(),
+        paths.summary_index.as_path(),
+        paths.report_index.as_path(),
+    ];
+    for output in [summary, report] {
+        for artifact in artifacts {
+            if output_names_may_collide(output, artifact)? {
+                return Err(format!(
+                    "output path must not collide with a recovery artifact: {}",
+                    output.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RecoveryRole {
@@ -255,6 +282,7 @@ pub(super) fn anchored_recovery_backup(
                 .expect("resolved output name")
                 .to_owned(),
             backup_name,
+            expected_destination: backup_metadata,
         }),
     })
 }
@@ -653,6 +681,15 @@ impl PairPublication {
             return format!("{error}; failed to remove rollback marker: {marker_error}");
         }
         error
+    }
+
+    pub(super) fn abort_preserving_destinations(self, error: String) -> String {
+        match self.commit() {
+            Ok(()) => error,
+            Err(cleanup_error) => {
+                format!("{error}; failed to clean aborted publication: {cleanup_error}")
+            }
+        }
     }
 
     pub(super) fn commit(mut self) -> Result<(), String> {

@@ -89,6 +89,7 @@ fn resolve_paths(input: &Path, summary: &Path, report: &Path) -> Result<Resolved
     if output_paths_may_collide(summary.as_path(), report.as_path())? {
         return Err("summary and report paths must be different".to_owned());
     }
+    reject_recovery_artifact_collisions(summary.as_path(), report.as_path())?;
     Ok(ResolvedPaths {
         input,
         summary,

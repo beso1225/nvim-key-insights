@@ -6,9 +6,193 @@ use std::{
 };
 
 use super::{
-    OutputBackup, OutputLocks, StagedOutput, link_without_replacement, open_private_lock_file,
-    output_lock_path, publish_pair, publish_pair_with_hook, resolve_paths,
+    OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
+    open_private_lock_file, output_lock_path, publish_pair, publish_pair_with_hook,
+    publish_pair_with_hooks, resolve_paths,
 };
+
+#[test]
+fn output_paths_cannot_alias_recovery_sidecars() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-recovery-path-collision-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = fs::canonicalize(&directory)
+        .expect("canonical test directory")
+        .join("summary.json");
+    let report = super::output_recovery_index_path(&summary).expect("summary recovery index");
+    fs::write(&input, "raw input\n").expect("write input");
+
+    let error = match resolve_paths(&input, &summary, &report) {
+        Ok(_) => panic!("outputs must not alias recovery artifacts"),
+        Err(error) => error,
+    };
+
+    assert!(error.contains("recovery artifact"), "{error}");
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn captured_backup_detects_destination_replacement() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-destination-replacement-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&summary, "old summary\n").expect("write old summary");
+    fs::write(&report, "old report\n").expect("write old report");
+    let summary_output = StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+    let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+    let publication = PairPublication::begin_anchored(&summary_output, &report_output)
+        .expect("begin publication");
+
+    fs::remove_file(&summary).expect("remove captured summary");
+    fs::write(&summary, "intervening summary\n").expect("replace captured summary");
+
+    let error = publication
+        .summary_backup
+        .verify_destination_unchanged()
+        .expect_err("replacement must be detected");
+
+    assert!(error.contains("changed after backup capture"), "{error}");
+    publication.commit().expect("clean aborted publication");
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read intervening summary"),
+        "intervening summary\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn publication_preserves_a_destination_replaced_after_backup_capture() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-pre-publication-replacement-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&summary, "old summary\n").expect("write old summary");
+    fs::write(&report, "old report\n").expect("write old report");
+    let summary_output = StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+    let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+
+    let error = publish_pair_with_hooks(
+        summary_output,
+        report_output,
+        || {
+            fs::remove_file(&summary).expect("remove captured summary");
+            fs::write(&summary, "intervening summary\n").expect("replace captured summary");
+        },
+        || {},
+    )
+    .expect_err("intervening destination must abort publication");
+
+    assert!(error.contains("changed after backup capture"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read intervening summary"),
+        "intervening summary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read original report"),
+        "old report\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn publication_preserves_a_destination_created_after_absence_was_captured() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-pre-publication-creation-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&report, "old report\n").expect("write old report");
+    let summary_output = StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+    let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+
+    let error = publish_pair_with_hooks(
+        summary_output,
+        report_output,
+        || fs::write(&summary, "intervening summary\n").expect("create intervening summary"),
+        || {},
+    )
+    .expect_err("new destination must abort publication");
+
+    assert!(error.contains("changed after backup capture"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read intervening summary"),
+        "intervening summary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read original report"),
+        "old report\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn publication_preserves_report_replaced_after_summary_publication() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-report-replacement-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&summary, "old summary\n").expect("write old summary");
+    fs::write(&report, "old report\n").expect("write old report");
+    let summary_output = StagedOutput::create(&summary, b"new summary\n").expect("stage summary");
+    let report_output = StagedOutput::create(&report, b"new report\n").expect("stage report");
+
+    let error = publish_pair_with_hooks(
+        summary_output,
+        report_output,
+        || {},
+        || {
+            fs::remove_file(&report).expect("remove captured report");
+            fs::write(&report, "intervening report\n").expect("replace captured report");
+        },
+    )
+    .expect_err("intervening report must abort publication");
+
+    assert!(error.contains("changed after backup capture"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read published summary"),
+        "new summary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read intervening report"),
+        "intervening report\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
 
 #[test]
 fn startup_scavenging_removes_only_owned_stale_staged_outputs() {

@@ -13,7 +13,14 @@ pub(super) fn same_file(left: &Path, right: &Path) -> bool {
 }
 
 pub(super) fn output_paths_may_collide(left: &Path, right: &Path) -> Result<bool, String> {
-    if same_file(left, right) {
+    if same_file_metadata(left, right) {
+        return Ok(true);
+    }
+    output_names_may_collide(left, right)
+}
+
+pub(super) fn output_names_may_collide(left: &Path, right: &Path) -> Result<bool, String> {
+    if left == right {
         return Ok(true);
     }
     let (Some(left_parent), Some(right_parent)) = (left.parent(), right.parent()) else {
@@ -413,6 +420,7 @@ pub(super) struct AnchoredBackup {
     pub(super) directory: Arc<ResolvedDirectory>,
     pub(super) destination_name: std::ffi::OsString,
     pub(super) backup_name: Option<std::ffi::OsString>,
+    pub(super) expected_destination: Option<ChildMetadata>,
 }
 
 impl OutputBackup {
@@ -681,8 +689,40 @@ impl OutputBackup {
                 directory: Arc::clone(&output.directory),
                 destination_name: output.destination_name.clone(),
                 backup_name,
+                expected_destination: metadata,
             }),
         })
+    }
+
+    pub(super) fn verify_destination_unchanged(&self) -> Result<(), String> {
+        let anchored = self
+            .anchored
+            .as_ref()
+            .ok_or_else(|| "destination verification requires an anchored backup".to_owned())?;
+        let destination = anchored
+            .directory
+            .child_metadata(&anchored.destination_name)
+            .map_err(|error| format!("failed to recheck output before publication: {error}"))?;
+        let unchanged = match (anchored.expected_destination, &anchored.backup_name) {
+            (None, None) => destination.is_none(),
+            (Some(expected), Some(backup_name)) => {
+                let backup = anchored
+                    .directory
+                    .child_metadata(backup_name)
+                    .map_err(|error| format!("failed to recheck publication backup: {error}"))?;
+                destination.is_some_and(|metadata| metadata.same_regular_file(expected))
+                    && backup.is_some_and(|metadata| metadata.same_regular_file(expected))
+            }
+            _ => false,
+        };
+        if unchanged {
+            Ok(())
+        } else {
+            Err(format!(
+                "output {} changed after backup capture",
+                self.destination.display()
+            ))
+        }
     }
 
     pub(super) fn restore_anchored(&mut self) -> Result<(), String> {
@@ -779,6 +819,19 @@ pub(super) fn publish_pair_with_hook<F>(
 where
     F: FnOnce(),
 {
+    publish_pair_with_hooks(summary, report, || {}, after_summary)
+}
+
+pub(super) fn publish_pair_with_hooks<B, A>(
+    summary: StagedOutput,
+    report: StagedOutput,
+    before_summary: B,
+    after_summary: A,
+) -> Result<(), String>
+where
+    B: FnOnce(),
+    A: FnOnce(),
+{
     summary.directory.verify_current()?;
     report.directory.verify_current()?;
     let summary_directory = Arc::clone(&summary.directory);
@@ -786,10 +839,22 @@ where
     let _locks = OutputLocks::acquire_anchored(&summary, &report)?;
     let publication = PairPublication::begin_anchored(&summary, &report)?;
 
+    before_summary();
+    if let Err(error) = publication
+        .summary_backup
+        .verify_destination_unchanged()
+        .and_then(|()| publication.report_backup.verify_destination_unchanged())
+    {
+        return Err(publication.abort_preserving_destinations(error));
+    }
+
     if let Err(error) = summary.publish() {
         return Err(publication.rollback(error));
     }
     after_summary();
+    if let Err(error) = publication.report_backup.verify_destination_unchanged() {
+        return Err(publication.abort_preserving_destinations(error));
+    }
     if let Err(error) = report.publish() {
         return Err(publication.rollback(error));
     }
