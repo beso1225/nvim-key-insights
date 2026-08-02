@@ -19,6 +19,7 @@ pub enum AnalysisError {
     TooManyDistinctMappings,
     TooManyDistinctRepeatedKeys,
     RetainedTokenBytesExceeded,
+    SessionDurationOverflow,
 }
 
 impl std::fmt::Display for AnalysisError {
@@ -42,6 +43,9 @@ impl std::fmt::Display for AnalysisError {
                 formatter,
                 "analysis input exceeds the retained token budget of {MAX_RETAINED_TOKEN_BYTES} bytes"
             ),
+            Self::SessionDurationOverflow => {
+                formatter.write_str("total session duration exceeds u64::MAX milliseconds")
+            }
         }
     }
 }
@@ -118,7 +122,7 @@ struct RepeatedAccumulator {
 
 #[derive(Default)]
 struct Accumulator {
-    limit_error: Option<AnalysisError>,
+    analysis_error: Option<AnalysisError>,
     retained_token_bytes: usize,
     total_session_duration_ms: u64,
     key_sequences: u64,
@@ -141,7 +145,7 @@ pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisE
     if validation.sessions == 0 {
         return Err(AnalysisError::NoSessions);
     }
-    if let Some(error) = accumulator.limit_error.take() {
+    if let Some(error) = accumulator.analysis_error.take() {
         return Err(error);
     }
     Ok(accumulator.finish(validation.sessions, validation.events))
@@ -151,8 +155,10 @@ impl Accumulator {
     fn observe(&mut self, event: &Event) {
         match event {
             Event::SessionEnd { elapsed_ms, .. } => {
-                self.total_session_duration_ms =
-                    self.total_session_duration_ms.saturating_add(*elapsed_ms);
+                match self.total_session_duration_ms.checked_add(*elapsed_ms) {
+                    Some(total) => self.total_session_duration_ms = total,
+                    None => self.record_error(AnalysisError::SessionDurationOverflow),
+                }
             }
             Event::KeySequence { mode, keys, .. } => {
                 self.key_sequences = self.key_sequences.saturating_add(1);
@@ -166,10 +172,10 @@ impl Accumulator {
                     {
                         Ok(()) => {}
                         Err(BoundedEntryError::TooManyItems) => {
-                            self.record_limit_error(AnalysisError::TooManyDistinctKeys);
+                            self.record_error(AnalysisError::TooManyDistinctKeys);
                         }
                         Err(BoundedEntryError::TooManyBytes) => {
-                            self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                            self.record_error(AnalysisError::RetainedTokenBytesExceeded);
                         }
                     }
                 }
@@ -192,10 +198,10 @@ impl Accumulator {
                 ) {
                     Ok(()) => {}
                     Err(BoundedEntryError::TooManyItems) => {
-                        self.record_limit_error(AnalysisError::TooManyDistinctMappings);
+                        self.record_error(AnalysisError::TooManyDistinctMappings);
                     }
                     Err(BoundedEntryError::TooManyBytes) => {
-                        self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                        self.record_error(AnalysisError::RetainedTokenBytesExceeded);
                     }
                 }
             }
@@ -224,10 +230,10 @@ impl Accumulator {
                         repeated.presses = repeated.presses.saturating_add(presses);
                     }
                     Err(BoundedEntryError::TooManyItems) => {
-                        self.record_limit_error(AnalysisError::TooManyDistinctRepeatedKeys);
+                        self.record_error(AnalysisError::TooManyDistinctRepeatedKeys);
                     }
                     Err(BoundedEntryError::TooManyBytes) => {
-                        self.record_limit_error(AnalysisError::RetainedTokenBytesExceeded);
+                        self.record_error(AnalysisError::RetainedTokenBytesExceeded);
                     }
                 }
             }
@@ -235,9 +241,9 @@ impl Accumulator {
         }
     }
 
-    fn record_limit_error(&mut self, error: AnalysisError) {
-        if self.limit_error.is_none() {
-            self.limit_error = Some(error);
+    fn record_error(&mut self, error: AnalysisError) {
+        if self.analysis_error.is_none() {
+            self.analysis_error = Some(error);
         }
     }
 

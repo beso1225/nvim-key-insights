@@ -155,6 +155,82 @@ fn analyzer_rejects_an_empty_stream() {
 }
 
 #[test]
+fn analyzer_accepts_total_session_duration_at_u64_max() {
+    let input = format!(
+        concat!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"two\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"two\",\"elapsed_ms\":1}}\n",
+        ),
+        u64::MAX - 1
+    );
+
+    let summary = analyze_jsonl(Cursor::new(input)).expect("u64::MAX is an exact valid total");
+
+    assert_eq!(summary.total_session_duration_ms, u64::MAX);
+}
+
+#[test]
+fn analyzer_rejects_total_session_duration_overflow() {
+    let input = format!(
+        concat!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"two\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"two\",\"elapsed_ms\":1}}\n",
+        ),
+        u64::MAX
+    );
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("duration overflow must fail");
+
+    assert_eq!(error, AnalysisError::SessionDurationOverflow);
+    assert_eq!(
+        error.to_string(),
+        "total session duration exceeds u64::MAX milliseconds"
+    );
+}
+
+#[test]
+fn duration_overflow_preserves_existing_output_artifacts() {
+    let directory = temporary_directory("duration-overflow");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    let overflowing_input = format!(
+        concat!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":{}}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"two\",\"elapsed_ms\":0}}\n",
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"two\",\"elapsed_ms\":1}}\n",
+        ),
+        u64::MAX
+    );
+    fs::write(&input, overflowing_input).expect("write overflowing input");
+    fs::write(&summary, "previous summary\n").expect("write prior summary");
+    fs::write(&report, "previous report\n").expect("write prior report");
+
+    let output = run_cli(&input, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("total session duration exceeds u64::MAX milliseconds")
+    );
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read prior summary"),
+        "previous summary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read prior report"),
+        "previous report\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
 fn cli_rejects_incomplete_collector_artifacts() {
     let directory = temporary_directory("incomplete-input");
     fs::create_dir(&directory).expect("create test directory");

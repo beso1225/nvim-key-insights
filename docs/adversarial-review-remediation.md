@@ -26,7 +26,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 | R2 | P1 | Recovery sidecar creation is not failure-atomic | Complete |
 | R3 | P1 | An output ancestor can be replaced after path resolution | Complete |
 | R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Complete |
-| R5 | P2 | Total session duration silently saturates on overflow | Pending |
+| R5 | P2 | Total session duration silently saturates on overflow | Complete |
 | R6 | P3 | Abrupt termination can leave staged output files indefinitely | Pending |
 
 ## R1: Make recovery cleanup restartable
@@ -231,6 +231,11 @@ the serialized summary field as `u64`; do not silently change the public schema.
 - Exact totals through `u64::MAX` remain valid.
 - Overflow is reported with a stable error variant and message.
 - The CLI leaves existing output artifacts unchanged on overflow.
+
+Status: complete. The accumulator uses checked addition and returns
+`SessionDurationOverflow` before output staging. Regression coverage verifies
+the exact `u64::MAX` boundary, deterministic overflow reporting, and preservation
+of existing CLI outputs.
 
 ## R6: Bound retention of orphan staged outputs
 
