@@ -8,12 +8,12 @@ The Rust analyzer validates collector JSONL and produces two local artifacts wit
 ## Command
 
 ```sh
-key-insights analyze <input.jsonl> \
+key-insights analyze <input.jsonl>... \
   --summary <summary.json> \
   --report <report.md>
 ```
 
-The input may contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules.
+Each input must contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Inputs are processed in the supplied order with shared session-identity, cardinality, retained-byte, and duration limits. Canonical or hard-linked duplicate inputs and incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, neither output may alias any input, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules.
 
 ## Current metrics
 

@@ -28,12 +28,12 @@ Individual tasks are available through `pkf list`.
 Analyze a complete finalized JSONL stream without an AI service:
 
 ```sh
-cargo run --bin key-insights -- analyze sessions.jsonl \
+cargo run --bin key-insights -- analyze session-1.jsonl session-2.jsonl \
   --summary summary.json \
   --report report.md
 ```
 
-The command validates the full stream before creating outputs. `summary.json` contains only aggregated counts and bounded rankings of sanitized tokens; it excludes session IDs, project IDs, raw sequences, Insert text, and command/search contents. `report.md` is rendered deterministically from the same in-memory summary.
+One or more finalized inputs are accepted in the supplied order. The command validates every input before creating outputs and rejects duplicate filesystem identities. `summary.json` contains only aggregated counts and bounded rankings of sanitized tokens; it excludes session IDs, project IDs, raw sequences, Insert text, and command/search contents. `report.md` is rendered deterministically from the same in-memory summary.
 
 ## Collector lifecycle
 
