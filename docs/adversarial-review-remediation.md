@@ -24,7 +24,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 | --- | --- | --- | --- |
 | R1 | P1 | Recovery cleanup can become permanently unrecoverable after a second crash | Complete |
 | R2 | P1 | Recovery sidecar creation is not failure-atomic | Complete |
-| R3 | P1 | An output ancestor can be replaced after path resolution | Pending |
+| R3 | P1 | An output ancestor can be replaced after path resolution | Complete |
 | R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Pending |
 | R5 | P2 | Total session duration silently saturates on overflow | Pending |
 | R6 | P3 | Abrupt termination can leave staged output files indefinitely | Pending |
@@ -133,6 +133,23 @@ claim equivalent protection.
   publication operations.
 - Leaf and ancestor symlink attacks are both covered.
 - Existing output and input files survive unchanged on rejection.
+
+### Result
+
+Completed with verified directory handles retained from output resolution.
+Staging, publication locks, backups, recovery indexes and markers, output
+replacement, rollback, commit cleanup, and startup recovery now perform their
+filesystem mutations relative to those handles. Directory identity is checked
+at phase boundaries, while handle-relative operations prevent a replacement
+ancestor from redirecting work between checks. Platforms without the required
+directory-handle operations fail closed.
+
+Regression tests replace an output ancestor before recovery, before staging,
+between lock acquisitions, before publication, after the first output is
+published, and after a recovery index is read. They verify that attacker
+directories remain untouched and that interrupted output pairs are restored in
+the originally opened directory. Existing leaf-symlink rejection tests remain
+in place.
 
 ## R4: Derive lock order from filesystem identity
 
