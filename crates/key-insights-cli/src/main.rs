@@ -8,6 +8,7 @@ use std::{
 };
 
 use key_insights::{analyze_jsonl, render_markdown, render_summary_json};
+use serde::{Deserialize, Serialize};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -494,6 +495,8 @@ struct PairRecoveryPaths {
     committed: PathBuf,
     summary_backup: PathBuf,
     report_backup: PathBuf,
+    summary_index: PathBuf,
+    report_index: PathBuf,
 }
 
 impl PairRecoveryPaths {
@@ -512,8 +515,29 @@ impl PairRecoveryPaths {
                 .join(format!(".key-insights.pair-{identifier}.summary.backup")),
             report_backup: report_parent
                 .join(format!(".key-insights.pair-{identifier}.report.backup")),
+            summary_index: output_recovery_index_path(summary)?,
+            report_index: output_recovery_index_path(report)?,
         })
     }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RecoveryRole {
+    Summary,
+    Report,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DestinationRecoveryIndex {
+    version: u8,
+    pair_identifier: String,
+    role: RecoveryRole,
+    previous_output: bool,
+    destination: String,
+    journal_parent: String,
+    peer_index: String,
 }
 
 struct PairPublication {
@@ -524,6 +548,8 @@ struct PairPublication {
 
 fn recover_outputs(summary: &Path, report: &Path) -> Result<(), String> {
     let _locks = OutputLocks::acquire(summary, report)?;
+    recover_destination(summary)?;
+    recover_destination(report)?;
     let paths = PairRecoveryPaths::new(summary, report)?;
     recover_pair(summary, report, &paths)
 }
@@ -531,6 +557,8 @@ fn recover_outputs(summary: &Path, report: &Path) -> Result<(), String> {
 impl PairPublication {
     fn begin(summary: &Path, report: &Path) -> Result<Self, String> {
         let paths = PairRecoveryPaths::new(summary, report)?;
+        recover_destination(summary)?;
+        recover_destination(report)?;
         recover_pair(summary, report, &paths)?;
         let mut summary_backup = OutputBackup::capture_at(summary, paths.summary_backup.clone())?;
         let report_backup = match OutputBackup::capture_at(report, paths.report_backup.clone()) {
@@ -541,18 +569,27 @@ impl PairPublication {
             summary_backup.backup_path.is_some(),
             report_backup.backup_path.is_some(),
         ];
-        if let Err(error) = create_recovery_marker(&paths.active, previous_outputs) {
+        if let Err(error) =
+            create_destination_recovery_indexes(summary, report, &paths, previous_outputs)
+        {
             let mut report_backup = report_backup;
             return Err(with_rollback(
                 error,
                 [&mut summary_backup, &mut report_backup],
             ));
         }
+        if let Err(error) = create_recovery_marker(&paths.active, previous_outputs) {
+            let mut report_backup = report_backup;
+            let error = with_rollback(error, [&mut summary_backup, &mut report_backup]);
+            let _ = remove_destination_recovery_indexes(&paths);
+            return Err(error);
+        }
         if let Err(error) = sync_parent_directory(&paths.active) {
             let mut report_backup = report_backup;
             let error = format!("failed to sync active publication marker: {error}");
             let rollback = with_rollback(error, [&mut summary_backup, &mut report_backup]);
             let _ = remove_recovery_marker(&paths.active);
+            let _ = remove_destination_recovery_indexes(&paths);
             return Err(rollback);
         }
         Ok(Self {
@@ -570,6 +607,9 @@ impl PairPublication {
         }
         if let Err(marker_error) = remove_recovery_marker(&self.paths.active) {
             return format!("{error}; failed to remove recovery marker: {marker_error}");
+        }
+        if let Err(index_error) = remove_destination_recovery_indexes(&self.paths) {
+            return format!("{error}; failed to remove recovery indexes: {index_error}");
         }
         if let Err(cleanup_error) =
             discard_backups([&mut self.summary_backup, &mut self.report_backup])
@@ -594,9 +634,331 @@ impl PairPublication {
         self.summary_backup.discard()?;
         self.report_backup.discard()?;
         sync_output_directories(&summary, &report)?;
+        remove_destination_recovery_indexes(&self.paths)?;
         remove_recovery_marker(&self.paths.committed)
             .map_err(|error| format!("failed to remove committed publication marker: {error}"))
     }
+}
+
+fn create_destination_recovery_indexes(
+    summary: &Path,
+    report: &Path,
+    paths: &PairRecoveryPaths,
+    previous_outputs: [bool; 2],
+) -> Result<(), String> {
+    let journal_parent = paths
+        .active
+        .parent()
+        .ok_or_else(|| "publication journal has no parent".to_owned())?;
+    let pair_identifier = pair_identifier(summary, report);
+    let summary_index = DestinationRecoveryIndex {
+        version: 1,
+        pair_identifier: pair_identifier.clone(),
+        role: RecoveryRole::Summary,
+        previous_output: previous_outputs[0],
+        destination: encode_path(summary),
+        journal_parent: encode_path(journal_parent),
+        peer_index: encode_path(&paths.report_index),
+    };
+    let report_index = DestinationRecoveryIndex {
+        version: 1,
+        pair_identifier,
+        role: RecoveryRole::Report,
+        previous_output: previous_outputs[1],
+        destination: encode_path(report),
+        journal_parent: encode_path(journal_parent),
+        peer_index: encode_path(&paths.summary_index),
+    };
+    write_destination_recovery_index(&paths.summary_index, &summary_index)?;
+    if let Err(error) = write_destination_recovery_index(&paths.report_index, &report_index) {
+        let _ = remove_file_and_sync(&paths.summary_index);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn write_destination_recovery_index(
+    path: &Path,
+    index: &DestinationRecoveryIndex,
+) -> Result<(), String> {
+    let contents = serde_json::to_vec(index)
+        .map_err(|error| format!("failed to encode destination recovery index: {error}"))?;
+    let mut file = open_private_new_file(path).map_err(|error| {
+        format!(
+            "failed to create destination recovery index {}: {error}",
+            path.display()
+        )
+    })?;
+    file.write_all(&contents)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            format!(
+                "failed to persist destination recovery index {}: {error}",
+                path.display()
+            )
+        })?;
+    sync_parent_directory(path).map_err(|error| {
+        format!(
+            "failed to sync destination recovery index {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn recover_destination(destination: &Path) -> Result<(), String> {
+    let index_path = output_recovery_index_path(destination)?;
+    let Some(index) = read_destination_recovery_index(&index_path)? else {
+        return Ok(());
+    };
+    validate_pair_identifier(&index.pair_identifier)?;
+    if index.version != 1 {
+        return Err(format!(
+            "unsupported destination recovery index version: {}",
+            index.version
+        ));
+    }
+    if decode_path(&index.destination)? != destination {
+        return Err("destination recovery index belongs to a different output".to_owned());
+    }
+    let journal_parent = decode_path(&index.journal_parent)?;
+    let peer_index = decode_path(&index.peer_index)?;
+    let active = journal_parent.join(format!(
+        ".key-insights.pair-{}.active",
+        index.pair_identifier
+    ));
+    let committed = journal_parent.join(format!(
+        ".key-insights.pair-{}.committed",
+        index.pair_identifier
+    ));
+    let role = match index.role {
+        RecoveryRole::Summary => "summary",
+        RecoveryRole::Report => "report",
+    };
+    let backup = destination
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?
+        .join(format!(
+            ".key-insights.pair-{}.{}.backup",
+            index.pair_identifier, role
+        ));
+    let active_state = read_recovery_marker(&active)?;
+    let committed_state = read_recovery_marker(&committed)?;
+    if let (Some(active_state), Some(committed_state)) = (active_state, committed_state)
+        && (active_state != committed_state || !same_file(&active, &committed))
+    {
+        return Err("destination recovery markers do not describe one transaction".to_owned());
+    }
+    if let Some(marker_state) = active_state.or(committed_state) {
+        let marker_previous_output = match index.role {
+            RecoveryRole::Summary => marker_state[0],
+            RecoveryRole::Report => marker_state[1],
+        };
+        if marker_previous_output != index.previous_output {
+            return Err("destination recovery index disagrees with its transaction".to_owned());
+        }
+    }
+
+    if active_state.is_some() && committed_state.is_none() {
+        let mut output_backup = OutputBackup {
+            destination: destination.to_owned(),
+            backup_path: recovery_backup(&backup, index.previous_output)?,
+        };
+        output_backup.restore().map_err(|error| {
+            format!(
+                "failed to recover interrupted output {}: {error}",
+                destination.display()
+            )
+        })?;
+        remove_file_and_sync(&index_path)?;
+        output_backup.discard()?;
+    } else if committed_state.is_some() {
+        validate_committed_backup(&backup, index.previous_output)?;
+        remove_regular_file_if_present(&backup)?;
+        sync_parent_directory(&backup)
+            .map_err(|error| format!("failed to sync committed backup cleanup: {error}"))?;
+        remove_file_and_sync(&index_path)?;
+    } else {
+        match existing_regular_file(&backup)? {
+            Some(_) if same_file(destination, &backup) => {
+                remove_file_and_sync(&backup)?;
+            }
+            Some(_) => {
+                return Err(format!(
+                    "uncommitted destination backup blocks recovery: {}",
+                    backup.display()
+                ));
+            }
+            None => {}
+        }
+        remove_file_and_sync(&index_path)?;
+    }
+
+    let peer_uses_same_transaction = read_destination_recovery_index(&peer_index)?
+        .is_some_and(|peer| peer.pair_identifier == index.pair_identifier);
+    if !peer_uses_same_transaction {
+        remove_file_if_present_and_sync(&active)?;
+        remove_file_if_present_and_sync(&committed)?;
+    }
+    Ok(())
+}
+
+fn read_destination_recovery_index(
+    path: &Path,
+) -> Result<Option<DestinationRecoveryIndex>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(format!(
+                "destination recovery index is not a regular file: {}",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to inspect destination recovery index {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).map_err(|error| {
+        format!(
+            "failed to open destination recovery index {}: {error}",
+            path.display()
+        )
+    })?;
+    if !open_recovery_index_matches_path(&file, path).map_err(|error| {
+        format!(
+            "failed to verify destination recovery index {}: {error}",
+            path.display()
+        )
+    })? {
+        return Err(format!(
+            "destination recovery index changed while opening it: {}",
+            path.display()
+        ));
+    }
+    let mut contents = Vec::new();
+    file.take(65_537)
+        .read_to_end(&mut contents)
+        .map_err(|error| format!("failed to read destination recovery index: {error}"))?;
+    if contents.len() > 65_536 {
+        return Err("destination recovery index exceeds 64 KiB".to_owned());
+    }
+    serde_json::from_slice(&contents)
+        .map(Some)
+        .map_err(|error| format!("invalid destination recovery index: {error}"))
+}
+
+fn remove_destination_recovery_indexes(paths: &PairRecoveryPaths) -> Result<(), String> {
+    remove_file_if_present_and_sync(&paths.summary_index)?;
+    remove_file_if_present_and_sync(&paths.report_index)
+}
+
+fn remove_file_and_sync(path: &Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+    sync_parent_directory(path)
+        .map_err(|error| format!("failed to sync cleanup for {}: {error}", path.display()))
+}
+
+fn remove_file_if_present_and_sync(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(metadata) if metadata.is_file() => remove_file_and_sync(path),
+        Ok(_) => Err(format!(
+            "refusing to remove non-regular file: {}",
+            path.display()
+        )),
+        Err(error) => Err(format!("failed to inspect {}: {error}", path.display())),
+    }
+}
+
+fn validate_pair_identifier(identifier: &str) -> Result<(), String> {
+    if identifier.len() == 32 && identifier.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("destination recovery index has an invalid pair identifier".to_owned())
+    }
+}
+
+fn output_recovery_index_path(destination: &Path) -> Result<PathBuf, String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("output path has no parent: {}", destination.display()))?;
+    Ok(parent.join(format!(
+        ".key-insights.output-{}.recovery",
+        path_identifier(destination)
+    )))
+}
+
+fn encode_path(path: &Path) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = path_bytes(path);
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_path(encoded: &str) -> Result<PathBuf, String> {
+    if !encoded.len().is_multiple_of(2) || encoded.len() > 16_384 {
+        return Err("destination recovery index contains an invalid path".to_owned());
+    }
+    let mut bytes = Vec::with_capacity(encoded.len() / 2);
+    for pair in encoded.as_bytes().chunks_exact(2) {
+        let high = decode_hex_digit(pair[0])?;
+        let low = decode_hex_digit(pair[1])?;
+        bytes.push((high << 4) | low);
+    }
+    path_from_bytes(bytes)
+}
+
+fn decode_hex_digit(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => Err("destination recovery index contains invalid hex".to_owned()),
+    }
+}
+
+#[cfg(unix)]
+fn path_from_bytes(bytes: Vec<u8>) -> Result<PathBuf, String> {
+    use std::os::unix::ffi::OsStringExt;
+    Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+}
+
+#[cfg(not(unix))]
+fn path_from_bytes(bytes: Vec<u8>) -> Result<PathBuf, String> {
+    String::from_utf8(bytes)
+        .map(PathBuf::from)
+        .map_err(|_| "destination recovery index path is not UTF-8".to_owned())
+}
+
+#[cfg(unix)]
+fn open_recovery_index_matches_path(file: &File, path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let open = file.metadata()?;
+    let path = fs::metadata(path)?;
+    Ok(open.dev() == path.dev()
+        && open.ino() == path.ino()
+        && open.nlink() == 1
+        && open.mode() & 0o077 == 0)
+}
+
+#[cfg(not(unix))]
+fn open_recovery_index_matches_path(_file: &File, path: &Path) -> std::io::Result<bool> {
+    Ok(fs::metadata(path)?.is_file())
 }
 
 fn recover_pair(summary: &Path, report: &Path, paths: &PairRecoveryPaths) -> Result<(), String> {
@@ -813,19 +1175,22 @@ fn remove_recovery_marker(path: &Path) -> Result<(), String> {
 }
 
 fn pair_identifier(summary: &Path, report: &Path) -> String {
+    identifier_for_paths(&[summary, report])
+}
+
+fn path_identifier(path: &Path) -> String {
+    identifier_for_paths(&[path])
+}
+
+fn identifier_for_paths(paths: &[&Path]) -> String {
     let mut left = 0xcbf29ce484222325_u64;
     let mut right = 0x84222325cbf29ce4_u64;
-    let summary = path_bytes(summary);
-    let report = path_bytes(report);
-    let bytes = (summary.len() as u64)
-        .to_le_bytes()
-        .into_iter()
-        .chain(summary)
-        .chain((report.len() as u64).to_le_bytes())
-        .chain(report);
-    for byte in bytes {
-        left = (left ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-        right = (right ^ u64::from(byte)).wrapping_mul(0x9e3779b185ebca87);
+    for path in paths {
+        let bytes = path_bytes(path);
+        for byte in (bytes.len() as u64).to_le_bytes().into_iter().chain(bytes) {
+            left = (left ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+            right = (right ^ u64::from(byte)).wrapping_mul(0x9e3779b185ebca87);
+        }
     }
     format!("{left:016x}{right:016x}")
 }
@@ -1457,6 +1822,55 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&report).expect("read restored report"),
             "old report\n"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn reusing_one_destination_recovers_its_previous_transaction_first() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-reused-destination-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let summary = directory.join("summary.json");
+        let report_a = directory.join("report-a.md");
+        let report_b = directory.join("report-b.md");
+        fs::write(&summary, "old summary\n").expect("write old summary");
+        fs::write(&report_a, "old report A\n").expect("write old report A");
+
+        let interrupted_summary =
+            StagedOutput::create(&summary, b"interrupted summary A\n").expect("stage summary A");
+        let interrupted_report =
+            StagedOutput::create(&report_a, b"interrupted report A\n").expect("stage report A");
+        let interrupted = catch_unwind(AssertUnwindSafe(|| {
+            publish_pair_with_hook(interrupted_summary, interrupted_report, || {
+                panic!("simulate process termination after summary A");
+            })
+        }));
+        assert!(interrupted.is_err(), "publication A must be interrupted");
+
+        publish_pair(
+            StagedOutput::create(&summary, b"summary B\n").expect("stage summary B"),
+            StagedOutput::create(&report_b, b"report B\n").expect("stage report B"),
+        )
+        .expect("publish pair B after recovering summary A");
+        super::recover_outputs(&summary, &report_a).expect("recover stale pair A state");
+
+        assert_eq!(
+            fs::read_to_string(&summary).expect("read summary B"),
+            "summary B\n",
+            "stale pair A must not revert the newer successful summary"
+        );
+        assert_eq!(
+            fs::read_to_string(&report_b).expect("read report B"),
+            "report B\n"
         );
         fs::remove_dir_all(directory).expect("remove test directory");
     }
