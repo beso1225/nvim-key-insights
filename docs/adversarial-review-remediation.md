@@ -25,7 +25,7 @@ for the order, scope, tests, and completion criteria of this hardening work.
 | R1 | P1 | Recovery cleanup can become permanently unrecoverable after a second crash | Complete |
 | R2 | P1 | Recovery sidecar creation is not failure-atomic | Complete |
 | R3 | P1 | An output ancestor can be replaced after path resolution | Complete |
-| R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Pending |
+| R4 | P2 | Alias spellings can reverse lock order on case-insensitive filesystems | Complete |
 | R5 | P2 | Total session duration silently saturates on overflow | Pending |
 | R6 | P3 | Abrupt termination can leave staged output files indefinitely | Pending |
 
@@ -188,6 +188,21 @@ order of another.
 - Lock ordering is identical for every spelling of the same physical files.
 - Existing exact-path serialization remains covered.
 - No unbounded wait is possible when two output sets overlap.
+
+### Result
+
+Completed by separating lock discovery from lock acquisition. Every candidate
+lock is opened and revalidated before any blocking lock is taken. Candidates
+are then sorted and deduplicated by their stable `(device, inode)` identity,
+which gives every invocation the same total order regardless of pathname case
+or normalization spelling. Lock opens use non-blocking file descriptors and
+still reject symlinks, non-regular files, unsafe permissions, and path swaps.
+
+The regression suite proves the physical order is strictly identity-sorted on
+all supported test filesystems. On filesystems where case variants are aliases,
+it also constructs two opposite pathname orders and verifies that both resolve
+to the same physical lock order. Existing concurrent publication coverage
+continues to verify exact-path serialization.
 
 ## R5: Define duration overflow behavior
 

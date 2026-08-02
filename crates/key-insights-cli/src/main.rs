@@ -297,7 +297,11 @@ impl ResolvedDirectory {
             libc::openat(
                 self.file.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                libc::O_RDWR
+                    | libc::O_CREAT
+                    | libc::O_CLOEXEC
+                    | libc::O_NOFOLLOW
+                    | libc::O_NONBLOCK,
                 0o600,
             )
         };
@@ -3120,6 +3124,128 @@ struct OutputLocks {
     _files: Vec<File>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct FilesystemIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+fn file_identity(file: &File) -> std::io::Result<FilesystemIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file.metadata()?;
+    Ok(FilesystemIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}
+
+#[cfg(not(unix))]
+fn file_identity(_file: &File) -> std::io::Result<FilesystemIdentity> {
+    Err(unsupported_directory_handle_operation())
+}
+
+struct PreparedLock<'a> {
+    path: PathBuf,
+    name: std::ffi::OsString,
+    directory: &'a ResolvedDirectory,
+    file: File,
+    identity: FilesystemIdentity,
+}
+
+fn prepare_anchored_locks<'a, S: AnchoredOutput, R: AnchoredOutput>(
+    summary: &'a S,
+    report: &'a R,
+) -> Result<Vec<PreparedLock<'a>>, String> {
+    struct Candidate<'a> {
+        path: PathBuf,
+        name: std::ffi::OsString,
+        directory: &'a ResolvedDirectory,
+    }
+
+    let summary_path = output_lock_path(summary.destination_path())?;
+    let report_path = output_lock_path(report.destination_path())?;
+    let mut candidates = vec![
+        Candidate {
+            name: summary_path
+                .file_name()
+                .expect("summary lock name")
+                .to_owned(),
+            path: summary_path,
+            directory: summary.resolved_directory(),
+        },
+        Candidate {
+            name: report_path
+                .file_name()
+                .expect("report lock name")
+                .to_owned(),
+            path: report_path,
+            directory: report.resolved_directory(),
+        },
+    ];
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    if candidates[0].path == candidates[1].path {
+        candidates.pop();
+    }
+    for candidate in &candidates {
+        if output_paths_may_collide(&candidate.path, summary.destination_path())?
+            || output_paths_may_collide(&candidate.path, report.destination_path())?
+        {
+            return Err(format!(
+                "output path collides with publication lock: {}",
+                candidate.path.display()
+            ));
+        }
+    }
+
+    let mut prepared: Vec<_> = candidates
+        .into_iter()
+        .map(|candidate| {
+            let file = candidate
+                .directory
+                .open_private_lock_file(&candidate.name)
+                .map_err(|error| {
+                    format!(
+                        "failed to open publication lock {}: {error}",
+                        candidate.path.display()
+                    )
+                })?;
+            if !candidate
+                .directory
+                .open_file_matches_child(&file, &candidate.name)
+                .map_err(|error| {
+                    format!(
+                        "failed to verify publication lock {}: {error}",
+                        candidate.path.display()
+                    )
+                })?
+            {
+                return Err(format!(
+                    "publication lock changed while opening it: {}",
+                    candidate.path.display()
+                ));
+            }
+            let identity = file_identity(&file).map_err(|error| {
+                format!(
+                    "failed to identify publication lock {}: {error}",
+                    candidate.path.display()
+                )
+            })?;
+            Ok(PreparedLock {
+                path: candidate.path,
+                name: candidate.name,
+                directory: candidate.directory,
+                file,
+                identity,
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    prepared.sort_by_key(|lock| lock.identity);
+    prepared.dedup_by_key(|lock| lock.identity);
+    Ok(prepared)
+}
+
 impl OutputLocks {
     #[cfg(test)]
     fn acquire(summary: &Path, report: &Path) -> Result<Self, String> {
@@ -3141,7 +3267,7 @@ impl OutputLocks {
             }
         }
 
-        let mut files = Vec::with_capacity(lock_paths.len());
+        let mut prepared = Vec::with_capacity(lock_paths.len());
         for lock_path in lock_paths {
             let file = open_private_lock_file(&lock_path).map_err(|error| {
                 format!(
@@ -3149,6 +3275,29 @@ impl OutputLocks {
                     lock_path.display()
                 )
             })?;
+            if !open_file_matches_path(&file, &lock_path).map_err(|error| {
+                format!(
+                    "failed to verify publication lock {}: {error}",
+                    lock_path.display()
+                )
+            })? {
+                return Err(format!(
+                    "publication lock path changed while acquiring it: {}",
+                    lock_path.display()
+                ));
+            }
+            let identity = file_identity(&file).map_err(|error| {
+                format!(
+                    "failed to identify publication lock {}: {error}",
+                    lock_path.display()
+                )
+            })?;
+            prepared.push((identity, lock_path, file));
+        }
+        prepared.sort_by_key(|(identity, _, _)| *identity);
+        prepared.dedup_by_key(|(identity, _, _)| *identity);
+        let mut files = Vec::with_capacity(prepared.len());
+        for (_, lock_path, file) in prepared {
             file.lock().map_err(|error| {
                 format!(
                     "failed to acquire publication lock {}: {error}",
@@ -3186,79 +3335,32 @@ impl OutputLocks {
     where
         F: FnOnce(),
     {
-        struct Candidate<'a> {
-            path: PathBuf,
-            name: std::ffi::OsString,
-            directory: &'a ResolvedDirectory,
-        }
-
-        let mut candidates = vec![
-            Candidate {
-                path: output_lock_path(summary.destination_path())?,
-                name: output_lock_path(summary.destination_path())?
-                    .file_name()
-                    .expect("summary lock name")
-                    .to_owned(),
-                directory: summary.resolved_directory(),
-            },
-            Candidate {
-                path: output_lock_path(report.destination_path())?,
-                name: output_lock_path(report.destination_path())?
-                    .file_name()
-                    .expect("report lock name")
-                    .to_owned(),
-                directory: report.resolved_directory(),
-            },
-        ];
-        candidates.sort_by(|left, right| left.path.cmp(&right.path));
-        if candidates[0].path == candidates[1].path {
-            candidates.pop();
-        }
-        for candidate in &candidates {
-            if output_paths_may_collide(&candidate.path, summary.destination_path())?
-                || output_paths_may_collide(&candidate.path, report.destination_path())?
-            {
-                return Err(format!(
-                    "output path collides with publication lock: {}",
-                    candidate.path.display()
-                ));
-            }
-        }
-
-        let mut files = Vec::with_capacity(candidates.len());
+        let prepared = prepare_anchored_locks(summary, report)?;
+        let mut files = Vec::with_capacity(prepared.len());
         let mut hook = Some(after_first_lock);
-        for candidate in candidates {
-            let file = candidate
-                .directory
-                .open_private_lock_file(&candidate.name)
-                .map_err(|error| {
-                    format!(
-                        "failed to open publication lock {}: {error}",
-                        candidate.path.display()
-                    )
-                })?;
-            file.lock().map_err(|error| {
+        for prepared_lock in prepared {
+            prepared_lock.file.lock().map_err(|error| {
                 format!(
                     "failed to acquire publication lock {}: {error}",
-                    candidate.path.display()
+                    prepared_lock.path.display()
                 )
             })?;
-            if !candidate
+            if !prepared_lock
                 .directory
-                .open_file_matches_child(&file, &candidate.name)
+                .open_file_matches_child(&prepared_lock.file, &prepared_lock.name)
                 .map_err(|error| {
                     format!(
                         "failed to verify publication lock {}: {error}",
-                        candidate.path.display()
+                        prepared_lock.path.display()
                     )
                 })?
             {
                 return Err(format!(
                     "publication lock changed while acquiring it: {}",
-                    candidate.path.display()
+                    prepared_lock.path.display()
                 ));
             }
-            files.push(file);
+            files.push(prepared_lock.file);
             if files.len() == 1 {
                 hook.take().expect("lock hook runs once")();
             }
@@ -3653,6 +3755,79 @@ mod tests {
         );
         drop(summary_output);
         drop(report_output);
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn alias_spellings_prepare_locks_in_the_same_filesystem_order() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-lock-alias-order-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let upper_a = directory.join("A");
+        let lower_a = directory.join("a");
+        let lower_b = directory.join("b");
+        let upper_b = directory.join("B");
+        let aliases = super::output_paths_may_collide(&upper_a, &lower_a).expect("probe A aliases")
+            && super::output_paths_may_collide(&lower_b, &upper_b).expect("probe B aliases");
+        if !aliases {
+            fs::remove_dir_all(directory).expect("remove case-sensitive test directory");
+            return;
+        }
+
+        let first_a = super::resolve_output_path(&upper_a).expect("resolve A");
+        let first_b = super::resolve_output_path(&lower_b).expect("resolve b");
+        let second_a = super::resolve_output_path(&lower_a).expect("resolve a");
+        let second_b = super::resolve_output_path(&upper_b).expect("resolve B");
+        let first_order: Vec<_> = super::prepare_anchored_locks(&first_a, &first_b)
+            .expect("prepare first lock set")
+            .into_iter()
+            .map(|prepared| prepared.identity)
+            .collect();
+        let second_order: Vec<_> = super::prepare_anchored_locks(&second_a, &second_b)
+            .expect("prepare aliased lock set")
+            .into_iter()
+            .map(|prepared| prepared.identity)
+            .collect();
+
+        assert_eq!(
+            first_order, second_order,
+            "alias spellings must not reverse physical lock order"
+        );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn prepared_locks_follow_filesystem_identity_order() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-lock-identity-order-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let first =
+            super::resolve_output_path(&directory.join("first")).expect("resolve first output");
+        let second =
+            super::resolve_output_path(&directory.join("second")).expect("resolve second output");
+
+        let identities: Vec<_> = super::prepare_anchored_locks(&first, &second)
+            .expect("prepare lock set")
+            .into_iter()
+            .map(|prepared| prepared.identity)
+            .collect();
+
+        assert!(
+            identities.windows(2).all(|pair| pair[0] < pair[1]),
+            "prepared locks must be strictly ordered and deduplicated by identity"
+        );
         fs::remove_dir_all(directory).expect("remove test directory");
     }
 
