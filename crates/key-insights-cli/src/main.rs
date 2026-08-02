@@ -383,6 +383,7 @@ impl ResolvedDirectory {
         };
         Ok(open.dev() == child.device_u64()
             && open.ino() == child.inode_u64()
+            && child.is_regular_file()
             && child.links == 1
             && child.mode & 0o077 == 0)
     }
@@ -591,6 +592,10 @@ impl ChildMetadata {
         self.mode & libc::S_IFMT == libc::S_IFREG
     }
 
+    fn same_identity(self, other: Self) -> bool {
+        self.device == other.device && self.inode == other.inode
+    }
+
     #[allow(clippy::unnecessary_cast)]
     fn device_u64(self) -> u64 {
         self.device as u64
@@ -609,6 +614,10 @@ struct ChildMetadata;
 #[cfg(not(unix))]
 impl ChildMetadata {
     fn is_regular_file(self) -> bool {
+        false
+    }
+
+    fn same_identity(self, _other: Self) -> bool {
         false
     }
 
@@ -1067,6 +1076,17 @@ impl OutputBackup {
     }
 
     fn capture_anchored(output: &StagedOutput, backup_path: PathBuf) -> Result<Self, String> {
+        Self::capture_anchored_with_hook(output, backup_path, || {})
+    }
+
+    fn capture_anchored_with_hook<F>(
+        output: &StagedOutput,
+        backup_path: PathBuf,
+        after_metadata: F,
+    ) -> Result<Self, String>
+    where
+        F: FnOnce(),
+    {
         let backup_name = backup_path
             .file_name()
             .ok_or_else(|| format!("backup path has no file name: {}", backup_path.display()))?
@@ -1088,7 +1108,8 @@ impl OutputBackup {
                     output.destination.display()
                 ));
             }
-            Some(_) => {
+            Some(initial_metadata) => {
+                after_metadata();
                 output
                     .directory
                     .link_child(&output.destination_name, &backup_name)
@@ -1098,6 +1119,33 @@ impl OutputBackup {
                             output.destination.display()
                         )
                     })?;
+                let source_metadata = output
+                    .directory
+                    .child_metadata(&output.destination_name)
+                    .map_err(|error| {
+                        format!("failed to recheck output after backup link: {error}")
+                    })?;
+                let backup_metadata = output
+                    .directory
+                    .child_metadata(&backup_name)
+                    .map_err(|error| format!("failed to recheck publication backup: {error}"))?;
+                if !source_metadata.is_some_and(|metadata| metadata.same_identity(initial_metadata))
+                    || !backup_metadata
+                        .is_some_and(|metadata| metadata.same_identity(initial_metadata))
+                    || !initial_metadata.is_regular_file()
+                {
+                    let backup_is_owned = backup_metadata
+                        .is_some_and(|metadata| metadata.same_identity(initial_metadata))
+                        || (source_metadata.is_some() && source_metadata == backup_metadata);
+                    if backup_is_owned {
+                        let _ = output.directory.remove_child(&backup_name);
+                        let _ = output.directory.sync();
+                    }
+                    return Err(format!(
+                        "output {} changed while capturing its backup",
+                        output.destination.display()
+                    ));
+                }
                 if let Err(error) = output.directory.sync() {
                     if anchored_child_same_file(
                         &output.directory,
@@ -2051,7 +2099,10 @@ fn transition_child_marker(
             let destination = directory
                 .child_metadata(destination)
                 .map_err(|error| format!("failed to inspect recovery marker: {error}"))?;
-            if source.is_none() || source != destination {
+            if source.is_none()
+                || source != destination
+                || source.is_some_and(|metadata| !metadata.is_regular_file())
+            {
                 return Err("recovery marker belongs to another transaction".to_owned());
             }
         }
@@ -2067,7 +2118,7 @@ fn transition_child_marker(
         let destination_metadata = directory
             .child_metadata(destination)
             .map_err(|error| format!("failed to inspect recovery marker: {error}"))?;
-        if destination_metadata != Some(source_metadata) {
+        if !source_metadata.is_regular_file() || destination_metadata != Some(source_metadata) {
             return Err("active marker changed during state transition".to_owned());
         }
         directory
@@ -4201,6 +4252,49 @@ mod tests {
     }
 
     #[test]
+    fn anchored_backup_rechecks_the_source_after_linking() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-anchored-backup-race-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let destination = directory.join("summary.json");
+        let target = directory.join("target");
+        let backup_path = directory.join("reserved-backup");
+        fs::write(&destination, "previous summary\n").expect("write previous output");
+        fs::write(&target, "unrelated\n").expect("write symlink target");
+        let staged = StagedOutput::create(&destination, b"new summary\n").expect("stage output");
+
+        let error =
+            match OutputBackup::capture_anchored_with_hook(&staged, backup_path.clone(), || {
+                fs::remove_file(&destination).expect("remove checked destination");
+                symlink(&target, &destination).expect("swap destination to symlink");
+            }) {
+                Ok(_) => panic!("post-link source replacement must be rejected"),
+                Err(error) => error,
+            };
+
+        assert!(error.contains("changed while capturing"), "{error}");
+        assert!(
+            fs::symlink_metadata(&destination)
+                .expect("replacement symlink survives")
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!backup_path.exists(), "rejected owned backup is removed");
+        assert_eq!(
+            fs::read_to_string(&target).expect("read symlink target"),
+            "unrelated\n"
+        );
+        drop(staged);
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
     fn paired_publication_is_serialized_across_threads() {
         use std::{sync::mpsc, thread, time::Duration};
 
@@ -4304,6 +4398,41 @@ mod tests {
             fs::read_to_string(&target).expect("read lock target"),
             "unrelated\n"
         );
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn publication_lock_verification_rejects_a_fifo() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-lock-fifo-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let directory = fs::canonicalize(directory).expect("canonicalize test directory");
+        let lock_name = std::ffi::OsStr::new("lock");
+        let lock_path = directory.join(lock_name);
+        let lock_path_c = CString::new(lock_path.as_os_str().as_bytes()).expect("fifo path");
+        assert_eq!(unsafe { libc::mkfifo(lock_path_c.as_ptr(), 0o600) }, 0);
+        let lock_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("open fifo");
+        let resolved = super::ResolvedDirectory::open(&directory).expect("open directory");
+
+        assert!(
+            !resolved
+                .open_file_matches_child(&lock_file, lock_name)
+                .expect("verify fifo"),
+            "non-regular lock must fail post-open verification"
+        );
+        drop(lock_file);
         fs::remove_dir_all(directory).expect("remove test directory");
     }
 

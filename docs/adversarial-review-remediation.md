@@ -149,7 +149,18 @@ between lock acquisitions, before publication, after the first output is
 published, and after a recovery index is read. They verify that attacker
 directories remain untouched and that interrupted output pairs are restored in
 the originally opened directory. Existing leaf-symlink rejection tests remain
-in place.
+in place. A follow-up review also added post-open regular-file verification for
+publication locks and post-link identity verification for captured backups.
+
+### Implementation structure follow-up
+
+The CLI entrypoint now contains several distinct filesystem responsibilities.
+Defer the mechanical split until R4 is complete because R4 changes both the
+lock representation and the filesystem-identity primitives that define the
+module boundary. Before starting R5, extract the stable boundaries into
+`secure_fs`, `publication`, and `recovery` modules in a behavior-neutral commit.
+This keeps the R4 security diff reviewable without mixing it with file moves and
+prevents R5 and R6 from extending the current monolithic entrypoint.
 
 ## R4: Derive lock order from filesystem identity
 
