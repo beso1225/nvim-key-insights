@@ -30,7 +30,7 @@ The following foundation is complete on `main`:
 - Normal, Visual, and Operator-pending sequence aggregation;
 - content-free Insert, Replace, and Select text-run aggregation;
 - bounded retention of finalized sessions;
-- a bounded streaming schema-v1 validator;
+- a bounded streaming schema-v1 validator and deterministic multi-input analyzer;
 - deterministic `summary.json` and `report.md` generation;
 - failure-atomic paired output publication, cross-process locking, crash
   recovery, and bounded staged-output scavenging;
@@ -38,9 +38,9 @@ The following foundation is complete on `main`:
 
 The current collector deliberately discards mapping expansions. The schema can
 represent opaque mapping use, but the collector does not yet attribute mappings.
-The analyzer accepts one input stream, while the collector publishes one file per
-session. The remaining local workflow, richer metrics, Codex integration, and
-installation surfaces are described below.
+The analyzer accepts ordered explicit inputs and bounded discovery of the
+collector's finalized session directory. Neovim report commands, richer metrics,
+Codex integration, and installation surfaces are described below.
 
 ## Milestone 1: complete the local analysis workflow
 

@@ -270,6 +270,179 @@ fn cli_combines_multiple_positional_inputs() {
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn cli_discovers_finalized_sessions_in_filename_order() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary_directory("session-directory-order");
+    fs::create_dir(&directory).expect("create test directory");
+    let first = directory.join("nvim-key-insights-a.jsonl");
+    let second = directory.join("nvim-key-insights-z.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&second, "not JSON\n").expect("write later invalid session");
+    fs::write(&first, "also not JSON\n").expect("write earlier invalid session");
+    fs::set_permissions(&first, fs::Permissions::from_mode(0o600))
+        .expect("make first session private");
+    fs::set_permissions(&second, fs::Permissions::from_mode(0o600))
+        .expect("make second session private");
+
+    let output = run_cli_session_dir(&directory, &summary, &report);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(path(&first)), "{stderr}");
+    assert!(!stderr.contains(path(&second)), "{stderr}");
+    assert!(!summary.exists());
+    assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_session_directory_ignores_non_finalized_and_unsafe_entries() {
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+    };
+
+    let directory = temporary_directory("session-directory-filtering");
+    fs::create_dir(&directory).expect("create test directory");
+    let finalized = directory.join("nvim-key-insights-valid.jsonl");
+    fs::write(&finalized, session_with_key("valid", "j", 10)).expect("write finalized session");
+    fs::set_permissions(&finalized, fs::Permissions::from_mode(0o600))
+        .expect("make finalized session private");
+    fs::write(
+        directory.join("nvim-key-insights-partial.jsonl.part"),
+        "not JSON\n",
+    )
+    .expect("write partial session");
+    fs::write(
+        directory.join("nvim-key-insights-active.lock"),
+        "not JSON\n",
+    )
+    .expect("write lock");
+    fs::write(directory.join("report.jsonl"), "not JSON\n").expect("write unrelated JSONL");
+    fs::write(directory.join("legacy.jsonl"), "not JSON\n").expect("write legacy JSONL");
+    let public = directory.join("nvim-key-insights-public.jsonl");
+    fs::write(&public, "not JSON\n").expect("write non-private matching file");
+    fs::set_permissions(&public, fs::Permissions::from_mode(0o644))
+        .expect("make matching file non-private");
+    fs::create_dir(directory.join("nvim-key-insights-directory.jsonl"))
+        .expect("create matching directory");
+    std::os::unix::fs::symlink(
+        &finalized,
+        directory.join("nvim-key-insights-symlink.jsonl"),
+    )
+    .expect("create matching symlink");
+    let fifo = directory.join("nvim-key-insights-fifo.jsonl");
+    let fifo = CString::new(fifo.as_os_str().as_bytes()).expect("FIFO path");
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+
+    let output = run_cli_session_dir(&directory, &summary, &report);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&summary).expect("read summary"))
+            .expect("parse summary");
+    assert_eq!(value["sessions"], 1);
+    assert_eq!(value["total_session_duration_ms"], 10);
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn cli_rejects_combining_explicit_inputs_with_a_session_directory() {
+    let directory = temporary_directory("mixed-input-sources");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, session_with_key("one", "j", 10)).expect("write explicit input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            path(&input),
+            "--session-dir",
+            path(&directory),
+            "--summary",
+            path(&summary),
+            "--report",
+            path(&report),
+        ])
+        .output()
+        .expect("run analyzer CLI");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("mutually exclusive"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!summary.exists());
+    assert!(!report.exists());
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn cli_reports_an_empty_session_directory_without_replacing_outputs() {
+    let directory = temporary_directory("empty-session-directory");
+    fs::create_dir(&directory).expect("create test directory");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&summary, "previous summary\n").expect("write previous summary");
+    fs::write(&report, "previous report\n").expect("write previous report");
+
+    let output = run_cli_session_dir(&directory, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no finalized sessions found"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&summary).expect("read previous summary"),
+        "previous summary\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("read previous report"),
+        "previous report\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_does_not_follow_a_session_directory_symlink() {
+    let root = temporary_directory("symlink-session-directory");
+    let directory = root.join("sessions");
+    let alias = root.join("session-alias");
+    fs::create_dir_all(&directory).expect("create session directory");
+    std::os::unix::fs::symlink(&directory, &alias).expect("create session directory symlink");
+    let summary = root.join("summary.json");
+    let report = root.join("report.md");
+
+    let output = run_cli_session_dir(&alias, &summary, &report);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to open session directory"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!summary.exists());
+    assert!(!report.exists());
+    fs::remove_dir_all(root).expect("remove test root");
+}
+
 #[test]
 fn cli_rejects_duplicate_inputs_without_replacing_outputs() {
     let directory = temporary_directory("duplicate-cli-inputs");
@@ -1029,6 +1202,25 @@ fn run_cli_inputs(inputs: &[&Path], summary: &Path, report: &Path) -> std::proce
     }
     command
         .args(["--summary", path(summary), "--report", path(report)])
+        .output()
+        .expect("run analyzer CLI")
+}
+
+fn run_cli_session_dir(
+    session_directory: &Path,
+    summary: &Path,
+    report: &Path,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            "--session-dir",
+            path(session_directory),
+            "--summary",
+            path(summary),
+            "--report",
+            path(report),
+        ])
         .output()
         .expect("run analyzer CLI")
 }

@@ -17,10 +17,12 @@ use key_insights::{
 };
 use serde::{Deserialize, Serialize};
 
+mod discovery;
 mod publication;
 mod recovery;
 mod secure_fs;
 
+use discovery::*;
 use publication::*;
 use recovery::*;
 use secure_fs::*;
@@ -46,7 +48,10 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let mut index = 1;
     while index < arguments.len() {
         let argument = &arguments[index];
-        if argument == OsStr::new("--summary") || argument == OsStr::new("--report") {
+        if argument == OsStr::new("--summary")
+            || argument == OsStr::new("--report")
+            || argument == OsStr::new("--session-dir")
+        {
             break;
         }
         if let Some(option) = argument.to_str().filter(|value| value.starts_with("--")) {
@@ -55,9 +60,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         input_paths.push(PathBuf::from(argument));
         index += 1;
     }
-    if input_paths.is_empty() {
-        return Err(usage());
-    }
+    let mut session_directory = None;
     let mut summary_path = None;
     let mut report_path = None;
     while index < arguments.len() {
@@ -70,7 +73,12 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         match flag {
             "--summary" if summary_path.is_none() => summary_path = Some(PathBuf::from(value)),
             "--report" if report_path.is_none() => report_path = Some(PathBuf::from(value)),
-            "--summary" | "--report" => return Err(format!("duplicate option {flag}")),
+            "--session-dir" if session_directory.is_none() => {
+                session_directory = Some(PathBuf::from(value))
+            }
+            "--summary" | "--report" | "--session-dir" => {
+                return Err(format!("duplicate option {flag}"));
+            }
             _ => return Err(format!("unknown option {flag}")),
         }
         index += 2;
@@ -78,11 +86,17 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
 
     let summary_path = summary_path.ok_or_else(|| "missing --summary path".to_owned())?;
     let report_path = report_path.ok_or_else(|| "missing --report path".to_owned())?;
-    let paths = resolve_input_paths(
-        input_paths.iter().map(PathBuf::as_path),
-        &summary_path,
-        &report_path,
-    )?;
+    if !input_paths.is_empty() && session_directory.is_some() {
+        return Err("explicit inputs and --session-dir are mutually exclusive".to_owned());
+    }
+    let inputs = match session_directory {
+        Some(directory) => discover_session_inputs(&directory)?,
+        None if !input_paths.is_empty() => {
+            resolve_explicit_inputs(input_paths.iter().map(PathBuf::as_path))?
+        }
+        None => return Err(usage()),
+    };
+    let paths = resolve_paths_for_inputs(inputs, &summary_path, &report_path)?;
     recover_outputs_anchored(&paths.summary, &paths.report)?;
 
     let readers = paths.inputs.iter().map(|input| BufReader::new(&input.file));
@@ -107,6 +121,7 @@ struct ResolvedPaths {
     report: ResolvedOutputPath,
 }
 
+#[derive(Debug)]
 struct ResolvedInputPath {
     path: PathBuf,
     file: File,
@@ -124,11 +139,20 @@ fn resolve_paths(input: &Path, summary: &Path, report: &Path) -> Result<Resolved
     resolve_input_paths(std::iter::once(input), summary, report)
 }
 
+#[cfg(test)]
 fn resolve_input_paths<'a, I>(
     input_paths: I,
     summary: &Path,
     report: &Path,
 ) -> Result<ResolvedPaths, String>
+where
+    I: IntoIterator<Item = &'a Path>,
+{
+    let inputs = resolve_explicit_inputs(input_paths)?;
+    resolve_paths_for_inputs(inputs, summary, report)
+}
+
+fn resolve_explicit_inputs<'a, I>(input_paths: I) -> Result<Vec<ResolvedInputPath>, String>
 where
     I: IntoIterator<Item = &'a Path>,
 {
@@ -149,6 +173,14 @@ where
     if inputs.is_empty() {
         return Err("at least one analysis input is required".to_owned());
     }
+    Ok(inputs)
+}
+
+fn resolve_paths_for_inputs(
+    inputs: Vec<ResolvedInputPath>,
+    summary: &Path,
+    report: &Path,
+) -> Result<ResolvedPaths, String> {
     let summary = resolve_output_path(summary)?;
     let report = resolve_output_path(report)?;
     for input in &inputs {
@@ -308,8 +340,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze <input.jsonl>... --summary <summary.json> --report <report.md>"
-        .to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md>".to_owned()
 }
 
 #[cfg(all(test, unix))]

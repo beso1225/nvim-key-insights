@@ -8,8 +8,8 @@ Roadmap milestone: [Complete the local analysis workflow](implementation-roadmap
 
 - S1 stateful multi-input analysis API: complete.
 - S2 CLI positional multi-input support: complete.
-- S3 bounded session-directory discovery: next.
-- S4 Neovim report commands: pending.
+- S3 bounded session-directory discovery: complete.
+- S4 Neovim report commands: next.
 - S5 explicit purge: pending.
 - S6 documentation and end-to-end test: pending.
 

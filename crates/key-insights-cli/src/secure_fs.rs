@@ -7,6 +7,62 @@ pub(super) struct ResolvedDirectory {
 
 impl ResolvedDirectory {
     #[cfg(unix)]
+    pub(super) fn child_names(
+        &self,
+        maximum_entries: usize,
+    ) -> std::io::Result<Vec<std::ffi::OsString>> {
+        use std::{
+            ffi::{CStr, OsString},
+            os::{fd::AsRawFd, unix::ffi::OsStringExt},
+        };
+
+        let descriptor = unsafe { libc::dup(self.file.as_raw_fd()) };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let stream = unsafe { libc::fdopendir(descriptor) };
+        if stream.is_null() {
+            let error = std::io::Error::last_os_error();
+            unsafe { libc::close(descriptor) };
+            return Err(error);
+        }
+
+        let result = (|| {
+            let mut names = Vec::new();
+            loop {
+                let entry = unsafe { libc::readdir(stream) };
+                if entry.is_null() {
+                    break;
+                }
+                let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                if bytes == b"." || bytes == b".." {
+                    continue;
+                }
+                if names.len() >= maximum_entries {
+                    return Err(std::io::Error::other(format!(
+                        "directory entry count exceeds the limit of {maximum_entries}"
+                    )));
+                }
+                names.push(OsString::from_vec(bytes.to_vec()));
+            }
+            Ok(names)
+        })();
+        let close_result = unsafe { libc::closedir(stream) };
+        if close_result != 0 && result.is_ok() {
+            return Err(std::io::Error::last_os_error());
+        }
+        result
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn child_names(
+        &self,
+        _maximum_entries: usize,
+    ) -> std::io::Result<Vec<std::ffi::OsString>> {
+        Err(unsupported_directory_handle_operation())
+    }
+
+    #[cfg(unix)]
     pub(super) fn open(path: &Path) -> Result<Self, String> {
         use std::os::unix::fs::OpenOptionsExt;
 

@@ -23,9 +23,9 @@ The default event stream does not contain an absolute timestamp or file path. Pr
 
 Every event rejects unknown fields. Key sequences and mapping key lists must be non-empty and cannot contain empty tokens, and mapping IDs must be non-empty. Both collector and analyzer enforce a 64 KiB encoded event-line limit, and session IDs are limited to 128 bytes. The collector losslessly splits a large key sequence before it reaches that shared line boundary.
 
-The streaming validator accepts up to 4,096 complete sessions in one file, but requires matching session IDs and non-decreasing `elapsed_ms` values within each session. The session limit bounds memory retained for reuse detection. It rejects nested sessions, reused session IDs, events outside a session, and end-of-file with an unclosed session.
+The streaming validator accepts up to 4,096 complete sessions across one analysis input set, but requires matching session IDs and non-decreasing `elapsed_ms` values within each session. The session limit bounds memory retained for reuse detection. It rejects nested sessions, reused session IDs across files, events outside a session, and the end of any input file with an unclosed session.
 
-The collector stores one session per finalized `.jsonl` file. The validator also accepts multiple complete sessions in one stream so analyzers can concatenate finalized files without weakening session-boundary checks. Files ending in `.jsonl.part` are incomplete collector artifacts and must not be analyzed.
+The collector stores one session per finalized `.jsonl` file. The validator accepts multiple ordered input readers and multiple complete sessions per reader without weakening session-boundary checks or concatenating their bytes. Files ending in `.jsonl.part` are incomplete collector artifacts and must not be analyzed.
 
 ## Privacy invariants
 

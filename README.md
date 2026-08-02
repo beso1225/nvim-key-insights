@@ -35,6 +35,22 @@ cargo run --bin key-insights -- analyze session-1.jsonl session-2.jsonl \
 
 One or more finalized inputs are accepted in the supplied order. The command validates every input before creating outputs and rejects duplicate filesystem identities. `summary.json` contains only aggregated counts and bounded rankings of sanitized tokens; it excludes session IDs, project IDs, raw sequences, Insert text, and command/search contents. `report.md` is rendered deterministically from the same in-memory summary.
 
+To analyze every finalized collector session in its owned directory, use the
+mutually exclusive discovery form:
+
+```sh
+cargo run --bin key-insights -- analyze \
+  --session-dir /path/to/sessions \
+  --summary summary.json \
+  --report report.md
+```
+
+Directory discovery considers only private regular files in the current
+`nvim-key-insights-<session_id>.jsonl` namespace. It is bounded and ordered by
+ASCII filename, and it does not follow session-directory or entry symlinks.
+Incomplete, lock, legacy, and unrelated entries are ignored. Legacy logs remain
+available through explicit positional input paths.
+
 ## Collector lifecycle
 
 The collector can be loaded with lazy.nvim without starting collection automatically:
