@@ -20,6 +20,7 @@ end
 
 local function write_at(path, contents, modified_at)
   vim.fn.writefile({ contents }, path)
+  assert(vim.uv.fs_chmod(path, 384))
   local ok, error_message = vim.uv.fs_utime(path, modified_at, modified_at)
   assert(ok, error_message)
 end
@@ -211,6 +212,37 @@ assert(vim.deep_equal(basenames(unknown_type_directory .. "/*.jsonl"), {
 }), "unknown dirent types must fall back to lstat")
 vim.fn.delete(unknown_type_directory, "rf")
 
+local nonblocking_lock_stat = {
+  dev = 1,
+  ino = 2,
+  mode = 384,
+  mtime = { nsec = 0, sec = NOW_SECONDS },
+  nlink = 1,
+  size = 10,
+  type = "file",
+  uid = 1000,
+}
+local lock_open_flags = nil
+local nonblocking_lock_fs = {
+  fs_lstat = function()
+    return nonblocking_lock_stat
+  end,
+  fs_open = function(_, flags)
+    lock_open_flags = flags
+    return nil, "ENOENT: injected replacement"
+  end,
+}
+local nonblocking_lock_store = storage.new({
+  directory = "/unused",
+  fs = nonblocking_lock_fs,
+  user_id = 1000,
+})
+assert(nonblocking_lock_store:_lock_owner_alive("/unused/session.lock") == false)
+assert(
+  lock_open_flags == vim.uv.constants.O_RDONLY + vim.uv.constants.O_NONBLOCK,
+  "collector lock reads must not block on a replaced FIFO"
+)
+
 local tie_directory = vim.fn.tempname()
 vim.fn.mkdir(tie_directory, "p", 448)
 write_at(vim.fs.joinpath(tie_directory, log_name("alpha")), "alpha", NOW_SECONDS - DAY_SECONDS)
@@ -231,6 +263,29 @@ assert(vim.deep_equal(basenames(tie_directory .. "/*.jsonl"), {
   log_name("current"),
 }), "filename must deterministically break equal-mtime retention ties")
 vim.fn.delete(tie_directory, "rf")
+
+local replaced_directory = vim.fn.tempname()
+vim.fn.mkdir(replaced_directory, "p", 448)
+local replaced_path = vim.fs.joinpath(replaced_directory, log_name("replaced"))
+write_at(replaced_path, "original", NOW_SECONDS - DAY_SECONDS)
+local replaced_store = storage.new({
+  directory = replaced_directory,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 1,
+  },
+})
+local scanned_log = replaced_store:_finalized_logs()[1]
+assert(type(scanned_log.identity) == "string", "retention scans must capture artifact identity")
+assert(vim.uv.fs_unlink(replaced_path))
+write_at(replaced_path, "replacement", NOW_SECONDS - DAY_SECONDS)
+local unlinked, unlink_error = pcall(replaced_store._unlink_log, replaced_store, scanned_log)
+assert(not unlinked and tostring(unlink_error):find("changed since retention scan", 1, true))
+assert(vim.fn.readfile(replaced_path)[1] == "replacement", "retention must preserve a replacement artifact")
+vim.fn.delete(replaced_directory, "rf")
 
 local retry_directory = vim.fn.tempname()
 vim.fn.mkdir(retry_directory, "p", 448)

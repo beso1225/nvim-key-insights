@@ -20,6 +20,14 @@ local luaSources: Listing<String> = new {
   "tests/lua/**/*.lua"
 }
 
+local e2eSources: Listing<String> = new {
+  ...rustSources
+  "lua/**/*.lua"
+  "plugin/**/*.lua"
+  "tests/lua/e2e_spec.lua"
+  "tests/lua/minimal_init.lua"
+}
+
 local workflowSources: Listing<String> = new {
   ...toolchainSources
   ".github/workflows/*.yml"
@@ -40,6 +48,14 @@ local testLua: Task = new {
   description = "Run headless Neovim collector tests"
   cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/run.lua"
   inputs = luaSources
+}
+
+local testE2e: Task = new {
+  name = "test:e2e"
+  description = "Run the headless collector-to-report privacy workflow"
+  cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/e2e_spec.lua"
+  inputs = e2eSources
+  deps { testRust }
 }
 
 local formatCheck: Task = new {
@@ -66,7 +82,7 @@ local lintActions: Task = new {
 local test: Task = new {
   name = "test"
   description = "Run all tests"
-  deps { testRust; testLua }
+  deps { testLua; testE2e }
 }
 
 local check: Task = new {
@@ -81,4 +97,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; formatCheck; lintRust; lintActions; test; check; default }

@@ -87,71 +87,92 @@ struct ActiveSession {
     start_line: usize,
 }
 
-pub fn validate_jsonl<R: BufRead>(mut reader: R) -> Result<ValidationSummary, ValidationError> {
-    for_each_validated_event(&mut reader, |_| {})
+pub(crate) struct JsonlValidator {
+    summary: ValidationSummary,
+    active: Option<ActiveSession>,
+    seen_session_ids: HashSet<String>,
 }
 
-pub(crate) fn for_each_validated_event<R, F>(
-    mut reader: R,
-    mut on_event: F,
-) -> Result<ValidationSummary, ValidationError>
-where
-    R: BufRead,
-    F: FnMut(&Event),
-{
-    let mut summary = ValidationSummary {
-        sessions: 0,
-        events: 0,
-    };
-    let mut active: Option<ActiveSession> = None;
-    let mut seen_session_ids = HashSet::new();
-    let mut buffer = Vec::new();
-    let mut line_number = 0;
-
-    loop {
-        buffer.clear();
-        let mut limited_reader = (&mut reader).take((MAX_EVENT_LINE_BYTES + 1) as u64);
-        let bytes_read =
-            limited_reader
-                .read_until(b'\n', &mut buffer)
-                .map_err(|_error: io::Error| ValidationError {
-                    line: line_number + 1,
-                    kind: ValidationErrorKind::Io,
-                })?;
-        if bytes_read == 0 {
-            break;
+impl JsonlValidator {
+    pub(crate) fn new() -> Self {
+        Self {
+            summary: ValidationSummary {
+                sessions: 0,
+                events: 0,
+            },
+            active: None,
+            seen_session_ids: HashSet::new(),
         }
-
-        line_number += 1;
-        if buffer.len() > MAX_EVENT_LINE_BYTES {
-            return Err(error(line_number, ValidationErrorKind::LineTooLong));
-        }
-
-        trim_line_ending(&mut buffer);
-        if buffer.is_empty() {
-            return Err(error(line_number, ValidationErrorKind::MalformedEvent));
-        }
-
-        let event: Event = serde_json::from_slice(&buffer)
-            .map_err(|_| error(line_number, ValidationErrorKind::MalformedEvent))?;
-        validate_event(
-            &event,
-            line_number,
-            &mut active,
-            &mut seen_session_ids,
-            &mut summary,
-        )?;
-        on_event(&event);
     }
 
-    if let Some(session) = active {
-        return Err(error(
-            session.start_line,
-            ValidationErrorKind::UnclosedSession,
-        ));
+    pub(crate) fn consume<R, F>(
+        &mut self,
+        mut reader: R,
+        mut on_event: F,
+    ) -> Result<u64, ValidationError>
+    where
+        R: BufRead,
+        F: FnMut(&Event),
+    {
+        let sessions_before = self.summary.sessions;
+        let mut buffer = Vec::new();
+        let mut line_number = 0;
+
+        loop {
+            buffer.clear();
+            let mut limited_reader = (&mut reader).take((MAX_EVENT_LINE_BYTES + 1) as u64);
+            let bytes_read =
+                limited_reader
+                    .read_until(b'\n', &mut buffer)
+                    .map_err(|_error: io::Error| ValidationError {
+                        line: line_number + 1,
+                        kind: ValidationErrorKind::Io,
+                    })?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            line_number += 1;
+            if buffer.len() > MAX_EVENT_LINE_BYTES {
+                return Err(error(line_number, ValidationErrorKind::LineTooLong));
+            }
+
+            trim_line_ending(&mut buffer);
+            if buffer.is_empty() {
+                return Err(error(line_number, ValidationErrorKind::MalformedEvent));
+            }
+
+            let event: Event = serde_json::from_slice(&buffer)
+                .map_err(|_| error(line_number, ValidationErrorKind::MalformedEvent))?;
+            validate_event(
+                &event,
+                line_number,
+                &mut self.active,
+                &mut self.seen_session_ids,
+                &mut self.summary,
+            )?;
+            on_event(&event);
+        }
+
+        if let Some(session) = &self.active {
+            return Err(error(
+                session.start_line,
+                ValidationErrorKind::UnclosedSession,
+            ));
+        }
+
+        Ok(self.summary.sessions - sessions_before)
     }
 
-    Ok(summary)
+    pub(crate) fn finish(self) -> ValidationSummary {
+        self.summary
+    }
+}
+
+pub fn validate_jsonl<R: BufRead>(reader: R) -> Result<ValidationSummary, ValidationError> {
+    let mut validator = JsonlValidator::new();
+    validator.consume(reader, |_| {})?;
+    Ok(validator.finish())
 }
 
 fn validate_event(

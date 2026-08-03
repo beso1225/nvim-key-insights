@@ -30,6 +30,16 @@ The session being finalized is always protected. A finalized log whose versioned
 
 Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. In the collector-owned default directory only, it also recognizes the previous 32-character lowercase hexadecimal filename format so upgrades do not exempt historical logs from the privacy boundary. Legacy-shaped files in a custom directory remain untouched. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
 
+## Explicit purge
+
+Retention and purge are separate operations. `:KeyInsightsPurge` previews and
+confirms bounded removal of collector-owned finalized, incomplete, and
+reservation artifacts. `:KeyInsightsPurge!` skips confirmation but not safety
+checks. Active sessions, live or ambiguous owners, symlinks, hard links,
+unexpected permission modes, entries owned by another user, subdirectories, and
+unrelated names survive. See [Local collection and reporting](local-workflow.md#explicit-purge)
+for the complete selection, race, and result-count contract.
+
 ## Failure behavior
 
 Pruning failures are reported as finalization failures. The completed `.jsonl` and its reservation remain intact, and retrying stop resumes pruning without rewriting or republishing the session. All successful publication, pruning, and reservation changes are covered by the final parent-directory sync.

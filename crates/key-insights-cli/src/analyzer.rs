@@ -3,9 +3,7 @@ use std::{cmp::Reverse, collections::BTreeMap, fmt::Write, io::BufRead};
 use serde::Serialize;
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-use crate::{
-    Event, SCHEMA_VERSION, SequenceMode, ValidationError, validator::for_each_validated_event,
-};
+use crate::{Event, SCHEMA_VERSION, SequenceMode, ValidationError, validator::JsonlValidator};
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -55,6 +53,32 @@ impl std::error::Error for AnalysisError {}
 impl From<ValidationError> for AnalysisError {
     fn from(error: ValidationError) -> Self {
         Self::Validation(error)
+    }
+}
+
+/// An analysis failure with the ordered input that caused it, when applicable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisInputsError {
+    /// Zero-based index in the iterator passed to [`analyze_jsonl_inputs`].
+    ///
+    /// This is `None` when the iterator itself contained no inputs.
+    pub input_index: Option<usize>,
+    /// The underlying validation or deterministic analysis failure.
+    pub error: AnalysisError,
+}
+
+impl std::fmt::Display for AnalysisInputsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.input_index {
+            Some(index) => write!(formatter, "analysis input {}: {}", index + 1, self.error),
+            None => self.error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for AnalysisInputsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -140,13 +164,50 @@ struct Accumulator {
 }
 
 pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisError> {
+    analyze_jsonl_inputs(std::iter::once(reader)).map_err(|error| error.error)
+}
+
+/// Analyzes complete JSONL sources as one bounded deterministic dataset.
+///
+/// Every source must contain at least one complete session. Session identities
+/// and analyzer resource limits are shared across the ordered input set.
+pub fn analyze_jsonl_inputs<I, R>(readers: I) -> Result<AnalysisSummary, AnalysisInputsError>
+where
+    I: IntoIterator<Item = R>,
+    R: BufRead,
+{
     let mut accumulator = Accumulator::default();
-    let validation = for_each_validated_event(reader, |event| accumulator.observe(event))?;
+    let mut analysis_error_input = None;
+    let mut validator = JsonlValidator::new();
+    for (input_index, reader) in readers.into_iter().enumerate() {
+        let source_sessions = validator
+            .consume(reader, |event| accumulator.observe(event))
+            .map_err(|error| AnalysisInputsError {
+                input_index: Some(input_index),
+                error: AnalysisError::Validation(error),
+            })?;
+        if source_sessions == 0 {
+            return Err(AnalysisInputsError {
+                input_index: Some(input_index),
+                error: AnalysisError::NoSessions,
+            });
+        }
+        if accumulator.analysis_error.is_some() && analysis_error_input.is_none() {
+            analysis_error_input = Some(input_index);
+        }
+    }
+    let validation = validator.finish();
     if validation.sessions == 0 {
-        return Err(AnalysisError::NoSessions);
+        return Err(AnalysisInputsError {
+            input_index: None,
+            error: AnalysisError::NoSessions,
+        });
     }
     if let Some(error) = accumulator.analysis_error.take() {
-        return Err(error);
+        return Err(AnalysisInputsError {
+            input_index: analysis_error_input,
+            error,
+        });
     }
     Ok(accumulator.finish(validation.sessions, validation.events))
 }

@@ -7,9 +7,32 @@ use std::{
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
-    open_private_lock_file, output_lock_path, publish_pair, publish_pair_with_hook,
-    publish_pair_with_hooks, resolve_paths,
+    open_input_file, open_private_lock_file, output_lock_path, publish_pair,
+    publish_pair_with_hook, publish_pair_with_hooks, resolve_paths,
 };
+
+#[test]
+fn explicit_fifo_input_is_rejected_without_waiting_for_a_writer() {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-input-fifo-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let fifo = directory.join("input.jsonl");
+    let fifo_c = CString::new(fifo.as_os_str().as_bytes()).expect("FIFO path");
+    assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+
+    let error = open_input_file(&fifo).expect_err("FIFO input must be rejected");
+
+    assert!(error.contains("regular file"), "{error}");
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
 
 #[test]
 fn output_paths_cannot_alias_recovery_sidecars() {

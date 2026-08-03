@@ -7,6 +7,72 @@ pub(super) struct ResolvedDirectory {
 
 impl ResolvedDirectory {
     #[cfg(unix)]
+    pub(super) fn child_names(
+        &self,
+        maximum_entries: usize,
+    ) -> std::io::Result<Vec<std::ffi::OsString>> {
+        use std::{
+            ffi::{CStr, OsString},
+            os::{fd::AsRawFd, unix::ffi::OsStringExt},
+        };
+
+        let descriptor = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let stream = unsafe { libc::fdopendir(descriptor) };
+        if stream.is_null() {
+            let error = std::io::Error::last_os_error();
+            unsafe { libc::close(descriptor) };
+            return Err(error);
+        }
+
+        let result = (|| {
+            let mut names = Vec::new();
+            loop {
+                clear_readdir_error();
+                let entry = unsafe { libc::readdir(stream) };
+                if entry.is_null() {
+                    if let Some(error) = readdir_error() {
+                        return Err(error);
+                    }
+                    break;
+                }
+                let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                if bytes == b"." || bytes == b".." {
+                    continue;
+                }
+                if names.len() >= maximum_entries {
+                    return Err(std::io::Error::other(format!(
+                        "directory entry count exceeds the limit of {maximum_entries}"
+                    )));
+                }
+                names.push(OsString::from_vec(bytes.to_vec()));
+            }
+            Ok(names)
+        })();
+        let close_result = unsafe { libc::closedir(stream) };
+        if close_result != 0 && result.is_ok() {
+            return Err(std::io::Error::last_os_error());
+        }
+        result
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn child_names(
+        &self,
+        _maximum_entries: usize,
+    ) -> std::io::Result<Vec<std::ffi::OsString>> {
+        Err(unsupported_directory_handle_operation())
+    }
+
+    #[cfg(unix)]
     pub(super) fn open(path: &Path) -> Result<Self, String> {
         use std::os::unix::fs::OpenOptionsExt;
 
@@ -172,7 +238,7 @@ impl ResolvedDirectory {
             libc::openat(
                 self.file.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
             )
         };
         if descriptor < 0 {
@@ -187,7 +253,8 @@ impl ResolvedDirectory {
             let open = file.metadata()?;
             if open.dev() != metadata.device_u64()
                 || open.ino() != metadata.inode_u64()
-                || open.mode() & 0o077 != 0
+                || open.mode() & 0o7777 != 0o600
+                || open.uid() != unsafe { libc::geteuid() }
             {
                 return Err(std::io::Error::other(
                     "recovery artifact changed while opening it",
@@ -216,9 +283,11 @@ impl ResolvedDirectory {
         };
         Ok(open.dev() == child.device_u64()
             && open.ino() == child.inode_u64()
-            && child.is_regular_file()
-            && child.links == 1
-            && child.mode & 0o077 == 0)
+            && open.is_file()
+            && open.nlink() == 1
+            && open.mode() & 0o7777 == 0o600
+            && open.uid() == unsafe { libc::geteuid() }
+            && child.is_private_file_owned_by_current_user())
     }
 
     #[cfg(unix)]
@@ -410,6 +479,69 @@ impl ResolvedDirectory {
     }
 }
 
+#[cfg(unix)]
+macro_rules! define_readdir_errno {
+    ($location:path) => {
+        fn clear_readdir_error() {
+            unsafe { *$location() = 0 };
+        }
+
+        fn readdir_error() -> Option<std::io::Error> {
+            let code = unsafe { *$location() };
+            (code != 0).then(|| std::io::Error::from_raw_os_error(code))
+        }
+    };
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+define_readdir_errno!(libc::__errno_location);
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+define_readdir_errno!(libc::__error);
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+))]
+mod unsupported_readdir_errno {
+    pub(super) fn clear_readdir_error() {}
+
+    pub(super) fn readdir_error() -> Option<std::io::Error> {
+        None
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+))]
+use unsupported_readdir_errno::{clear_readdir_error, readdir_error};
+
 #[cfg(not(unix))]
 pub(super) fn unsupported_directory_handle_operation() -> std::io::Error {
     std::io::Error::new(
@@ -446,7 +578,7 @@ impl ChildMetadata {
     pub(super) fn is_private_file_owned_by_current_user(self) -> bool {
         self.is_regular_file()
             && self.links == 1
-            && self.mode & 0o777 == 0o600
+            && self.mode & 0o7777 == 0o600
             && self.owner == unsafe { libc::geteuid() }
     }
 
@@ -471,7 +603,33 @@ impl ChildMetadata {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::ChildMetadata;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{ChildMetadata, ResolvedDirectory};
+
+    #[test]
+    fn anchored_directory_scans_do_not_share_offsets() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-directory-rescan-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create directory");
+        fs::write(directory.join("one"), "one").expect("write entry");
+        let resolved = ResolvedDirectory::open(&directory).expect("open directory");
+
+        let first = resolved.child_names(10).expect("first scan");
+        let second = resolved.child_names(10).expect("second scan");
+
+        assert_eq!(first, second);
+        fs::remove_dir_all(directory).expect("remove directory");
+    }
 
     #[test]
     fn matching_inode_is_not_enough_when_the_current_file_type_changed() {
@@ -489,6 +647,20 @@ mod tests {
         };
 
         assert!(!regular.same_regular_file(symlink));
+    }
+
+    #[test]
+    fn private_files_reject_special_permission_bits() {
+        let special = ChildMetadata {
+            device: 1,
+            inode: 2,
+            mode: libc::S_IFREG | 0o1600,
+            links: 1,
+            owner: unsafe { libc::geteuid() },
+            modified_seconds: 4,
+        };
+
+        assert!(!special.is_private_file_owned_by_current_user());
     }
 }
 

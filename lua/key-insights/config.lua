@@ -34,6 +34,10 @@ local DEFAULTS = {
       max_sessions = 100,
     },
   },
+  report = {
+    analyzer = "key-insights",
+    directory = nil,
+  },
 }
 
 function M.defaults()
@@ -71,6 +75,15 @@ function M.resolve(options)
       and max_age_days == math.floor(max_age_days)
       and max_age_days > 0,
     "storage.retention.max_age_days must be a positive integer"
+  )
+  assert(
+    type(resolved.report.analyzer) == "string" and resolved.report.analyzer ~= "",
+    "report.analyzer must be a non-empty string"
+  )
+  assert(
+    resolved.report.directory == nil
+      or (type(resolved.report.directory) == "string" and resolved.report.directory ~= ""),
+    "report.directory must be nil or a non-empty string"
   )
   return resolved
 end
