@@ -170,7 +170,7 @@ fn ascii_name(name: &OsString) -> &str {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::{PermissionsExt, symlink},
+        os::unix::fs::{MetadataExt, PermissionsExt, symlink},
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -251,7 +251,16 @@ mod tests {
         let directory = temporary_directory("file-replacement");
         fs::create_dir(&directory).expect("create directory");
         let session = directory.join("nvim-key-insights-a.jsonl");
+        let replacement = directory.join("replacement");
         write_private(&session, "first\n");
+        write_private(&replacement, "replacement\n");
+        let original_metadata = fs::metadata(&session).expect("inspect original session");
+        let replacement_metadata = fs::metadata(&replacement).expect("inspect replacement");
+        assert_ne!(
+            (original_metadata.dev(), original_metadata.ino()),
+            (replacement_metadata.dev(), replacement_metadata.ino()),
+            "the fixture must use distinct filesystem identities"
+        );
 
         let error = discover_session_inputs_with_limits_and_hooks(
             &directory,
@@ -259,8 +268,7 @@ mod tests {
             10,
             || {},
             |path| {
-                fs::remove_file(path).expect("remove discovered session");
-                write_private(path, "replacement\n");
+                fs::rename(&replacement, path).expect("replace discovered session");
             },
         )
         .expect_err("file replacement must fail closed");
