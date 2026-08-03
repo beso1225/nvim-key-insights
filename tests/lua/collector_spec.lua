@@ -480,6 +480,7 @@ for _, name in ipairs({
   "KeyInsightsStatus",
   "KeyInsightsReport",
   "KeyInsightsOpenReport",
+  "KeyInsightsPurge",
 }) do
   assert(commands[name] ~= nil, name .. " must be registered")
 end
@@ -494,20 +495,29 @@ end
 assert(api.status().report_running == false)
 local report_calls = 0
 local open_report_calls = 0
+local purge_forces = {}
 local original_report = api.report
 local original_open_report = api.open_report
+local original_purge = api.purge
 api.report = function()
   report_calls = report_calls + 1
 end
 api.open_report = function()
   open_report_calls = open_report_calls + 1
 end
+api.purge = function(force)
+  table.insert(purge_forces, force)
+end
 vim.cmd.KeyInsightsReport()
 vim.cmd.KeyInsightsOpenReport()
+vim.cmd.KeyInsightsPurge()
+vim.cmd("KeyInsightsPurge!")
 api.report = original_report
 api.open_report = original_open_report
+api.purge = original_purge
 assert(report_calls == 1)
 assert(open_report_calls == 1)
+assert(vim.deep_equal(purge_forces, { false, true }))
 vim.cmd.KeyInsightsStart()
 vim.cmd.KeyInsightsStop()
 local command_logs = vim.fn.glob(command_log_directory .. "/*.jsonl", false, true)

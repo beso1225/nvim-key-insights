@@ -1,6 +1,7 @@
 local collector = require("key-insights.collector")
 local commands = require("key-insights.commands")
 local config = require("key-insights.config")
+local purge = require("key-insights.purge")
 local report = require("key-insights.report")
 local storage = require("key-insights.storage")
 
@@ -8,6 +9,7 @@ local M = {}
 local options = config.defaults()
 local instance = nil
 local registered = false
+local purge_instance = nil
 local report_instance = nil
 local writer = nil
 
@@ -42,6 +44,20 @@ local function get_report_instance()
   return report_instance
 end
 
+local function get_purge_instance()
+  if purge_instance == nil then
+    local current_writer = get_writer()
+    purge_instance = purge.new({
+      active_session_id = function()
+        return instance == nil and nil or instance:status().session_id
+      end,
+      directory = current_writer.directory,
+      include_legacy = current_writer:includes_legacy_logs(),
+    })
+  end
+  return purge_instance
+end
+
 function M.setup(user_options)
   if instance ~= nil and instance:status().state ~= "stopped" then
     error("key-insights cannot be reconfigured during an active session")
@@ -51,6 +67,7 @@ function M.setup(user_options)
   end
   options = config.resolve(user_options)
   instance = nil
+  purge_instance = nil
   report_instance = nil
   writer = nil
   M.register_commands()
@@ -93,6 +110,21 @@ end
 
 function M.open_report()
   return get_report_instance():open()
+end
+
+function M.purge(force)
+  if report_instance ~= nil and report_instance:status().running then
+    vim.notify("key-insights: cannot purge while a report is running", vim.log.levels.WARN)
+    return nil
+  end
+  local ok, result = pcall(function()
+    return get_purge_instance():run(force == true)
+  end)
+  if not ok then
+    vim.notify("key-insights: purge failed: " .. tostring(result), vim.log.levels.ERROR)
+    return nil
+  end
+  return result
 end
 
 function M.register_commands()

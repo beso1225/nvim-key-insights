@@ -20,6 +20,7 @@ end
 
 local function write_at(path, contents, modified_at)
   vim.fn.writefile({ contents }, path)
+  assert(vim.uv.fs_chmod(path, 384))
   local ok, error_message = vim.uv.fs_utime(path, modified_at, modified_at)
   assert(ok, error_message)
 end

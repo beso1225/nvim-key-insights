@@ -36,6 +36,10 @@ function M.register(api)
   vim.api.nvim_create_user_command("KeyInsightsOpenReport", function()
     api.open_report()
   end, { desc = "Open the existing local key insights report", force = true })
+
+  vim.api.nvim_create_user_command("KeyInsightsPurge", function(command)
+    api.purge(command.bang)
+  end, { bang = true, desc = "Purge collector-owned session artifacts", force = true })
 end
 
 return M
