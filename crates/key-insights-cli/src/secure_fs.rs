@@ -16,7 +16,13 @@ impl ResolvedDirectory {
             os::{fd::AsRawFd, unix::ffi::OsStringExt},
         };
 
-        let descriptor = unsafe { libc::dup(self.file.as_raw_fd()) };
+        let descriptor = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
         if descriptor < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -30,8 +36,12 @@ impl ResolvedDirectory {
         let result = (|| {
             let mut names = Vec::new();
             loop {
+                clear_readdir_error();
                 let entry = unsafe { libc::readdir(stream) };
                 if entry.is_null() {
+                    if let Some(error) = readdir_error() {
+                        return Err(error);
+                    }
                     break;
                 }
                 let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
@@ -466,6 +476,84 @@ impl ResolvedDirectory {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn readdir_errno_location() -> *mut libc::c_int {
+    unsafe { libc::__errno_location() }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn readdir_errno_location() -> *mut libc::c_int {
+    unsafe { libc::__error() }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn clear_readdir_error() {
+    unsafe { *readdir_errno_location() = 0 };
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn readdir_error() -> Option<std::io::Error> {
+    let code = unsafe { *readdir_errno_location() };
+    (code != 0).then(|| std::io::Error::from_raw_os_error(code))
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+))]
+fn clear_readdir_error() {}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+))]
+fn readdir_error() -> Option<std::io::Error> {
+    None
+}
+
 #[cfg(not(unix))]
 pub(super) fn unsupported_directory_handle_operation() -> std::io::Error {
     std::io::Error::new(
@@ -527,7 +615,33 @@ impl ChildMetadata {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::ChildMetadata;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{ChildMetadata, ResolvedDirectory};
+
+    #[test]
+    fn anchored_directory_scans_do_not_share_offsets() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "key-insights-directory-rescan-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create directory");
+        fs::write(directory.join("one"), "one").expect("write entry");
+        let resolved = ResolvedDirectory::open(&directory).expect("open directory");
+
+        let first = resolved.child_names(10).expect("first scan");
+        let second = resolved.child_names(10).expect("second scan");
+
+        assert_eq!(first, second);
+        fs::remove_dir_all(directory).expect("remove directory");
+    }
 
     #[test]
     fn matching_inode_is_not_enough_when_the_current_file_type_changed() {
