@@ -67,7 +67,7 @@ function M.new(options, dependencies)
     _max_entries = max_entries,
     _max_targets = max_targets,
     _notify_fn = deps.notify or default_notify,
-    _user_id = deps.user_id == nil and vim.uv.getuid() or deps.user_id,
+    _user_id = deps.user_id == nil and artifacts.current_user_id(vim.uv) or deps.user_id,
   }, Purge)
 end
 

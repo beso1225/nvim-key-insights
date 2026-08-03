@@ -84,7 +84,7 @@ function M.new(options)
     _now_seconds = config.now_seconds or os.time,
     _process_id = process_id,
     _retention = retention,
-    _user_id = config.user_id == nil and vim.uv.getuid() or config.user_id,
+    _user_id = config.user_id == nil and artifacts.current_user_id(vim.uv) or config.user_id,
   }, Storage)
 end
 

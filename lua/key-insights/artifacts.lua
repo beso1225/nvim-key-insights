@@ -5,6 +5,7 @@ local FILE_PREFIX_PATTERN = "nvim%-key%-insights%-"
 local MAX_SESSION_ID_BYTES = 128
 local OWNER_READ_WRITE = 384 -- 0600
 local OWNER_DIRECTORY = 448 -- 0700
+local PERMISSION_AND_SPECIAL_BITS = 4096
 local SUFFIXES = {
   { extension = ".jsonl.part", kind = "partial" },
   { extension = ".jsonl", kind = "finalized" },
@@ -80,19 +81,30 @@ function M.directory_identity(stat)
   }, ":")
 end
 
+function M.current_user_id(fs)
+  if type(fs) == "table" and type(fs.getuid) == "function" then
+    return fs.getuid()
+  end
+  return nil
+end
+
 function M.is_private_file(stat, user_id)
   return stat ~= nil
+    and type(user_id) == "number"
     and stat.type == "file"
     and stat.nlink == 1
-    and stat.mode % 512 == OWNER_READ_WRITE
-    and (user_id == nil or stat.uid == user_id)
+    and type(stat.mode) == "number"
+    and stat.mode % PERMISSION_AND_SPECIAL_BITS == OWNER_READ_WRITE
+    and stat.uid == user_id
 end
 
 function M.is_private_directory(stat, user_id)
   return stat ~= nil
+    and type(user_id) == "number"
     and stat.type == "directory"
-    and stat.mode % 512 == OWNER_DIRECTORY
-    and (user_id == nil or stat.uid == user_id)
+    and type(stat.mode) == "number"
+    and stat.mode % PERMISSION_AND_SPECIAL_BITS == OWNER_DIRECTORY
+    and stat.uid == user_id
 end
 
 return M

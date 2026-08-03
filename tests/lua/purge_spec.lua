@@ -1,6 +1,13 @@
+local artifacts = require("key-insights.artifacts")
 local purge = require("key-insights.purge")
 
 local PREFIX = "nvim-key-insights-"
+
+assert(artifacts.is_private_file({ type = "file", nlink = 1, mode = 2432, uid = 1000 }, 1000) == false)
+assert(artifacts.is_private_directory({ type = "directory", mode = 960, uid = 1000 }, 1000) == false)
+assert(artifacts.is_private_file({ type = "file", nlink = 1, uid = 1000 }, 1000) == false)
+assert(artifacts.is_private_file({ type = "file", nlink = 1, mode = 384, uid = 1000 }, nil) == false)
+assert(artifacts.current_user_id({}) == nil, "platforms without getuid must not fail during setup")
 
 local function path(directory, name)
   return vim.fs.joinpath(directory, name)
