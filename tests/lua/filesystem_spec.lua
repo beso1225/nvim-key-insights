@@ -56,4 +56,24 @@ changed_stat.mtime = { nsec = 5, sec = 3 }
 local changed, changed_error = filesystem.read_bounded(fake_reader({ "abc", "" }, changed_stat), "/report", 3)
 assert(changed == nil and changed_error:find("changed while reading", 1, true))
 
+local root = vim.fn.tempname()
+local original = vim.fs.joinpath(root, "sessions")
+local moved = vim.fs.joinpath(root, "moved")
+local target_name = "nvim-key-insights-race.jsonl"
+vim.fn.mkdir(original, "p", 448)
+vim.fn.writefile({ "original" }, vim.fs.joinpath(original, target_name))
+local descriptor = assert(filesystem.open_read(vim.uv, original))
+assert(vim.uv.fs_rename(original, moved))
+vim.fn.mkdir(original, "p", 448)
+local replacement = vim.fs.joinpath(original, target_name)
+vim.fn.writefile({ "replacement" }, replacement)
+
+assert(filesystem.unlink_child(descriptor, target_name))
+assert(vim.uv.fs_close(descriptor))
+assert(vim.uv.fs_lstat(vim.fs.joinpath(moved, target_name)) == nil)
+assert(vim.fn.readfile(replacement)[1] == "replacement", "descriptor-relative unlink must preserve a replacement directory")
+local invalid, invalid_error = filesystem.unlink_child(0, "../outside")
+assert(invalid == nil and invalid_error:find("invalid", 1, true))
+vim.fn.delete(root, "rf")
+
 print("Lua filesystem contract: ok")

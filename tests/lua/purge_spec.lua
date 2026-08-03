@@ -1,4 +1,5 @@
 local artifacts = require("key-insights.artifacts")
+local filesystem = require("key-insights.filesystem")
 local purge = require("key-insights.purge")
 
 local PREFIX = "nvim-key-insights-"
@@ -241,16 +242,15 @@ local failure_name = PREFIX .. "failure.jsonl"
 local success_name = PREFIX .. "success.jsonl"
 write_private(path(failure_directory, failure_name), "failure")
 write_private(path(failure_directory, success_name), "success")
-local failure_fs = setmetatable({}, { __index = vim.uv })
-failure_fs.fs_unlink = function(file_path)
-  if file_path == path(failure_directory, failure_name) then
+local function failure_unlink_child(descriptor, name)
+  if name == failure_name then
     return nil, "EACCES: injected purge failure"
   end
-  return vim.uv.fs_unlink(file_path)
+  return filesystem.unlink_child(descriptor, name)
 end
 local partial_failure = purge.new({ directory = failure_directory }, {
-  fs = failure_fs,
   notify = function() end,
+  unlink_child = failure_unlink_child,
 }):run(true)
 assert(partial_failure.removed == 1 and partial_failure.failed == 1)
 assert(exists(path(failure_directory, failure_name)), "a failed unlink must be reported and left intact")
@@ -275,10 +275,12 @@ durable_fs.fs_open = function(file_path, flags, mode)
   end
   return descriptor, open_error
 end
-durable_fs.fs_unlink = function(file_path)
+local function durable_unlink_child(descriptor, name)
   operation_sequence = operation_sequence + 1
   first_unlink_at = first_unlink_at or operation_sequence
-  return vim.uv.fs_unlink(file_path)
+  assert(directory_descriptors[descriptor], "purge deletion must use the held directory descriptor")
+  assert(name == PREFIX .. "durable.jsonl", "descriptor-relative deletion must receive a basename")
+  return filesystem.unlink_child(descriptor, name)
 end
 durable_fs.fs_fsync = function(descriptor)
   if directory_descriptors[descriptor] then
@@ -294,6 +296,7 @@ end
 local durable_result = purge.new({ directory = durable_directory }, {
   fs = durable_fs,
   notify = function() end,
+  unlink_child = durable_unlink_child,
 }):run(true)
 assert(durable_result.removed == 1 and durable_result.failed == 0)
 assert(directory_syncs == 1, "a successful purge must durably sync the collector directory")

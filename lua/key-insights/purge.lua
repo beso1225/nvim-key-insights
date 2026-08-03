@@ -68,6 +68,7 @@ function M.new(options, dependencies)
     _max_entries = max_entries,
     _max_targets = max_targets,
     _notify_fn = deps.notify or default_notify,
+    _unlink_child = deps.unlink_child or filesystem.unlink_child,
     _user_id = deps.user_id == nil and artifacts.current_user_id(vim.uv) or deps.user_id,
   }, Purge)
 end
@@ -261,7 +262,7 @@ function Purge:_session_is_protected(session_id)
   }) ~= "stale"
 end
 
-function Purge:_apply_targets(preview, current)
+function Purge:_apply_targets(preview, current, directory_descriptor)
   local eligible = {}
   local currently_protected = {}
   for _, entry in ipairs(current.targets) do
@@ -299,7 +300,7 @@ function Purge:_apply_targets(preview, current)
     then
       result.failed = result.failed + 1
     else
-      local unlinked, unlink_error = self._fs.fs_unlink(entry.path)
+      local unlinked, unlink_error = self._unlink_child(directory_descriptor, current_entry.name)
       if unlinked then
         result.removed = result.removed + 1
       else
@@ -320,7 +321,7 @@ function Purge:apply(preview)
   local current = self:preview()
   assert(current.directory_identity == preview.directory_identity, "collector directory changed before purge")
   local directory_descriptor = self:_open_directory(preview.directory_identity)
-  local applied, result = pcall(self._apply_targets, self, preview, current)
+  local applied, result = pcall(self._apply_targets, self, preview, current, directory_descriptor)
   local synced, sync_error = self._fs.fs_fsync(directory_descriptor)
   local closed, close_error = self._fs.fs_close(directory_descriptor)
   if not applied then

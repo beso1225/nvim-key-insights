@@ -1,8 +1,50 @@
 local M = {}
 
+local native_ffi = nil
+local native_unlinkat = nil
+do
+  local loaded, ffi = pcall(require, "ffi")
+  if loaded then
+    pcall(ffi.cdef, "int unlinkat(int dirfd, const char *pathname, int flags);")
+    local found, unlinkat = pcall(function()
+      return ffi.C.unlinkat
+    end)
+    if found then
+      native_ffi = ffi
+      native_unlinkat = unlinkat
+    end
+  end
+end
+
 function M.open_read(fs, path)
   local flags = vim.uv.constants.O_RDONLY + vim.uv.constants.O_NONBLOCK
   return fs.fs_open(path, flags, 0)
+end
+
+function M.unlink_child(directory_descriptor, name)
+  if type(directory_descriptor) ~= "number"
+    or type(name) ~= "string"
+    or name == ""
+    or name == "."
+    or name == ".."
+    or string.find(name, "/", 1, true) ~= nil
+    or string.find(name, "\0", 1, true) ~= nil
+  then
+    return nil, "invalid descriptor-relative unlink target"
+  end
+  if native_unlinkat == nil then
+    return nil, "descriptor-relative unlink is unavailable on this platform"
+  end
+  if native_unlinkat(directory_descriptor, name, 0) == 0 then
+    return true
+  end
+  local error_number = native_ffi.errno()
+  if error_number == 2 then
+    return nil, "ENOENT: descriptor-relative unlink target is missing"
+  end
+  local description = type(vim.uv.strerror) == "function" and vim.uv.strerror(error_number) or nil
+  description = description or ("errno " .. tostring(error_number))
+  return nil, "descriptor-relative unlink failed: " .. description
 end
 
 function M.stat_identity(stat)
