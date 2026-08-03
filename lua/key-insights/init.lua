@@ -1,31 +1,58 @@
 local collector = require("key-insights.collector")
 local commands = require("key-insights.commands")
 local config = require("key-insights.config")
+local report = require("key-insights.report")
 local storage = require("key-insights.storage")
 
 local M = {}
 local options = config.defaults()
 local instance = nil
+local registered = false
+local report_instance = nil
+local writer = nil
+
+local function get_writer()
+  if writer == nil then
+    writer = storage.new(options.storage)
+  end
+  return writer
+end
 
 local function get_instance()
   if instance == nil then
-    local writer = storage.new(options.storage)
     instance = collector.new({
       options = options,
       open_session = function(session_id)
-        return writer:open_session(session_id)
+        return get_writer():open_session(session_id)
       end,
     })
   end
   return instance
 end
 
+local function get_report_instance()
+  if report_instance == nil then
+    local output_directory = options.report.directory or report.default_directory()
+    report_instance = report.new({
+      analyzer = options.report.analyzer,
+      output_directory = output_directory,
+      session_directory = get_writer().directory,
+    })
+  end
+  return report_instance
+end
+
 function M.setup(user_options)
   if instance ~= nil and instance:status().state ~= "stopped" then
     error("key-insights cannot be reconfigured during an active session")
   end
+  if report_instance ~= nil and report_instance:status().running then
+    error("key-insights cannot be reconfigured while a report is running")
+  end
   options = config.resolve(user_options)
   instance = nil
+  report_instance = nil
+  writer = nil
   M.register_commands()
   return M
 end
@@ -53,13 +80,25 @@ function M.flush()
 end
 
 function M.status()
-  if instance == nil then
-    return { state = "stopped", session_id = nil, pending_events = 0, last_error = nil }
-  end
-  return instance:status()
+  local status = instance == nil
+      and { state = "stopped", session_id = nil, pending_events = 0, last_error = nil }
+    or instance:status()
+  status.report_running = report_instance ~= nil and report_instance:status().running
+  return status
+end
+
+function M.report()
+  return get_report_instance():start()
+end
+
+function M.open_report()
+  return get_report_instance():open()
 end
 
 function M.register_commands()
+  if registered then
+    return
+  end
   commands.register(M)
   local group = vim.api.nvim_create_augroup("key-insights.lifecycle", { clear = true })
   vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -72,6 +111,7 @@ function M.register_commands()
     end,
     desc = "Close the key-insights session before Neovim exits",
   })
+  registered = true
 end
 
 return M

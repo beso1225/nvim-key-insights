@@ -476,10 +476,22 @@ impl ResolvedDirectory {
     }
 }
 
+#[cfg(unix)]
+macro_rules! define_readdir_errno {
+    ($location:path) => {
+        fn clear_readdir_error() {
+            unsafe { *$location() = 0 };
+        }
+
+        fn readdir_error() -> Option<std::io::Error> {
+            let code = unsafe { *$location() };
+            (code != 0).then(|| std::io::Error::from_raw_os_error(code))
+        }
+    };
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn readdir_errno_location() -> *mut libc::c_int {
-    unsafe { libc::__errno_location() }
-}
+define_readdir_errno!(libc::__errno_location);
 
 #[cfg(any(
     target_os = "macos",
@@ -489,37 +501,27 @@ fn readdir_errno_location() -> *mut libc::c_int {
     target_os = "openbsd",
     target_os = "dragonfly"
 ))]
-fn readdir_errno_location() -> *mut libc::c_int {
-    unsafe { libc::__error() }
-}
+define_readdir_errno!(libc::__error);
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly"
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
 ))]
-fn clear_readdir_error() {
-    unsafe { *readdir_errno_location() = 0 };
-}
+mod unsupported_readdir_errno {
+    pub(super) fn clear_readdir_error() {}
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly"
-))]
-fn readdir_error() -> Option<std::io::Error> {
-    let code = unsafe { *readdir_errno_location() };
-    (code != 0).then(|| std::io::Error::from_raw_os_error(code))
+    pub(super) fn readdir_error() -> Option<std::io::Error> {
+        None
+    }
 }
 
 #[cfg(all(
@@ -535,24 +537,7 @@ fn readdir_error() -> Option<std::io::Error> {
         target_os = "dragonfly"
     ))
 ))]
-fn clear_readdir_error() {}
-
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly"
-    ))
-))]
-fn readdir_error() -> Option<std::io::Error> {
-    None
-}
+use unsupported_readdir_errno::{clear_readdir_error, readdir_error};
 
 #[cfg(not(unix))]
 pub(super) fn unsupported_directory_handle_operation() -> std::io::Error {

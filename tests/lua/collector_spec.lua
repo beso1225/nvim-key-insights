@@ -465,6 +465,12 @@ durable_session:finish()
 assert(directory_descriptor ~= nil, "finalization must open the parent directory")
 assert(synced_descriptors[directory_descriptor] == true, "finalization must fsync the parent directory")
 
+local command_registrations = {}
+local create_user_command = vim.api.nvim_create_user_command
+vim.api.nvim_create_user_command = function(name, callback, command_options)
+  command_registrations[name] = (command_registrations[name] or 0) + 1
+  return create_user_command(name, callback, command_options)
+end
 dofile("plugin/key-insights.lua")
 local commands = vim.api.nvim_get_commands({})
 for _, name in ipairs({
@@ -472,6 +478,8 @@ for _, name in ipairs({
   "KeyInsightsPause",
   "KeyInsightsStop",
   "KeyInsightsStatus",
+  "KeyInsightsReport",
+  "KeyInsightsOpenReport",
 }) do
   assert(commands[name] ~= nil, name .. " must be registered")
 end
@@ -479,6 +487,27 @@ end
 local command_log_directory = vim.fn.tempname()
 local api = require("key-insights")
 api.setup({ storage = { directory = command_log_directory } })
+vim.api.nvim_create_user_command = create_user_command
+for name, count in pairs(command_registrations) do
+  assert(count == 1, name .. " must be registered exactly once")
+end
+assert(api.status().report_running == false)
+local report_calls = 0
+local open_report_calls = 0
+local original_report = api.report
+local original_open_report = api.open_report
+api.report = function()
+  report_calls = report_calls + 1
+end
+api.open_report = function()
+  open_report_calls = open_report_calls + 1
+end
+vim.cmd.KeyInsightsReport()
+vim.cmd.KeyInsightsOpenReport()
+api.report = original_report
+api.open_report = original_open_report
+assert(report_calls == 1)
+assert(open_report_calls == 1)
 vim.cmd.KeyInsightsStart()
 vim.cmd.KeyInsightsStop()
 local command_logs = vim.fn.glob(command_log_directory .. "/*.jsonl", false, true)

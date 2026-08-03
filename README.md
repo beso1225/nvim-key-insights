@@ -58,7 +58,12 @@ The collector can be loaded with lazy.nvim without starting collection automatic
 ```lua
 {
   "beso1225/nvim-key-insights",
-  opts = {},
+  opts = {
+    report = {
+      analyzer = "/path/to/key-insights",
+      directory = "/path/to/private/reports",
+    },
+  },
 }
 ```
 
@@ -67,9 +72,19 @@ The current implementation provides these commands:
 - `:KeyInsightsStart` starts a new session or resumes a paused session;
 - `:KeyInsightsPause` detaches the input callback and flushes pending events;
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
-- `:KeyInsightsStatus` displays the current lifecycle state.
+- `:KeyInsightsStatus` displays collection state and whether a report job is running;
+- `:KeyInsightsReport` asynchronously analyzes finalized sessions and opens the new report;
+- `:KeyInsightsOpenReport` opens the existing report without running analysis.
 
 Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Finalized logs are retained for at most 30 days and the newest 100 sessions by default. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+
+By default, the analyzer is `key-insights`, and reports live under
+`stdpath("state")/key-insights/reports/`. The plugin verifies that directory and
+sets owner-only permissions before passing paths as argv without a shell. It
+allows one report process at a time. An active collector's
+`.jsonl.part` file remains excluded. After a successful exit, the plugin opens
+only fresh, bounded, valid outputs; analyzer errors keep the current editor view
+and previously published artifacts.
 
 ## Repository layout
 
@@ -82,6 +97,12 @@ docs/                         Public design contracts
 
 ## Status
 
-The current implementation establishes privacy defaults, strict event construction, a bounded streaming JSONL validator, durable collector sessions, bounded log retention, privacy-safe input aggregation, and deterministic local summary/report generation. Normal, Visual, and Operator-pending input is grouped into bounded typed-key sequences; Insert and Select input is reduced to text-run counts and timing. Command/search contents and mapping expansions are discarded. Mapping attribution, richer ergonomic metrics, and Codex integration will be implemented incrementally with TDD.
+The current implementation covers privacy-safe collection, bounded retention and
+validation, deterministic local reports, and asynchronous Neovim report
+commands. Normal, Visual, and Operator-pending input becomes bounded typed-key
+sequences; Insert and Select input becomes text-run counts and timing.
+Command/search contents and mapping expansions are discarded. Mapping
+attribution, richer ergonomic metrics, and Codex integration remain incremental
+TDD work.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered remaining milestones, dependencies, and completion gates.
