@@ -1,6 +1,6 @@
 # Milestone 1 local workflow implementation plan
 
-Status: in progress
+Status: complete
 
 Roadmap milestone: [Complete the local analysis workflow](implementation-roadmap.md#milestone-1-complete-the-local-analysis-workflow)
 
@@ -11,7 +11,7 @@ Roadmap milestone: [Complete the local analysis workflow](implementation-roadmap
 - S3 bounded session-directory discovery: complete.
 - S4 Neovim report commands: complete.
 - S5 explicit purge: complete.
-- S6 documentation and end-to-end test: next.
+- S6 documentation and end-to-end test: complete.
 
 ## Objective
 

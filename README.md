@@ -21,6 +21,8 @@ nix develop
 pkf run test
 ```
 
+`pkf run test:e2e` builds the Rust analyzer and exercises the complete local
+collector-to-report workflow in headless Neovim without network access.
 Individual tasks are available through `pkf list`.
 
 ## Deterministic analyzer
@@ -74,7 +76,9 @@ The current implementation provides these commands:
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
 - `:KeyInsightsStatus` displays collection state and whether a report job is running;
 - `:KeyInsightsReport` asynchronously analyzes finalized sessions and opens the new report;
-- `:KeyInsightsOpenReport` opens the existing report without running analysis.
+- `:KeyInsightsOpenReport` opens the existing report without running analysis;
+- `:KeyInsightsPurge` previews collector-owned session artifacts and asks before deletion;
+- `:KeyInsightsPurge!` skips that prompt but retains every ownership and race check.
 
 Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Finalized logs are retained for at most 30 days and the newest 100 sessions by default. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
 
@@ -85,6 +89,15 @@ allows one report process at a time. An active collector's
 `.jsonl.part` file remains excluded. After a successful exit, the plugin opens
 only fresh, bounded, valid outputs; analyzer errors keep the current editor view
 and previously published artifacts.
+
+Purge considers only private, single-linked regular files in the collector
+namespace. Active sessions, live owners, malformed reservations, symlinks,
+hard links, special modes, directories, and unrelated entries remain untouched.
+The result reports removed, protected, skipped, and failed counts. Purge is
+local-only and is refused while a report process is running.
+
+See [Local collection and reporting](docs/local-workflow.md) for ordering,
+discovery, output, purge, and recovery contracts.
 
 ## Repository layout
 
@@ -98,11 +111,11 @@ docs/                         Public design contracts
 ## Status
 
 The current implementation covers privacy-safe collection, bounded retention and
-validation, deterministic local reports, and asynchronous Neovim report
-commands. Normal, Visual, and Operator-pending input becomes bounded typed-key
-sequences; Insert and Select input becomes text-run counts and timing.
-Command/search contents and mapping expansions are discarded. Mapping
-attribution, richer ergonomic metrics, and Codex integration remain incremental
-TDD work.
+validation, deterministic multi-session reports, asynchronous Neovim report
+commands, explicit bounded purge, and a headless local-workflow privacy test.
+Normal, Visual, and Operator-pending input becomes bounded typed-key sequences;
+Insert and Select input becomes text-run counts and timing. Command/search
+contents and mapping expansions are discarded. Mapping attribution, richer
+ergonomic metrics, and Codex integration remain incremental TDD work.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered remaining milestones, dependencies, and completion gates.
