@@ -101,9 +101,10 @@ lock. A valid lock whose process is known to be absent is stale. Symlinks, hard
 links, special permission modes, entries owned by another user, directories,
 and unrelated names are skipped. If current-user ownership cannot be verified,
 purge fails closed. Directory and leaf identities are rechecked after the
-preview and immediately around bounded mutation. The final notification reports
-removed, protected, skipped, and failed counts. One unlink failure does not make
-the engine broaden its selection.
+preview and immediately around bounded mutation. A verified parent-directory
+handle is held across mutation and synchronized before success is reported. The
+final notification reports removed, protected, skipped, and failed counts. One
+unlink failure does not make the engine broaden its selection.
 
 Purge is refused while a report process is running. It never removes report
 outputs, analyzer recovery sidecars, or files outside the configured session

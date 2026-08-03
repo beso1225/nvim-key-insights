@@ -238,7 +238,7 @@ impl ResolvedDirectory {
             libc::openat(
                 self.file.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
             )
         };
         if descriptor < 0 {
@@ -253,7 +253,8 @@ impl ResolvedDirectory {
             let open = file.metadata()?;
             if open.dev() != metadata.device_u64()
                 || open.ino() != metadata.inode_u64()
-                || open.mode() & 0o077 != 0
+                || open.mode() & 0o7777 != 0o600
+                || open.uid() != unsafe { libc::geteuid() }
             {
                 return Err(std::io::Error::other(
                     "recovery artifact changed while opening it",
@@ -282,9 +283,11 @@ impl ResolvedDirectory {
         };
         Ok(open.dev() == child.device_u64()
             && open.ino() == child.inode_u64()
-            && child.is_regular_file()
-            && child.links == 1
-            && child.mode & 0o077 == 0)
+            && open.is_file()
+            && open.nlink() == 1
+            && open.mode() & 0o7777 == 0o600
+            && open.uid() == unsafe { libc::geteuid() }
+            && child.is_private_file_owned_by_current_user())
     }
 
     #[cfg(unix)]
@@ -575,7 +578,7 @@ impl ChildMetadata {
     pub(super) fn is_private_file_owned_by_current_user(self) -> bool {
         self.is_regular_file()
             && self.links == 1
-            && self.mode & 0o777 == 0o600
+            && self.mode & 0o7777 == 0o600
             && self.owner == unsafe { libc::geteuid() }
     }
 
@@ -644,6 +647,20 @@ mod tests {
         };
 
         assert!(!regular.same_regular_file(symlink));
+    }
+
+    #[test]
+    fn private_files_reject_special_permission_bits() {
+        let special = ChildMetadata {
+            device: 1,
+            inode: 2,
+            mode: libc::S_IFREG | 0o1600,
+            links: 1,
+            owner: unsafe { libc::geteuid() },
+            modified_seconds: 4,
+        };
+
+        assert!(!special.is_private_file_owned_by_current_user());
     }
 }
 

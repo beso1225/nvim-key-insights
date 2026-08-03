@@ -211,20 +211,42 @@ fn resolve_input_path(path: &Path) -> Result<ResolvedInputPath, String> {
             path.display()
         ));
     }
-    let file = File::open(&resolved)
-        .map_err(|error| format!("failed to open input {}: {error}", path.display()))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("failed to inspect input {}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!("input must be a regular file: {}", path.display()));
-    }
+    let (file, metadata) = open_input_file(&resolved)?;
     let identity = input_identity(&resolved, &metadata);
     Ok(ResolvedInputPath {
         path: resolved,
         file,
         identity,
     })
+}
+
+#[cfg(unix)]
+fn open_input_file(path: &Path) -> Result<(File, fs::Metadata), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| format!("failed to open input {}: {error}", path.display()))?;
+    inspect_input_file(path, file)
+}
+
+#[cfg(not(unix))]
+fn open_input_file(path: &Path) -> Result<(File, fs::Metadata), String> {
+    let file = File::open(path)
+        .map_err(|error| format!("failed to open input {}: {error}", path.display()))?;
+    inspect_input_file(path, file)
+}
+
+fn inspect_input_file(path: &Path, file: File) -> Result<(File, fs::Metadata), String> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("failed to inspect input {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("input must be a regular file: {}", path.display()));
+    }
+    Ok((file, metadata))
 }
 
 #[cfg(unix)]

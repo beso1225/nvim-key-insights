@@ -329,6 +329,10 @@ fn cli_session_directory_ignores_non_finalized_and_unsafe_entries() {
     fs::write(&public, "not JSON\n").expect("write non-private matching file");
     fs::set_permissions(&public, fs::Permissions::from_mode(0o644))
         .expect("make matching file non-private");
+    let special_mode = directory.join("nvim-key-insights-special-mode.jsonl");
+    fs::write(&special_mode, "not JSON\n").expect("write special-mode matching file");
+    fs::set_permissions(&special_mode, fs::Permissions::from_mode(0o1600))
+        .expect("set unexpected permission bits");
     fs::create_dir(directory.join("nvim-key-insights-directory.jsonl"))
         .expect("create matching directory");
     std::os::unix::fs::symlink(

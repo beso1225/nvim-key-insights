@@ -1,3 +1,4 @@
+local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
 
 local M = {}
@@ -17,16 +18,16 @@ local function default_open_file(path)
   vim.api.nvim_cmd({ cmd = "edit", args = { path } }, {})
 end
 
-local function protect_directory(path, mode)
-  local before, stat_error = vim.uv.fs_lstat(path)
+local function protect_directory(fs, path, mode)
+  local before, stat_error = fs.fs_lstat(path)
   if before == nil or before.type ~= "directory" then
     return false, stat_error or "path is not a directory"
   end
-  local descriptor, open_error = vim.uv.fs_open(path, "r", 0)
+  local descriptor, open_error = filesystem.open_read(fs, path)
   if descriptor == nil then
     return false, open_error
   end
-  local opened, inspect_error = vim.uv.fs_fstat(descriptor)
+  local opened, inspect_error = fs.fs_fstat(descriptor)
   local unchanged = opened ~= nil
     and opened.type == "directory"
     and before.dev ~= nil
@@ -35,9 +36,9 @@ local function protect_directory(path, mode)
     and opened.ino == before.ino
   local protected, protect_error = false, inspect_error
   if unchanged then
-    protected, protect_error = vim.uv.fs_fchmod(descriptor, mode)
+    protected, protect_error = fs.fs_fchmod(descriptor, mode)
   end
-  local closed, close_error = vim.uv.fs_close(descriptor)
+  local closed, close_error = fs.fs_close(descriptor)
   if not unchanged then
     return false, inspect_error or "directory changed while opening"
   end
@@ -47,49 +48,19 @@ local function protect_directory(path, mode)
   return true
 end
 
-local function read_bounded_file(path, maximum_bytes)
-  local stat, stat_error = vim.uv.fs_lstat(path)
-  if stat == nil then
-    return nil, stat_error or "file is missing"
-  end
-  if stat.type ~= "file" then
-    return nil, "path is not a regular file"
-  end
-  if stat.size > maximum_bytes then
-    return nil, "file exceeds its size limit"
-  end
-  local ok, lines = pcall(vim.fn.readfile, path, "b")
-  if not ok then
-    return nil, lines
-  end
-  return table.concat(lines, "\n")
+local function file_identity(fs, path)
+  return filesystem.stat_identity(fs.fs_lstat(path))
 end
 
-local function file_identity(path)
-  local stat = vim.uv.fs_lstat(path)
-  if stat == nil then
-    return nil
-  end
-  local modified = stat.mtime or {}
-  return table.concat({
-    tostring(stat.type),
-    tostring(stat.dev),
-    tostring(stat.ino),
-    tostring(stat.size),
-    tostring(modified.sec),
-    tostring(modified.nsec),
-  }, ":")
-end
-
-local function capture_outputs(summary_path, report_path)
+local function capture_outputs(fs, summary_path, report_path)
   return {
-    summary = file_identity(summary_path),
-    report = file_identity(report_path),
+    summary = file_identity(fs, summary_path),
+    report = file_identity(fs, report_path),
   }
 end
 
-local function validate_report(path)
-  local contents, read_error = read_bounded_file(path, MAX_REPORT_BYTES)
+local function validate_report(fs, path)
+  local contents, read_error = filesystem.read_bounded(fs, path, MAX_REPORT_BYTES)
   if contents == nil then
     return false, "report.md is unavailable: " .. tostring(read_error)
   end
@@ -99,8 +70,8 @@ local function validate_report(path)
   return true
 end
 
-local function validate_outputs(summary_path, report_path, previous)
-  local contents, read_error = read_bounded_file(summary_path, MAX_SUMMARY_BYTES)
+local function validate_outputs(fs, summary_path, report_path, previous)
+  local contents, read_error = filesystem.read_bounded(fs, summary_path, MAX_SUMMARY_BYTES)
   if contents == nil then
     return false, "summary.json is unavailable: " .. tostring(read_error)
   end
@@ -114,11 +85,11 @@ local function validate_outputs(summary_path, report_path, previous)
     return false, "summary.json has an unexpected format"
   end
   if previous ~= nil
-    and (file_identity(summary_path) == previous.summary or file_identity(report_path) == previous.report)
+    and (file_identity(fs, summary_path) == previous.summary or file_identity(fs, report_path) == previous.report)
   then
     return false, "the analyzer did not publish fresh outputs"
   end
-  return validate_report(report_path)
+  return validate_report(fs, report_path)
 end
 
 local function process_error(result)
@@ -155,22 +126,31 @@ function M.new(options, dependencies)
   assert_nonempty(config.output_directory, "report output directory")
   assert_nonempty(config.session_directory, "report session directory")
   local deps = dependencies or {}
+  local fs = deps.fs or vim.uv
   return setmetatable({
     _analyzer = config.analyzer,
-    _capture_outputs = deps.capture_outputs or capture_outputs,
+    _capture_outputs = deps.capture_outputs or function(summary_path, report_path)
+      return capture_outputs(fs, summary_path, report_path)
+    end,
     _job = nil,
     _mkdir = deps.mkdir or vim.fn.mkdir,
     _notify_fn = deps.notify or default_notify,
     _open_file = deps.open_file or default_open_file,
     _output_directory = config.output_directory,
     _previous_outputs = nil,
-    _protect_directory = deps.protect_directory or protect_directory,
+    _protect_directory = deps.protect_directory or function(path, mode)
+      return protect_directory(fs, path, mode)
+    end,
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
     _session_directory = config.session_directory,
     _summary_path = vim.fs.joinpath(config.output_directory, "summary.json"),
-    _validate_outputs = deps.validate_outputs or validate_outputs,
-    _validate_report = deps.validate_report or validate_report,
+    _validate_outputs = deps.validate_outputs or function(summary_path, report_path, previous)
+      return validate_outputs(fs, summary_path, report_path, previous)
+    end,
+    _validate_report = deps.validate_report or function(path)
+      return validate_report(fs, path)
+    end,
   }, Report)
 end
 

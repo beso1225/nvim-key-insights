@@ -191,6 +191,38 @@ local missing_directory = vim.fn.tempname()
 local missing_result = purge.new({ directory = missing_directory }, { notify = function() end }):run(true)
 assert(missing_result.removed == 0 and missing_result.failed == 0)
 
+local purge_lock_flags = nil
+local purge_lock_stat = {
+  dev = 1,
+  ino = 2,
+  mode = 384,
+  mtime = { nsec = 0, sec = 1 },
+  nlink = 1,
+  size = 10,
+  type = "file",
+  uid = 1000,
+}
+local purge_lock_fs = {
+  fs_open = function(_, flags)
+    purge_lock_flags = flags
+    return nil, "ENOENT: injected replacement"
+  end,
+}
+local nonblocking_purge = purge.new({ directory = "/unused" }, {
+  fs = purge_lock_fs,
+  notify = function() end,
+  user_id = 1000,
+})
+assert(nonblocking_purge:_lock_state({
+  identity = artifacts.identity(purge_lock_stat),
+  path = "/unused/session.lock",
+  stat = purge_lock_stat,
+}) == "unknown")
+assert(
+  purge_lock_flags == vim.uv.constants.O_RDONLY + vim.uv.constants.O_NONBLOCK,
+  "purge lock reads must not block on a replaced FIFO"
+)
+
 local legacy_directory = vim.fn.tempname()
 vim.fn.mkdir(legacy_directory, "p", 448)
 local legacy_name = string.rep("a", 32) .. ".jsonl"
@@ -224,3 +256,45 @@ assert(partial_failure.removed == 1 and partial_failure.failed == 1)
 assert(exists(path(failure_directory, failure_name)), "a failed unlink must be reported and left intact")
 assert(not exists(path(failure_directory, success_name)), "one unlink failure must not stop bounded cleanup")
 vim.fn.delete(failure_directory, "rf")
+
+local durable_directory = vim.fn.tempname()
+vim.fn.mkdir(durable_directory, "p", 448)
+write_private(path(durable_directory, PREFIX .. "durable.jsonl"), "event")
+local directory_descriptors = {}
+local directory_syncs = 0
+local operation_sequence = 0
+local opened_at = {}
+local first_unlink_at = nil
+local durable_fs = setmetatable({}, { __index = vim.uv })
+durable_fs.fs_open = function(file_path, flags, mode)
+  operation_sequence = operation_sequence + 1
+  local descriptor, open_error = vim.uv.fs_open(file_path, flags, mode)
+  if descriptor ~= nil and file_path == durable_directory then
+    directory_descriptors[descriptor] = true
+    opened_at[descriptor] = operation_sequence
+  end
+  return descriptor, open_error
+end
+durable_fs.fs_unlink = function(file_path)
+  operation_sequence = operation_sequence + 1
+  first_unlink_at = first_unlink_at or operation_sequence
+  return vim.uv.fs_unlink(file_path)
+end
+durable_fs.fs_fsync = function(descriptor)
+  if directory_descriptors[descriptor] then
+    directory_syncs = directory_syncs + 1
+    assert(opened_at[descriptor] < first_unlink_at, "purge must sync the directory handle held before deletion")
+  end
+  return vim.uv.fs_fsync(descriptor)
+end
+durable_fs.fs_close = function(descriptor)
+  directory_descriptors[descriptor] = nil
+  return vim.uv.fs_close(descriptor)
+end
+local durable_result = purge.new({ directory = durable_directory }, {
+  fs = durable_fs,
+  notify = function() end,
+}):run(true)
+assert(durable_result.removed == 1 and durable_result.failed == 0)
+assert(directory_syncs == 1, "a successful purge must durably sync the collector directory")
+vim.fn.delete(durable_directory, "rf")

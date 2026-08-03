@@ -1,4 +1,5 @@
 local artifacts = require("key-insights.artifacts")
+local filesystem = require("key-insights.filesystem")
 
 local M = {}
 local Storage = {}
@@ -122,7 +123,7 @@ function Storage:_lock_owner_alive(path)
     return false
   end
 
-  local descriptor, open_error = self._fs.fs_open(path, "r", 0)
+  local descriptor, open_error = filesystem.open_read(self._fs, path)
   if descriptor == nil then
     if is_enoent(open_error) then
       return false
@@ -175,6 +176,7 @@ function Storage:_finalized_logs()
       if artifacts.is_private_file(stat, self._user_id) then
         assert(stat.mtime ~= nil and type(stat.mtime.sec) == "number", "collector log mtime is unavailable")
         table.insert(logs, {
+          identity = artifacts.identity(stat),
           modified_at = stat.mtime.sec,
           name = name,
           path = path,
@@ -192,8 +194,15 @@ function Storage:_finalized_logs()
   return logs
 end
 
-function Storage:_unlink_log(path)
-  local unlinked, unlink_error = self._fs.fs_unlink(path)
+function Storage:_unlink_log(log)
+  local stat, stat_error = self._fs.fs_lstat(log.path)
+  if stat == nil and is_enoent(stat_error) then
+    return
+  end
+  if not artifacts.is_private_file(stat, self._user_id) or artifacts.identity(stat) ~= log.identity then
+    error("collector log changed since retention scan")
+  end
+  local unlinked, unlink_error = self._fs.fs_unlink(log.path)
   if not unlinked and not is_enoent(unlink_error) then
     error(unlink_error or "failed to prune collector log")
   end
@@ -204,7 +213,7 @@ function Storage:_prune(protected_path)
   local retained = {}
   for _, log in ipairs(self:_finalized_logs()) do
     if log.path ~= protected_path and not log.locked and log.modified_at < cutoff then
-      self:_unlink_log(log.path)
+      self:_unlink_log(log)
     else
       table.insert(retained, log)
     end
@@ -228,7 +237,7 @@ function Storage:_prune(protected_path)
     if delete_index == nil then
       break
     end
-    self:_unlink_log(retained[delete_index].path)
+    self:_unlink_log(retained[delete_index])
     table.remove(retained, delete_index)
   end
 end
@@ -305,7 +314,7 @@ function Storage:open_session(session_id)
 end
 
 function SessionStorage:_sync_directory()
-  local descriptor, open_error = self._fs.fs_open(self._directory, "r", 0)
+  local descriptor, open_error = filesystem.open_read(self._fs, self._directory)
   assert(descriptor ~= nil, open_error or "failed to open collector session directory")
   local sync_ok, sync_error = self._fs.fs_fsync(descriptor)
   local close_ok, close_error = self._fs.fs_close(descriptor)

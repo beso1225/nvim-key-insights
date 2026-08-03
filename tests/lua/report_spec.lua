@@ -192,4 +192,37 @@ assert(symlink_ran == false)
 assert(vim.uv.fs_stat(symlink_target).mode % 512 == 493, "a symlink target's mode must remain unchanged")
 vim.fn.delete(symlink_root, "rf")
 
+local report_open_flags = nil
+local nonblocking_fs = {
+  fs_lstat = function()
+    return {
+      dev = 1,
+      ino = 2,
+      mode = 384,
+      mtime = { nsec = 0, sec = 1 },
+      nlink = 1,
+      size = 32,
+      type = "file",
+      uid = 1000,
+    }
+  end,
+  fs_open = function(_, flags)
+    report_open_flags = flags
+    return nil, "ENOENT: injected replacement"
+  end,
+}
+local nonblocking_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/unused/reports",
+  session_directory = "/unused/sessions",
+}, {
+  fs = nonblocking_fs,
+  notify = function() end,
+})
+assert(nonblocking_report:open() == false)
+assert(
+  report_open_flags == vim.uv.constants.O_RDONLY + vim.uv.constants.O_NONBLOCK,
+  "report reads must not block on a replaced FIFO"
+)
+
 print("Lua report workflow contract: ok")

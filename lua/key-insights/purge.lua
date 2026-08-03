@@ -1,4 +1,5 @@
 local artifacts = require("key-insights.artifacts")
+local filesystem = require("key-insights.filesystem")
 
 local M = {}
 local Purge = {}
@@ -71,6 +72,20 @@ function M.new(options, dependencies)
   }, Purge)
 end
 
+function Purge:_open_directory(expected)
+  local descriptor, open_error = filesystem.open_read(self._fs, self._directory)
+  assert(descriptor ~= nil, open_error or "failed to open collector directory")
+  local opened, inspect_error = self._fs.fs_fstat(descriptor)
+  local valid = opened ~= nil
+    and artifacts.is_private_directory(opened, self._user_id)
+    and artifacts.directory_identity(opened) == expected
+  if not valid then
+    close_checked(self._fs, descriptor)
+    error(inspect_error or "collector directory changed while opening")
+  end
+  return descriptor
+end
+
 function Purge:_inspect_directory()
   local before, stat_error = self._fs.fs_lstat(self._directory)
   if before == nil and is_enoent(stat_error) then
@@ -78,15 +93,9 @@ function Purge:_inspect_directory()
   end
   assert(before ~= nil, "collector directory is unavailable")
   assert(artifacts.is_private_directory(before, self._user_id), "collector directory is not privately owned")
-  local descriptor = self._fs.fs_open(self._directory, "r", 0)
-  assert(descriptor ~= nil, "failed to open collector directory")
-  local opened, inspect_error = self._fs.fs_fstat(descriptor)
-  local valid = opened ~= nil
-    and artifacts.is_private_directory(opened, self._user_id)
-    and artifacts.directory_identity(opened) == artifacts.directory_identity(before)
-  close_checked(self._fs, descriptor)
-  assert(valid, inspect_error or "collector directory changed while opening")
-  return artifacts.directory_identity(before)
+  local identity = artifacts.directory_identity(before)
+  close_checked(self._fs, self:_open_directory(identity))
+  return identity
 end
 
 function Purge:_read_lock(entry)
@@ -94,7 +103,7 @@ function Purge:_read_lock(entry)
   if stat.size <= 0 or stat.size > MAX_LOCK_METADATA_BYTES then
     return nil
   end
-  local descriptor, open_error = self._fs.fs_open(entry.path, "r", 0)
+  local descriptor, open_error = filesystem.open_read(self._fs, entry.path)
   if descriptor == nil then
     return nil, open_error
   end
@@ -252,11 +261,7 @@ function Purge:_session_is_protected(session_id)
   }) ~= "stale"
 end
 
-function Purge:apply(preview)
-  assert(type(preview) == "table" and type(preview.targets) == "table", "invalid purge preview")
-  assert(self:_directory_unchanged(preview.directory_identity), "collector directory changed before purge")
-  local current = self:preview()
-  assert(current.directory_identity == preview.directory_identity, "collector directory changed before purge")
+function Purge:_apply_targets(preview, current)
   local eligible = {}
   local currently_protected = {}
   for _, entry in ipairs(current.targets) do
@@ -306,6 +311,29 @@ function Purge:apply(preview)
     end
   end
   assert(self:_directory_unchanged(preview.directory_identity), "collector directory changed during purge")
+  return result
+end
+
+function Purge:apply(preview)
+  assert(type(preview) == "table" and type(preview.targets) == "table", "invalid purge preview")
+  assert(self:_directory_unchanged(preview.directory_identity), "collector directory changed before purge")
+  local current = self:preview()
+  assert(current.directory_identity == preview.directory_identity, "collector directory changed before purge")
+  local directory_descriptor = self:_open_directory(preview.directory_identity)
+  local applied, result = pcall(self._apply_targets, self, preview, current)
+  local synced, sync_error = self._fs.fs_fsync(directory_descriptor)
+  local closed, close_error = self._fs.fs_close(directory_descriptor)
+  if not applied then
+    if synced ~= true and synced ~= 0 then
+      error(tostring(result) .. "; also failed to synchronize collector directory: " .. tostring(sync_error), 0)
+    end
+    if not closed then
+      error(tostring(result) .. "; also failed to close collector directory: " .. tostring(close_error), 0)
+    end
+    error(result, 0)
+  end
+  assert(synced == true or synced == 0, sync_error or "failed to synchronize collector directory")
+  assert(closed, close_error or "failed to close collector directory")
   return result
 end
 
