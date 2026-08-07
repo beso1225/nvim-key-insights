@@ -1,6 +1,6 @@
 # Milestone 2 mapping attribution implementation plan
 
-Status: planned
+Status: in progress (M2-S1 complete; M2-S2 next)
 
 Roadmap milestone: [Mapping attribution and keymap snapshots](implementation-roadmap.md#milestone-2-mapping-attribution-and-keymap-snapshots)
 
@@ -168,6 +168,9 @@ Green outcome:
 - document the supported attribution traces and explicit fail-closed cases;
 - define a small pure attribution interface that accepts sanitized mapping
   metadata and boolean/classified callback evidence rather than mapped content.
+
+Implementation note: the observed trace contract and current fail-closed
+interface are documented in [Mapping attribution contract](mapping-attribution.md).
 
 ### M2-S2: canonical mapping identity and snapshot model
 

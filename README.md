@@ -121,4 +121,5 @@ ergonomic metrics, and Codex integration remain incremental TDD work.
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the
 [Milestone 2 implementation plan](docs/milestone-2-mapping-attribution-plan.md)
-for the next mapping-attribution work.
+and [mapping attribution contract](docs/mapping-attribution.md) for the current
+mapping-attribution work.
