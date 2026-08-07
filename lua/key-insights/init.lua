@@ -99,7 +99,7 @@ end
 
 function M.status()
   local status = instance == nil
-      and { state = "stopped", session_id = nil, pending_events = 0, last_error = nil }
+      and { state = "stopped", session_id = nil, pending_events = 0, pending_bytes = 0, last_error = nil }
     or instance:status()
   status.report_running = report_instance ~= nil and report_instance:status().running
   return status

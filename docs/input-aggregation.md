@@ -39,9 +39,19 @@ require("key-insights").setup({
 })
 ```
 
-`sequence_timeout_ms` must be a non-negative integer, and `max_sequence_keys` must be a positive integer. Byte-size splitting is always enforced, including when `max_sequence_keys` is configured above its default. It preserves every typed key and computes duration independently for each resulting chunk.
+`sequence_timeout_ms` must be a finite non-negative integer. `max_sequence_keys`
+must be an integer from 1 through 65,536. Byte-size splitting is always
+enforced, including when `max_sequence_keys` is configured above its default. It
+preserves every typed key and computes duration independently for each resulting
+chunk.
 
-An idle sequence is retained in memory until the next boundary; the collector does not create a timer for every key. Pause, stop, explicit flush, and Neovim shutdown all flush it.
+An idle sequence is retained in memory until the next boundary; the collector
+does not create a timer for every key. Pause, stop, explicit flush, and Neovim
+shutdown all flush it. Deferred writes retain at most 1,024 events and 4 MiB.
+If a synchronous input burst reaches either limit before Neovim services the
+scheduled writer, collection records a fixed error and ignores later input until
+pause or stop flushes the bounded batch. Pausing and starting again resumes the
+same session after recovery.
 
 ## Timing
 

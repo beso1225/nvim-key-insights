@@ -14,6 +14,9 @@ local SEQUENCE_MODES = {
   visual = true,
 }
 local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
+local MAX_PENDING_EVENTS = 1024
+local MAX_PENDING_BYTES = 4 * 1024 * 1024
+local PENDING_LIMIT_ERROR = "collector pending queue limit exceeded"
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
 end
@@ -108,6 +111,9 @@ function M.new(spec)
     _open_session = dependencies.open_session or default_open_session,
     _options = options,
     _pending = {},
+    _pending_bytes = 0,
+    _pending_byte_limit = dependencies.pending_byte_limit or MAX_PENDING_BYTES,
+    _pending_event_limit = dependencies.pending_event_limit or MAX_PENDING_EVENTS,
     _register_on_key = dependencies.register_on_key or default_register_on_key,
     _schedule = dependencies.schedule or vim.schedule,
     _started_at_ms = nil,
@@ -303,9 +309,23 @@ function Collector:_schedule_pending_write()
 end
 
 function Collector:_queue_many(events)
+  local encoded_events = {}
+  local encoded_bytes = 0
   for _, event in ipairs(events) do
-    table.insert(self._pending, schema.encode(event))
+    local encoded = schema.encode(event)
+    table.insert(encoded_events, encoded)
+    encoded_bytes = encoded_bytes + #encoded
   end
+  if #self._pending + #encoded_events > self._pending_event_limit
+    or self._pending_bytes + encoded_bytes > self._pending_byte_limit
+  then
+    self._last_error = PENDING_LIMIT_ERROR
+    return false
+  end
+  for _, encoded in ipairs(encoded_events) do
+    table.insert(self._pending, encoded)
+  end
+  self._pending_bytes = self._pending_bytes + encoded_bytes
   if self._auto_flush then
     if self._in_callback then
       self:_schedule_pending_write()
@@ -313,6 +333,7 @@ function Collector:_queue_many(events)
       self:_write_pending()
     end
   end
+  return true
 end
 
 function Collector:_queue(event)
@@ -328,6 +349,7 @@ function Collector:_write_pending()
   local pending = self._pending
   self._session_writer:write(pending)
   self._pending = {}
+  self._pending_bytes = 0
   return #pending
 end
 
@@ -459,6 +481,7 @@ function Collector:_reset_session()
   self._in_callback = false
   self._end_queued = false
   self._pending = {}
+  self._pending_bytes = 0
   self._last_mode = nil
   self._mapping_ready = false
   if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
@@ -590,6 +613,7 @@ function Collector:status()
     state = self._state,
     session_id = self._session_id,
     pending_events = #self._pending,
+    pending_bytes = self._pending_bytes,
     last_error = self._last_error,
   }
 end
