@@ -37,6 +37,7 @@ local function get_report_instance()
     local output_directory = options.report.directory or report.default_directory()
     report_instance = report.new({
       analyzer = options.report.analyzer,
+      collector_options = options,
       output_directory = output_directory,
       session_directory = get_writer().directory,
     })

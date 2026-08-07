@@ -29,6 +29,8 @@ local created_directories = {}
 local protected_directories = {}
 local pending_callback = nil
 local outputs_valid = true
+local snapshot_publications = 0
+local workflow_events = {}
 
 local instance = report.new({
   analyzer = "/tools/key insights;$analyzer",
@@ -49,7 +51,13 @@ local instance = report.new({
   open_file = function(path)
     table.insert(opened, path)
   end,
+  publish_snapshot = function()
+    snapshot_publications = snapshot_publications + 1
+    table.insert(workflow_events, "publish")
+    return string.format("/state/key insights/reports;draft/keymap snapshot;$%d.json", snapshot_publications)
+  end,
   run = function(argv, callback)
+    table.insert(workflow_events, "run")
     table.insert(invocations, vim.deepcopy(argv))
     pending_callback = callback
     return { pid = 42 }
@@ -69,6 +77,7 @@ assert(instance:start() == true)
 assert(instance:status().running == true)
 assert(instance:status().job ~= nil)
 assert(instance:status().summary_path == nil, "status must not expose local output paths")
+assert(vim.deep_equal(workflow_events, { "publish", "run" }), "snapshot publication must precede process launch")
 assert(#created_directories == 1)
 assert(created_directories[1].path == "/state/key insights/reports;draft")
 assert(created_directories[1].parents == "p")
@@ -84,10 +93,13 @@ assert(vim.deep_equal(invocations[1], {
   "/state/key insights/reports;draft/summary.json",
   "--report",
   "/state/key insights/reports;draft/report.md",
+  "--keymap-snapshot",
+  "/state/key insights/reports;draft/keymap snapshot;$1.json",
 }), "report command must preserve argv without shell interpolation")
 
 assert(instance:start() == false, "a running report must reject concurrent invocation")
 assert(#invocations == 1, "concurrent reports must not queue another process")
+assert(snapshot_publications == 1, "concurrent reports must not republish or mismatch the running snapshot")
 assert(string.find(notifications[#notifications].message, "already running", 1, true) ~= nil)
 
 pending_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
@@ -127,6 +139,9 @@ local missing = report.new({
   notify = function(message)
     table.insert(missing_notifications, message)
   end,
+  publish_snapshot = function()
+    return "/state/reports/keymap-snapshot-missing-runner.json"
+  end,
   run = function()
     error("executable not found")
   end,
@@ -134,6 +149,35 @@ local missing = report.new({
 assert(missing:start() == false)
 assert(missing:status().running == false)
 assert(string.find(missing_notifications[1], "failed to start", 1, true) ~= nil)
+
+local snapshot_failure_notifications = {}
+local snapshot_failure_ran = false
+local snapshot_failure = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function()
+    return true
+  end,
+  mkdir = function()
+    return 1
+  end,
+  notify = function(message)
+    table.insert(snapshot_failure_notifications, message)
+  end,
+  publish_snapshot = function()
+    return nil, "snapshot_publisher:collection_failed secret-buffer-name"
+  end,
+  run = function()
+    snapshot_failure_ran = true
+  end,
+})
+assert(snapshot_failure:start() == false)
+assert(snapshot_failure_ran == false, "snapshot failures must prevent analyzer launch")
+assert(snapshot_failure:status().running == false)
+assert(string.find(snapshot_failure_notifications[1], "failed to publish keymap snapshot", 1, true) ~= nil)
+assert(string.find(snapshot_failure_notifications[1], "secret", 1, true) == nil, "snapshot errors must be content-free")
 
 assert(instance:open() == true)
 assert(#opened == 2)

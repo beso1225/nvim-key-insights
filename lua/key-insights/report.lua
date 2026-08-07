@@ -1,5 +1,6 @@
 local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
+local snapshot_publisher = require("key-insights.snapshot_publisher")
 
 local M = {}
 local Report = {}
@@ -127,6 +128,13 @@ function M.new(options, dependencies)
   assert_nonempty(config.session_directory, "report session directory")
   local deps = dependencies or {}
   local fs = deps.fs or vim.uv
+  local publisher = nil
+  if deps.publish_snapshot == nil then
+    publisher = snapshot_publisher.new({
+      collector_options = config.collector_options,
+      output_directory = config.output_directory,
+    }, { fs = fs })
+  end
   return setmetatable({
     _analyzer = config.analyzer,
     _capture_outputs = deps.capture_outputs or function(summary_path, report_path)
@@ -141,10 +149,17 @@ function M.new(options, dependencies)
     _protect_directory = deps.protect_directory or function(path, mode)
       return protect_directory(fs, path, mode)
     end,
+    _publish_snapshot = deps.publish_snapshot or function()
+      return publisher:publish()
+    end,
+    _remove_snapshot = deps.remove_snapshot or (publisher ~= nil and function(path)
+      return publisher:remove(path)
+    end or function() return false end),
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
     _session_directory = config.session_directory,
     _summary_path = vim.fs.joinpath(config.output_directory, "summary.json"),
+    _snapshot_path = nil,
     _validate_outputs = deps.validate_outputs or function(summary_path, report_path, previous)
       return validate_outputs(fs, summary_path, report_path, previous)
     end,
@@ -178,6 +193,11 @@ end
 
 function Report:_complete(result)
   self._job = nil
+  local snapshot_path = self._snapshot_path
+  self._snapshot_path = nil
+  if snapshot_path ~= nil then
+    pcall(self._remove_snapshot, snapshot_path)
+  end
   local previous_outputs = self._previous_outputs
   self._previous_outputs = nil
   if type(result) ~= "table" or type(result.code) ~= "number" then
@@ -223,6 +243,13 @@ function Report:start()
     return false
   end
   self._previous_outputs = previous_outputs
+  local publish_ok, snapshot_path = pcall(self._publish_snapshot)
+  if not publish_ok or type(snapshot_path) ~= "string" or snapshot_path == "" then
+    self._previous_outputs = nil
+    self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
+    return false
+  end
+  self._snapshot_path = snapshot_path
   local argv = {
     self._analyzer,
     "analyze",
@@ -232,6 +259,8 @@ function Report:start()
     self._summary_path,
     "--report",
     self._report_path,
+    "--keymap-snapshot",
+    snapshot_path,
   }
   self._job = true
   local completed = false
@@ -242,6 +271,11 @@ function Report:start()
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._previous_outputs = nil
+    local failed_snapshot = self._snapshot_path
+    self._snapshot_path = nil
+    if failed_snapshot ~= nil then
+      pcall(self._remove_snapshot, failed_snapshot)
+    end
     self:_notify("failed to start the analyzer: " .. tostring(job), vim.log.levels.ERROR)
     return false
   end

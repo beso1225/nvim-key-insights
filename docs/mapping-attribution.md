@@ -1,7 +1,7 @@
 # Mapping attribution contract
 
-Status: M2-S1 callback contract, M2-S2 in-memory snapshot model, and M2-S3
-collector attribution implemented; snapshot publication is not yet enabled.
+Status: M2-S1 through M2-S4 implemented; analyzer snapshot parsing and joins are
+not yet enabled.
 
 This document records the observed `vim.on_key` behavior used by the
 privacy-safe attribution design. It complements the
@@ -148,3 +148,18 @@ and failed start discard it. A mapping added or changed after the last baseline
 may therefore miss its first observation, but stale state is never used to
 guess an attribution. Every confirmed action remains ordinary sequence evidence
 and additionally emits exactly one schema-v1 `mapping_use` event.
+
+## Report-time snapshot publication
+
+Each report request collects a fresh sanitized model after the private report
+directory has been verified. It publishes the encoded bytes as a 0600 regular
+file under an invocation-specific, opaque name and passes that exact path as one
+literal `--keymap-snapshot` argument. Publication completes before process
+launch, and a concurrent request on the same report instance is rejected before
+collecting another snapshot.
+
+Collection, encoding, directory identity, write, and publication failures stop
+the launch with a content-free notification. A failed attempt cannot replace an
+earlier invocation's immutable snapshot. The CLI accepts the optional argument
+at this slice boundary; strict parsing and deterministic joins are introduced
+by M2-S5.

@@ -51,6 +51,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         if argument == OsStr::new("--summary")
             || argument == OsStr::new("--report")
             || argument == OsStr::new("--session-dir")
+            || argument == OsStr::new("--keymap-snapshot")
         {
             break;
         }
@@ -63,6 +64,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let mut session_directory = None;
     let mut summary_path = None;
     let mut report_path = None;
+    let mut keymap_snapshot_path = None;
     while index < arguments.len() {
         let flag = arguments[index]
             .to_str()
@@ -76,7 +78,10 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
             "--session-dir" if session_directory.is_none() => {
                 session_directory = Some(PathBuf::from(value))
             }
-            "--summary" | "--report" | "--session-dir" => {
+            "--keymap-snapshot" if keymap_snapshot_path.is_none() => {
+                keymap_snapshot_path = Some(PathBuf::from(value))
+            }
+            "--summary" | "--report" | "--session-dir" | "--keymap-snapshot" => {
                 return Err(format!("duplicate option {flag}"));
             }
             _ => return Err(format!("unknown option {flag}")),
@@ -86,6 +91,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
 
     let summary_path = summary_path.ok_or_else(|| "missing --summary path".to_owned())?;
     let report_path = report_path.ok_or_else(|| "missing --report path".to_owned())?;
+    let _keymap_snapshot_path = keymap_snapshot_path;
     if !input_paths.is_empty() && session_directory.is_some() {
         return Err("explicit inputs and --session-dir are mutually exclusive".to_owned());
     }
