@@ -1,7 +1,7 @@
 # Mapping attribution contract
 
-Status: M2-S1 callback contract and M2-S2 in-memory snapshot model implemented;
-collector attribution and snapshot publication are not yet enabled.
+Status: M2-S1 callback contract, M2-S2 in-memory snapshot model, and M2-S3
+collector attribution implemented; snapshot publication is not yet enabled.
 
 This document records the observed `vim.on_key` behavior used by the
 privacy-safe attribution design. It complements the
@@ -125,3 +125,26 @@ field order and a trailing newline, revalidates each ID against its tuple,
 rejects duplicate or conflicting tuples, and canonically sorts a defensive copy.
 Equivalent sanitized mapping sets therefore produce identical bytes regardless
 of input order.
+
+## Collector attribution lifecycle
+
+Before attaching `vim.on_key`, the collector builds a bounded, sanitized
+baseline for the current eligible buffer. The baseline contains all supported
+global mappings and the current buffer's local mappings, with buffer-local
+entries taking precedence. Both sides of a prefix family are marked ambiguous.
+No right-hand side or other implementation metadata survives this step.
+
+For an attributable callback, the collector canonicalizes `typed` once for the
+ordinary `key_sequence` path and passes only those tokens and the normalized
+mode to the resolver. The resolver performs one exact effective `maparg` lookup
+and requires its canonical tuple and scope to match the baseline. Buffer changes,
+API failures, malformed results, prefix ambiguity, and mapping mutation all
+produce no mapping event. The post-mapping callback value is reduced to a
+content-free evidence enum and never reaches the resolver.
+
+Start and resume establish fresh baselines outside the input callback. Explicit
+flush establishes a fresh baseline after the pending event write; pause, stop,
+and failed start discard it. A mapping added or changed after the last baseline
+may therefore miss its first observation, but stale state is never used to
+guess an attribution. Every confirmed action remains ordinary sequence evidence
+and additionally emits exactly one schema-v1 `mapping_use` event.
