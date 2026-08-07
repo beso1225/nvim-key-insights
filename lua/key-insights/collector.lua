@@ -1,4 +1,5 @@
 local config = require("key-insights.config")
+local key_tokens = require("key-insights.key_tokens")
 local schema = require("key-insights.schema")
 
 local M = {}
@@ -10,8 +11,6 @@ local SEQUENCE_MODES = {
   operator_pending = true,
   visual = true,
 }
-local MAX_KEY_NOTATION_BYTES = 256
-
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
 end
@@ -205,29 +204,7 @@ function Collector:_typed_tokens(typed)
     return {}
   end
 
-  local characters = vim.fn.split(canonical, "\\zs")
-  local tokens = {}
-  local index = 1
-  while index <= #characters do
-    if characters[index] == "<" then
-      local closing = index + 1
-      while closing <= #characters and characters[closing] ~= ">" do
-        closing = closing + 1
-      end
-      local notation = closing <= #characters and table.concat(characters, "", index, closing) or nil
-      if notation ~= nil and #notation <= MAX_KEY_NOTATION_BYTES then
-        table.insert(tokens, notation)
-        index = closing + 1
-      else
-        table.insert(tokens, characters[index])
-        index = index + 1
-      end
-    else
-      table.insert(tokens, characters[index])
-      index = index + 1
-    end
-  end
-  return tokens
+  return assert(key_tokens.tokenize(canonical))
 end
 
 function Collector:_record_sequence(mode, typed, elapsed_ms)

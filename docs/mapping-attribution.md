@@ -1,7 +1,7 @@
 # Mapping attribution contract
 
-Status: M2-S1 callback contract implemented; collector attribution is not yet
-enabled.
+Status: M2-S1 callback contract and M2-S2 in-memory snapshot model implemented;
+collector attribution and snapshot publication are not yet enabled.
 
 This document records the observed `vim.on_key` behavior used by the
 privacy-safe attribution design. It complements the
@@ -68,7 +68,58 @@ return the candidate left-hand side. Extra candidate fields are discarded. Zero,
 multiple, sparse, unstable, inexact, or text-bearing-mode candidates return no
 attribution.
 
-M2-S2 will define bounded canonical tokens and mapping identities, then extend
-the decision input with that validated representation. M2-S3 will connect the
-resolver and decision function to the collector. Until then, the collector
-continues to discard mapping expansions and emits no `mapping_use` events.
+M2-S2 defines the bounded canonical tokens and mapping identities below. M2-S3
+will connect a validated mapping resolver and the decision function to the
+collector. Until then, the collector continues to discard mapping expansions and
+emits no `mapping_use` events.
+
+## Canonical mapping model
+
+The snapshot adapter queries only `n`, `x`, and `o` mappings and derives the
+normalized mode from that query, not from the API dictionary's `mode` field.
+This prevents generic mapping metadata from broadening Visual collection into
+text-bearing Select mode. Global entries come from `nvim_get_keymap`; eligible
+loaded buffer-local entries come from `nvim_buf_get_keymap`.
+
+Each raw API dictionary is immediately reduced to its `lhsraw` value. Fields
+such as `rhs`, `callback`, `desc`, `sid`, `lnum`, `buffer`, and source metadata
+are never copied, inspected, encoded, or included in errors. `lhsraw` passes
+through `keytrans` and the same tokenizer used by collector events. Invalid
+UTF-8, control bytes, unsplit tokens, malformed arrays, and resource-limit
+violations fail the whole in-memory snapshot without returning a partial model.
+
+The initial limits are:
+
+- 256 listed buffers;
+- 4,096 raw mapping entries across global and buffer-local queries;
+- 4 KiB for one raw or canonical left-hand side;
+- 64 canonical tokens per left-hand side;
+- 256 encoded bytes per token;
+- 1 MiB for the encoded snapshot.
+
+Buffer enumeration does not load buffers. Invalid, unloaded, configured-excluded,
+and unconditionally sensitive buffers are not queried for local mappings.
+
+## Mapping identity
+
+The `mapping-v1` digest preimage is the concatenation of byte-length-prefixed
+values in this order:
+
+1. the literal `mapping-v1`;
+2. normalized mode;
+3. scope;
+4. decimal token count;
+5. each canonical token in order.
+
+For a value `s`, the length-prefixed representation is `<decimal byte
+length>:<s>`. The ID is `mapping-v1:` followed by the complete 64-character
+lowercase SHA-256 digest. Hash output with the wrong shape is rejected. If one
+digest is encountered for two different sanitized tuples, collection fails with
+a content-free identity-conflict error.
+
+Identical tuples are deduplicated, including the same buffer-local binding seen
+in several eligible buffers. Global and buffer-local bindings with the same mode
+and left-hand side remain separate. Entries sort by normalized mode,
+lexicographic token array, scope, and mapping ID. The encoder writes a fixed JSON
+field order and a trailing newline, so equivalent API state produces identical
+bytes.
