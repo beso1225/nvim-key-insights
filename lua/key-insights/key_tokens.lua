@@ -7,32 +7,75 @@ local function valid_limit(value)
     or (type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value))
 end
 
+local function is_continuation(byte)
+  return byte ~= nil and byte >= 0x80 and byte <= 0xBF
+end
+
+local function character_bytes(value, index)
+  local first = string.byte(value, index)
+  if first == nil then
+    return nil
+  end
+  if first <= 0x7F then
+    return 1
+  end
+  if first >= 0xC2 and first <= 0xDF and is_continuation(string.byte(value, index + 1)) then
+    return 2
+  end
+  if first >= 0xE0 and first <= 0xEF then
+    local second = string.byte(value, index + 1)
+    local third = string.byte(value, index + 2)
+    local second_valid = is_continuation(second)
+    if first == 0xE0 then
+      second_valid = second ~= nil and second >= 0xA0 and second <= 0xBF
+    elseif first == 0xED then
+      second_valid = second ~= nil and second >= 0x80 and second <= 0x9F
+    end
+    return second_valid and is_continuation(third) and 3 or nil
+  end
+  if first >= 0xF0 and first <= 0xF4 then
+    local second = string.byte(value, index + 1)
+    local third = string.byte(value, index + 2)
+    local fourth = string.byte(value, index + 3)
+    local second_valid = is_continuation(second)
+    if first == 0xF0 then
+      second_valid = second ~= nil and second >= 0x90 and second <= 0xBF
+    elseif first == 0xF4 then
+      second_valid = second ~= nil and second >= 0x80 and second <= 0x8F
+    end
+    return second_valid and is_continuation(third) and is_continuation(fourth) and 4 or nil
+  end
+  return nil
+end
+
 function M.tokenize(canonical, limits)
   if type(canonical) ~= "string" then
     return nil, "key_tokens:invalid_input"
   end
   limits = limits or {}
+  local max_input_bytes = type(limits) == "table" and rawget(limits, "max_input_bytes") or nil
+  local max_tokens = type(limits) == "table" and rawget(limits, "max_tokens") or nil
+  local max_token_bytes = type(limits) == "table" and rawget(limits, "max_token_bytes") or nil
   if type(limits) ~= "table"
-    or not valid_limit(limits.max_tokens)
-    or not valid_limit(limits.max_token_bytes)
+    or not valid_limit(max_input_bytes)
+    or not valid_limit(max_tokens)
+    or not valid_limit(max_token_bytes)
   then
     return nil, "key_tokens:invalid_limits"
   end
   if canonical == "" then
     return {}
   end
-
-  local ok, characters = pcall(vim.fn.split, canonical, "\\zs")
-  if not ok or type(characters) ~= "table" then
-    return nil, "key_tokens:invalid_input"
+  if max_input_bytes ~= nil and #canonical > max_input_bytes then
+    return nil, "key_tokens:limit_exceeded"
   end
 
   local tokens = {}
   local function append(token)
-    if limits.max_tokens ~= nil and #tokens >= limits.max_tokens then
+    if max_tokens ~= nil and #tokens >= max_tokens then
       return false
     end
-    if limits.max_token_bytes ~= nil and #token > limits.max_token_bytes then
+    if max_token_bytes ~= nil and #token > max_token_bytes then
       return false
     end
     table.insert(tokens, token)
@@ -40,17 +83,29 @@ function M.tokenize(canonical, limits)
   end
 
   local index = 1
-  while index <= #characters do
-    local token = characters[index]
-    local next_index = index + 1
+  while index <= #canonical do
+    local width = character_bytes(canonical, index)
+    if width == nil then
+      return nil, "key_tokens:invalid_input"
+    end
+    local token = string.sub(canonical, index, index + width - 1)
+    local next_index = index + width
     if token == "<" then
-      local closing = index + 1
-      while closing <= #characters and characters[closing] ~= ">" do
-        closing = closing + 1
+      local closing = nil
+      local cursor = next_index
+      while cursor <= #canonical and cursor - index + 1 <= MAX_KEY_NOTATION_BYTES do
+        local cursor_width = character_bytes(canonical, cursor)
+        if cursor_width == nil then
+          return nil, "key_tokens:invalid_input"
+        end
+        if string.byte(canonical, cursor) == string.byte(">") then
+          closing = cursor
+          break
+        end
+        cursor = cursor + cursor_width
       end
-      local notation = closing <= #characters and table.concat(characters, "", index, closing) or nil
-      if notation ~= nil and #notation <= MAX_KEY_NOTATION_BYTES then
-        token = notation
+      if closing ~= nil then
+        token = string.sub(canonical, index, closing)
         next_index = closing + 1
       end
     end

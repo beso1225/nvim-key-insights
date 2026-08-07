@@ -11,6 +11,7 @@ local SEQUENCE_MODES = {
   operator_pending = true,
   visual = true,
 }
+local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
 end
@@ -196,7 +197,7 @@ function Collector:_flush_input(elapsed_ms)
 end
 
 function Collector:_typed_tokens(typed)
-  if type(typed) ~= "string" or typed == "" then
+  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
     return {}
   end
   local canonical = self._keytrans(typed)
@@ -204,7 +205,12 @@ function Collector:_typed_tokens(typed)
     return {}
   end
 
-  return assert(key_tokens.tokenize(canonical))
+  local tokens = key_tokens.tokenize(canonical, {
+    max_input_bytes = MAX_CALLBACK_INPUT_BYTES,
+    max_token_bytes = 256,
+    max_tokens = MAX_CALLBACK_INPUT_BYTES,
+  })
+  return tokens or {}
 end
 
 function Collector:_record_sequence(mode, typed, elapsed_ms)

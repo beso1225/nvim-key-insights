@@ -25,6 +25,7 @@ assert_failure(nil, nil, "key_tokens:invalid_input")
 assert_failure({}, nil, "key_tokens:invalid_input")
 assert_failure("a", { max_tokens = -1 }, "key_tokens:invalid_limits")
 assert_failure("a", { max_token_bytes = 1.5 }, "key_tokens:invalid_limits")
+assert_failure("a", { max_input_bytes = math.huge }, "key_tokens:invalid_limits")
 assert_failure("", { max_tokens = -1 }, "key_tokens:invalid_limits")
 
 assert(vim.deep_equal(assert(key_tokens.tokenize("", { max_tokens = 0, max_token_bytes = 0 })), {}))
@@ -32,6 +33,7 @@ assert_failure("abc", { max_tokens = 2 }, "key_tokens:limit_exceeded")
 assert_failure("<C-X>", { max_token_bytes = 4 }, "key_tokens:limit_exceeded")
 assert(vim.deep_equal(assert(key_tokens.tokenize("日", { max_tokens = 1, max_token_bytes = 3 })), { "日" }))
 assert_failure("日", { max_token_bytes = 2 }, "key_tokens:limit_exceeded")
+assert_failure(string.rep("<", 1024 * 1024), { max_input_bytes = 4096 }, "key_tokens:limit_exceeded")
 
 local secret = "private-secret-token"
 local _, limit_error = key_tokens.tokenize("<" .. secret .. ">", { max_token_bytes = 4 })

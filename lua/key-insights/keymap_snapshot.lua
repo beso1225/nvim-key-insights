@@ -225,6 +225,7 @@ local function validate_tokens(tokens, limits)
     copy[index] = token
   end
   local reparsed = key_tokens.tokenize(table.concat(copy), {
+    max_input_bytes = limits.max_lhs_bytes,
     max_token_bytes = limits.max_token_bytes,
     max_tokens = limits.max_lhs_tokens,
   })
@@ -263,12 +264,16 @@ function M.canonicalize_lhs(mapping, dependencies, limit_overrides)
   end
 
   local tokens, token_error = key_tokens.tokenize(canonical, {
+    max_input_bytes = limits.max_lhs_bytes,
     max_token_bytes = limits.max_token_bytes,
     max_tokens = limits.max_lhs_tokens,
   })
   if tokens == nil then
     if token_error == "key_tokens:limit_exceeded" then
       return nil, "keymap_snapshot:limit_exceeded"
+    end
+    if token_error == "key_tokens:invalid_input" then
+      return nil, "keymap_snapshot:invalid_mapping"
     end
     return nil, "keymap_snapshot:canonicalization_failed"
   end
