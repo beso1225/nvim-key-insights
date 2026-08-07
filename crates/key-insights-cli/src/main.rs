@@ -106,7 +106,6 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         Some(path) if path == Path::new("-") => Some(SnapshotInput {
             bytes: read_snapshot(std::io::stdin().lock())?,
             identity: None,
-            #[cfg(not(unix))]
             path: None,
         }),
         Some(path) => Some(open_snapshot_input(&path)?),
@@ -157,7 +156,8 @@ fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
     let metadata = file
         .metadata()
         .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
-    let private_mode = metadata.mode() & 0o7777 == 0o600;
+    let permissions = metadata.mode() & 0o7777;
+    let private_mode = permissions == 0o400 || permissions == 0o600;
     // SAFETY: geteuid has no preconditions and does not mutate memory.
     let owned = metadata.uid() == unsafe { libc::geteuid() };
     if !metadata.is_file() || metadata.nlink() != 1 || !private_mode || !owned {
@@ -167,6 +167,9 @@ fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
     Ok(SnapshotInput {
         bytes: read_snapshot(file)?,
         identity: Some(identity),
+        path: Some(
+            fs::canonicalize(path).map_err(|_| "failed to resolve keymap snapshot".to_owned())?,
+        ),
     })
 }
 
@@ -206,7 +209,6 @@ fn read_snapshot<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
 struct SnapshotInput {
     bytes: Vec<u8>,
     identity: Option<InputIdentity>,
-    #[cfg(not(unix))]
     path: Option<PathBuf>,
 }
 
@@ -393,6 +395,9 @@ fn output_matches_snapshot(
     let Some(identity) = snapshot.identity else {
         return Ok(false);
     };
+    if snapshot.path.as_ref() == Some(&output.path) {
+        return Ok(true);
+    }
     let name = output
         .path
         .file_name()

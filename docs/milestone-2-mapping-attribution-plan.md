@@ -1,6 +1,6 @@
 # Milestone 2 mapping attribution implementation plan
 
-Status: in progress (M2-S1 through M2-S5 implemented; M2-S6 in progress)
+Status: complete
 
 Roadmap milestone: [Mapping attribution and keymap snapshots](implementation-roadmap.md#milestone-2-mapping-attribution-and-keymap-snapshots)
 
@@ -262,7 +262,7 @@ Green implementation:
 
 ### M2-S6: end-to-end privacy regression and documentation
 
-- Finalize sessions containing global and buffer-local mapping use, publish a
+- Finalize sessions containing global and buffer-local mapping use, transport a
   snapshot, and analyze them in one headless test without network access.
 - Seed secrets in mapping implementations and assert their absence from JSONL,
   snapshot, summary, report, argv, errors, and notifications.

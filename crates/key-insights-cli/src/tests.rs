@@ -25,7 +25,7 @@ fn snapshot_input_is_read_once_and_rejects_unsafe_leaf_types() {
     fs::create_dir_all(&directory).expect("create report directory");
     let path = directory.join("keymap-snapshot-test.json");
     fs::write(&path, b"trusted\n").expect("write trusted snapshot");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).expect("protect snapshot");
     assert_eq!(
         open_snapshot_input(&path).expect("private snapshot").bytes,
         b"trusted\n"

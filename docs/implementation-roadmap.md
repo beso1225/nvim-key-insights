@@ -20,7 +20,7 @@ fully useful without network access, an API key, or a Codex installation.
 
 ## Current baseline
 
-The following foundation is complete on `main`:
+The following foundation is complete:
 
 - an opt-in Neovim 0.10+ collector with explicit start, pause, stop, and status
   commands;
@@ -38,8 +38,9 @@ The following foundation is complete on `main`:
   recovery, and bounded staged-output scavenging;
 - reproducible Nix, pkfire, Rust, Lua, and GitHub Actions checks.
 
-The current collector deliberately discards mapping expansions. The schema can
-represent opaque mapping use, but the collector does not yet attribute mappings.
+The current collector discards mapping expansions and attributes only a
+fail-closed subset of typed actions to opaque mapping identities. It never
+serializes mapping-applied values or implementation metadata.
 The analyzer accepts ordered explicit inputs and bounded discovery of the
 collector's finalized session directory. The complete local workflow has a
 headless privacy regression. Richer metrics, Codex integration, and installation
@@ -88,7 +89,7 @@ without manually concatenating files.
 
 ## Milestone 2: mapping attribution and keymap snapshots
 
-Status: in progress. See the
+Status: complete. See the
 [detailed implementation plan](milestone-2-mapping-attribution-plan.md).
 
 Measure mapping use without persisting mapping right-hand sides, callback bodies,

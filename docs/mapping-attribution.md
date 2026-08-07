@@ -1,7 +1,6 @@
 # Mapping attribution contract
 
-Status: M2-S1 through M2-S5 implemented; end-to-end privacy hardening is in
-progress for M2-S6.
+Status: complete (M2-S1 through M2-S6)
 
 This document records the observed `vim.on_key` behavior used by the
 privacy-safe attribution design. It complements the

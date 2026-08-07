@@ -56,7 +56,8 @@ and Markdown bytes. Snapshot JSON is limited to 1 MiB and 4,096 canonical,
 strictly ordered mappings. Unknown fields, unsupported versions, malformed or
 inconsistent IDs, invalid tokens, duplicates, and noncanonical ordering fail
 before output publication. `-` reads the automatic Neovim payload from stdin;
-an explicit path must be an owner-only, single-linked regular file.
+an explicit path must be an owner-readable (`0400` or `0600`), single-linked
+regular file with no group, other, execute, or special permission bits.
 Snapshot-derived outputs remain bounded by the validated snapshot and event
 cardinality budgets; the Neovim workflow reads each generated artifact up to
 16 MiB before accepting it.

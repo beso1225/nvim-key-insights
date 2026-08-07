@@ -1,5 +1,6 @@
 local collector = require("key-insights.collector")
 local config = require("key-insights.config")
+local keymap_snapshot = require("key-insights.keymap_snapshot")
 local process = require("key-insights.process")
 local report = require("key-insights.report")
 local storage = require("key-insights.storage")
@@ -37,6 +38,16 @@ local mode = "n"
 local command_type = ""
 local now_ms = 0
 local current_buffer_id = vim.api.nvim_get_current_buf()
+local original_buffer_name = vim.api.nvim_buf_get_name(current_buffer_id)
+vim.api.nvim_buf_set_name(current_buffer_id, "/private/BUFFER_PATH_SECRET/source.lua")
+
+local mapping_ids = {
+  global = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "1" })),
+  removed = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "2" })),
+  buffer = assert(keymap_snapshot.mapping_id("normal", "buffer", { "z", "3" })),
+  collision_global = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "4" })),
+  collision_buffer = assert(keymap_snapshot.mapping_id("normal", "buffer", { "z", "4" })),
+}
 
 vim.keymap.set("n", "z1", ":echo 'GLOBAL_MAPPING_RHS_SECRET'<CR>")
 vim.keymap.set("n", "z2", ":echo 'REMOVED_MAPPING_RHS_SECRET'<CR>")
@@ -180,14 +191,34 @@ for _, key in ipairs(summary.keys) do
   end
 end
 assert(j_count == 2)
-local statuses = {}
+local attribution_by_id = {}
 for _, mapping in ipairs(summary.mapping_attribution.mappings) do
-  statuses[mapping.status] = (statuses[mapping.status] or 0) + 1
+  attribution_by_id[mapping.mapping_id] = mapping
 end
-assert(statuses.observed ~= nil and statuses.observed >= 3)
-assert(statuses.observed_not_in_snapshot ~= nil and statuses.observed_not_in_snapshot >= 1)
-assert(statuses.unobserved_in_sample ~= nil and statuses.unobserved_in_sample >= 1)
-assert(#summary.mapping_attribution.collisions >= 1)
+assert(attribution_by_id[mapping_ids.global].status == "observed")
+assert(attribution_by_id[mapping_ids.global].scope == "global")
+assert(attribution_by_id[mapping_ids.global].count == 1)
+assert(attribution_by_id[mapping_ids.removed].status == "observed_not_in_snapshot")
+assert(attribution_by_id[mapping_ids.removed].scope == nil)
+assert(attribution_by_id[mapping_ids.removed].count == 1)
+assert(attribution_by_id[mapping_ids.buffer].status == "observed")
+assert(attribution_by_id[mapping_ids.buffer].scope == "buffer")
+assert(attribution_by_id[mapping_ids.buffer].count == 1)
+assert(attribution_by_id[mapping_ids.collision_buffer].status == "observed")
+assert(attribution_by_id[mapping_ids.collision_buffer].scope == "buffer")
+assert(attribution_by_id[mapping_ids.collision_buffer].count == 1)
+assert(attribution_by_id[mapping_ids.collision_global].status == "unobserved_in_sample")
+assert(attribution_by_id[mapping_ids.collision_global].scope == "global")
+assert(attribution_by_id[mapping_ids.collision_global].count == 0)
+local expected_collision = false
+for _, collision in ipairs(summary.mapping_attribution.collisions) do
+  if collision.global_mapping_id == mapping_ids.collision_global
+    and collision.buffer_mapping_id == mapping_ids.collision_buffer
+  then
+    expected_collision = true
+  end
+end
+assert(expected_collision, "the exact global/buffer shadowing pair must be reported")
 
 local local_only = vim.list_extend(vim.deepcopy(forbidden), session_ids)
 assert_absent("summary.json", summary_json, local_only)
@@ -208,6 +239,7 @@ end
 for _, lhs in ipairs({ "z3", "z4" }) do
   vim.keymap.del("n", lhs, { buffer = current_buffer_id })
 end
+vim.api.nvim_buf_set_name(current_buffer_id, original_buffer_name)
 
 vim.fn.delete(root, "rf")
 print("Headless local workflow E2E: ok")
