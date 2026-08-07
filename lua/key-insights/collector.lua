@@ -522,8 +522,7 @@ function Collector:start()
 
   if self._state == "paused" then
     local ok, error_message = pcall(function()
-      self:_write_pending()
-      self._session_writer:flush()
+      self:flush()
       self:_prime_mapping_resolver()
       self:_attach()
     end)

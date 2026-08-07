@@ -125,6 +125,7 @@ assert(pause_writes == 1, "pause must flush buffered events")
 local retry_callback = nil
 local retry_batch = nil
 local retry_attempts = 0
+local pause_retry_lines = {}
 local pause_retry = collector.new({
   clock_ms = function() return 1 end,
   current_buffer = function()
@@ -133,7 +134,19 @@ local pause_retry = collector.new({
   current_cmdtype = function() return "" end,
   current_mode = function() return "n" end,
   keytrans = function(value) return value end,
-  mapping_resolver = { prime = function() return false end, reset = function() end },
+  mapping_resolver = {
+    prime = function() return true end,
+    reset = function() end,
+    resolve = function(_, mode, keys)
+      if mode == "normal" and vim.deep_equal(keys, { "z", "q" }) then
+        return {
+          mapping_id = "mapping-v1:" .. string.rep("a", 64),
+          mode = "normal",
+          scope = "global",
+        }
+      end
+    end,
+  },
   new_session_id = function() return "session-pause-retry" end,
   open_session = function()
     return {
@@ -151,6 +164,7 @@ local pause_retry = collector.new({
           end
           retry_batch = nil
         end
+        vim.list_extend(pause_retry_lines, lines)
       end,
       flush = function() end,
       finish = function() end,
@@ -164,7 +178,7 @@ local pause_retry = collector.new({
 })
 
 assert(pause_retry:start())
-assert(retry_callback("mapped-secret", "j") == nil)
+assert(retry_callback("mapped-secret", "zq") == nil)
 local pause_ok, pause_error = pcall(pause_retry.pause, pause_retry)
 assert(not pause_ok and string.find(pause_error, "transient pause write failure", 1, true))
 assert(pause_retry:status().state == "paused")
@@ -179,6 +193,16 @@ assert(pause_retry:status().pending_events == 0)
 assert(retry_callback("mapped-secret", "k") == nil)
 assert(pause_retry:stop())
 assert(retry_batch == nil)
+local pause_retry_sequences = {}
+for _, line in ipairs(pause_retry_lines) do
+  local event = vim.json.decode(line)
+  if event.event_type == "key_sequence" then
+    table.insert(pause_retry_sequences, event.keys)
+  end
+end
+assert(#pause_retry_sequences == 2, "resume must preserve the pause boundary between sequences")
+assert(vim.deep_equal(pause_retry_sequences[1], { "z", "q" }))
+assert(vim.deep_equal(pause_retry_sequences[2], { "k" }))
 
 local excluded_callback = nil
 local excluded_writes = {}
