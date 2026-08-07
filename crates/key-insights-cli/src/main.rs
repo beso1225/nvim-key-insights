@@ -16,6 +16,7 @@ use key_insights::{
     MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs, render_markdown, render_summary_json,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 mod discovery;
 mod publication;
@@ -53,6 +54,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
             || argument == OsStr::new("--session-dir")
             || argument == OsStr::new("--keymap-snapshot")
             || argument == OsStr::new("--keymap-snapshot-identity")
+            || argument == OsStr::new("--keymap-snapshot-digest")
         {
             break;
         }
@@ -67,6 +69,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let mut report_path = None;
     let mut keymap_snapshot_path = None;
     let mut keymap_snapshot_identity = None;
+    let mut keymap_snapshot_digest = None;
     while index < arguments.len() {
         let flag = arguments[index]
             .to_str()
@@ -91,11 +94,20 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
                         .to_owned(),
                 )
             }
+            "--keymap-snapshot-digest" if keymap_snapshot_digest.is_none() => {
+                keymap_snapshot_digest = Some(
+                    value
+                        .to_str()
+                        .ok_or_else(|| "snapshot digest must be valid UTF-8".to_owned())?
+                        .to_owned(),
+                )
+            }
             "--summary"
             | "--report"
             | "--session-dir"
             | "--keymap-snapshot"
-            | "--keymap-snapshot-identity" => {
+            | "--keymap-snapshot-identity"
+            | "--keymap-snapshot-digest" => {
                 return Err(format!("duplicate option {flag}"));
             }
             _ => return Err(format!("unknown option {flag}")),
@@ -105,12 +117,18 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
 
     let summary_path = summary_path.ok_or_else(|| "missing --summary path".to_owned())?;
     let report_path = report_path.ok_or_else(|| "missing --report path".to_owned())?;
-    let _keymap_snapshot = match (keymap_snapshot_path, keymap_snapshot_identity) {
-        (Some(path), Some(identity)) => Some(open_snapshot_input(&path, &identity)?),
-        (None, None) => None,
+    let _keymap_snapshot = match (
+        keymap_snapshot_path,
+        keymap_snapshot_identity,
+        keymap_snapshot_digest,
+    ) {
+        (Some(path), Some(identity), Some(digest)) => {
+            Some(open_snapshot_input(&path, &identity, &digest)?)
+        }
+        (None, None, None) => None,
         _ => {
             return Err(
-                "--keymap-snapshot and --keymap-snapshot-identity must be used together".to_owned(),
+                "--keymap-snapshot, --keymap-snapshot-identity, and --keymap-snapshot-digest must be used together".to_owned(),
             );
         }
     };
@@ -144,7 +162,11 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, String> {
+fn open_snapshot_input(
+    path: &Path,
+    expected_identity: &str,
+    expected_digest: &str,
+) -> Result<Vec<u8>, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     let file = OpenOptions::new()
@@ -174,11 +196,15 @@ fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, Str
     {
         return Err("keymap snapshot identity or permissions changed".to_owned());
     }
-    Ok(file)
+    read_and_verify_snapshot(file, expected_digest)
 }
 
 #[cfg(not(unix))]
-fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, String> {
+fn open_snapshot_input(
+    path: &Path,
+    expected_identity: &str,
+    expected_digest: &str,
+) -> Result<Vec<u8>, String> {
     let file = File::open(path).map_err(|_| "failed to open keymap snapshot".to_owned())?;
     let metadata = file
         .metadata()
@@ -187,7 +213,25 @@ fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, Str
     if !metadata.is_file() || actual_identity != expected_identity {
         return Err("keymap snapshot identity changed".to_owned());
     }
-    Ok(file)
+    read_and_verify_snapshot(file, expected_digest)
+}
+
+const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+
+fn read_and_verify_snapshot(mut file: File, expected_digest: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take((MAX_SNAPSHOT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "failed to read keymap snapshot".to_owned())?;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err("keymap snapshot exceeds the size limit".to_owned());
+    }
+    let actual_digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if actual_digest != expected_digest {
+        return Err("keymap snapshot content changed".to_owned());
+    }
+    Ok(bytes)
 }
 
 struct ResolvedPaths {
@@ -437,7 +481,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json> --keymap-snapshot-identity <identity>]".to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json> --keymap-snapshot-identity <identity> --keymap-snapshot-digest <sha256>]".to_owned()
 }
 
 #[cfg(all(test, unix))]

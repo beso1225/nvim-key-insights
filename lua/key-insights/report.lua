@@ -238,8 +238,15 @@ function Report:start()
     return false
   end
   self._previous_outputs = previous_outputs
-  local publish_ok, snapshot_path, snapshot_identity = pcall(self._publish_snapshot)
+  local publish_ok, snapshot_path, snapshot_identity, snapshot_digest = pcall(self._publish_snapshot)
   if not publish_ok or type(snapshot_path) ~= "string" or snapshot_path == "" then
+    self._previous_outputs = nil
+    self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
+    return false
+  end
+  local has_identity = type(snapshot_identity) == "string" and snapshot_identity ~= ""
+  local has_digest = type(snapshot_digest) == "string" and snapshot_digest ~= ""
+  if has_identity ~= has_digest then
     self._previous_outputs = nil
     self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
     return false
@@ -256,9 +263,13 @@ function Report:start()
     "--keymap-snapshot",
     snapshot_path,
   }
-  if type(snapshot_identity) == "string" and snapshot_identity ~= "" then
+  if has_identity then
     table.insert(argv, "--keymap-snapshot-identity")
     table.insert(argv, snapshot_identity)
+  end
+  if has_digest then
+    table.insert(argv, "--keymap-snapshot-digest")
+    table.insert(argv, snapshot_digest)
   end
   self._generation = self._generation + 1
   local generation = self._generation

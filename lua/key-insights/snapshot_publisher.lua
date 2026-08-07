@@ -8,11 +8,6 @@ Publisher.__index = Publisher
 local OWNER_READ_WRITE = 384 -- 0600
 local MAX_ENCODED_BYTES = 1024 * 1024
 local MAX_RETAINED_SNAPSHOTS = 16
-local MAX_DIRECTORY_ENTRIES = 256
-
-local function is_enoent(error_message)
-  return error_message ~= nil and string.find(tostring(error_message), "ENOENT", 1, true) ~= nil
-end
 
 local function same_directory(left, right)
   return left ~= nil
@@ -38,8 +33,8 @@ local function write_all(fs, descriptor, payload)
   return true
 end
 
-local function default_suffix(encoded)
-  return string.sub(vim.fn.sha256(encoded), 1, 32)
+local function default_slot_seed(digest)
+  return tonumber(string.sub(digest, 1, 8), 16)
 end
 
 function M.new(options, dependencies)
@@ -56,7 +51,7 @@ function M.new(options, dependencies)
     end,
     _encode_snapshot = deps.encode_snapshot or keymap_snapshot.encode,
     _fs = fs,
-    _name_suffix = deps.name_suffix or default_suffix,
+    _slot_seed = deps.slot_seed or default_slot_seed,
     _output_directory = output_directory,
   }, Publisher)
 end
@@ -70,13 +65,12 @@ function Publisher:publish()
   if not encode_ok or type(encoded) ~= "string" or #encoded > MAX_ENCODED_BYTES then
     return nil, "snapshot_publisher:encoding_failed"
   end
-  local suffix_ok, suffix = pcall(self._name_suffix, encoded)
-  if not suffix_ok
-    or type(suffix) ~= "string"
-    or #suffix < 1
-    or #suffix > 64
-    or string.match(suffix, "^[a-z0-9][a-z0-9-]*$") == nil
-  then
+  local digest_ok, digest = pcall(vim.fn.sha256, encoded)
+  if not digest_ok or type(digest) ~= "string" or #digest ~= 64 or string.match(digest, "^[0-9a-f]+$") == nil then
+    return nil, "snapshot_publisher:encoding_failed"
+  end
+  local seed_ok, seed = pcall(self._slot_seed, digest, encoded)
+  if not seed_ok or type(seed) ~= "number" or seed < 0 or seed >= math.huge or seed ~= math.floor(seed) then
     return nil, "snapshot_publisher:invalid_name"
   end
 
@@ -94,137 +88,54 @@ function Publisher:publish()
     return nil, "snapshot_publisher:directory_changed"
   end
 
-  local name = "keymap-snapshot-" .. suffix .. ".json"
-  local final_path = vim.fs.joinpath(self._output_directory, name)
-  local staging_name = name .. ".tmp"
-  local staging_path = vim.fs.joinpath(self._output_directory, staging_name)
   local function close_directory()
     self._fs.fs_close(directory_descriptor)
   end
-  local existing, lookup_error = self._fs.fs_lstat(final_path)
-  if existing ~= nil then
-    local existing_contents = nil
-    if existing.type == "file" and existing.nlink == 1 and existing.mode % 512 == OWNER_READ_WRITE then
-      existing_contents = filesystem.read_bounded(self._fs, final_path, MAX_ENCODED_BYTES)
-    end
-    close_directory()
-    if existing_contents == encoded then
-      return final_path, filesystem.stat_identity(existing)
-    end
-    return nil, "snapshot_publisher:target_exists"
-  end
-  if not is_enoent(lookup_error) then
-    close_directory()
-    return nil, "snapshot_publisher:target_exists"
-  end
-
-  local scan = self._fs.fs_scandir(self._output_directory)
-  if scan == nil then
-    close_directory()
-    return nil, "snapshot_publisher:directory_changed"
-  end
-  local scanned = 0
-  local retained = 0
-  while true do
-    local child = self._fs.fs_scandir_next(scan)
-    if child == nil then
-      break
-    end
-    scanned = scanned + 1
-    if scanned > MAX_DIRECTORY_ENTRIES then
-      close_directory()
-      return nil, "snapshot_publisher:retention_limit"
-    end
-    if string.match(child, "^keymap%-snapshot%-[a-z0-9][a-z0-9-]*%.json$") ~= nil then
-      retained = retained + 1
-    end
-  end
-  if retained >= MAX_RETAINED_SNAPSHOTS then
-    close_directory()
-    return nil, "snapshot_publisher:retention_limit"
-  end
-
-  local descriptor = nil
-  if self._anchored then
-    descriptor = filesystem.open_child_exclusive(directory_descriptor, staging_name, OWNER_READ_WRITE)
-  else
-    descriptor = self._fs.fs_open(staging_path, "wx", OWNER_READ_WRITE)
-  end
-  if descriptor == nil then
-    close_directory()
-    return nil, "snapshot_publisher:write_failed"
-  end
-  local protected = self._fs.fs_fchmod(descriptor, OWNER_READ_WRITE)
-  local written = protected and write_all(self._fs, descriptor, encoded)
-  local synced = written and self._fs.fs_fsync(descriptor)
-  local closed = self._fs.fs_close(descriptor)
-  if not protected or not written or not synced or not closed then
-    if self._anchored then
-      filesystem.unlink_child(directory_descriptor, staging_name)
+  for offset = 0, MAX_RETAINED_SNAPSHOTS - 1 do
+    local slot = (seed + offset) % MAX_RETAINED_SNAPSHOTS
+    local name = string.format("keymap-snapshot-%02x.json", slot)
+    local final_path = vim.fs.joinpath(self._output_directory, name)
+    local existing = self._fs.fs_lstat(final_path)
+    if existing ~= nil then
+      local existing_contents = nil
+      if existing.type == "file" and existing.nlink == 1 and existing.mode % 512 == OWNER_READ_WRITE then
+        existing_contents = filesystem.read_bounded(self._fs, final_path, MAX_ENCODED_BYTES)
+      end
+      if existing_contents == encoded then
+        close_directory()
+        return final_path, filesystem.stat_identity(existing), "sha256:" .. digest
+      end
     else
-      self._fs.fs_unlink(staging_path)
+      local descriptor = nil
+      if self._anchored then
+        descriptor = filesystem.open_child_exclusive(directory_descriptor, name, OWNER_READ_WRITE)
+      else
+        descriptor = self._fs.fs_open(final_path, "wx", OWNER_READ_WRITE)
+      end
+      if descriptor ~= nil then
+        local protected = self._fs.fs_fchmod(descriptor, OWNER_READ_WRITE)
+        local written = protected and write_all(self._fs, descriptor, encoded)
+        local synced = written and self._fs.fs_fsync(descriptor)
+        local published = synced and self._fs.fs_fstat(descriptor) or nil
+        local current = self._fs.fs_lstat(self._output_directory)
+        local directory_unchanged = same_directory(opened, current)
+        local directory_synced = published ~= nil and directory_unchanged and self._fs.fs_fsync(directory_descriptor)
+        local closed = self._fs.fs_close(descriptor)
+        if not directory_unchanged then
+          close_directory()
+          return nil, "snapshot_publisher:directory_changed"
+        end
+        if not protected or not written or not synced or published == nil or not directory_synced or not closed then
+          close_directory()
+          return nil, "snapshot_publisher:write_failed"
+        end
+        close_directory()
+        return final_path, filesystem.stat_identity(published), "sha256:" .. digest
+      end
     end
-    close_directory()
-    return nil, "snapshot_publisher:write_failed"
   end
-
-  local current = self._fs.fs_lstat(self._output_directory)
-  local target = self._fs.fs_lstat(final_path)
-  if not same_directory(opened, current) then
-    if self._anchored then
-      filesystem.unlink_child(directory_descriptor, staging_name)
-    else
-      self._fs.fs_unlink(staging_path)
-    end
-    close_directory()
-    return nil, "snapshot_publisher:directory_changed"
-  end
-  if target ~= nil then
-    if self._anchored then
-      filesystem.unlink_child(directory_descriptor, staging_name)
-    else
-      self._fs.fs_unlink(staging_path)
-    end
-    close_directory()
-    return nil, "snapshot_publisher:target_exists"
-  end
-  local renamed = nil
-  if self._anchored then
-    renamed = filesystem.publish_child_exclusive(directory_descriptor, staging_name, name)
-  else
-    renamed = self._fs.fs_rename(staging_path, final_path)
-  end
-  if not renamed then
-    if self._anchored then
-      filesystem.unlink_child(directory_descriptor, staging_name)
-    else
-      self._fs.fs_unlink(staging_path)
-    end
-    close_directory()
-    return nil, "snapshot_publisher:publish_failed"
-  end
-  local after = self._fs.fs_lstat(self._output_directory)
-  local published = same_directory(opened, after) and self._fs.fs_lstat(final_path) or nil
-  local directory_synced = self._fs.fs_fsync(directory_descriptor)
-  if published == nil
-    or published.type ~= "file"
-    or published.nlink ~= 1
-    or published.mode % 512 ~= OWNER_READ_WRITE
-    or not directory_synced
-  then
-    if self._anchored then
-      filesystem.unlink_child(directory_descriptor, name)
-    else
-      self._fs.fs_unlink(final_path)
-    end
-    self._fs.fs_close(directory_descriptor)
-    return nil, "snapshot_publisher:publish_failed"
-  end
-  self._fs.fs_close(directory_descriptor)
-  local identity = filesystem.stat_identity(published)
-  -- A close error after the file and directory have both been synchronized does
-  -- not make the already-published immutable snapshot unusable.
-  return final_path, identity
+  close_directory()
+  return nil, "snapshot_publisher:retention_limit"
 end
 
 return M

@@ -36,16 +36,53 @@ fn snapshot_identity_rejects_a_replaced_parent_and_leaf() {
         metadata.mtime(),
         metadata.mtime_nsec()
     );
-    open_snapshot_input(&path, &identity).expect("matching snapshot identity");
+    let digest = "sha256:7bd39a7cbcf687fd60f819645b8bcaf731a9f19cb102484a7b84530516d7e8b8";
+    open_snapshot_input(&path, &identity, digest).expect("matching snapshot identity");
 
     fs::rename(&directory, &moved).expect("move original directory");
     fs::create_dir(&directory).expect("replace report directory");
     fs::write(&path, b"replacement\n").expect("write replacement snapshot");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect replacement");
 
-    let error = open_snapshot_input(&path, &identity).expect_err("replacement must be rejected");
+    let error =
+        open_snapshot_input(&path, &identity, digest).expect_err("replacement must be rejected");
     assert!(error.contains("identity"), "{error}");
     fs::remove_dir_all(root).expect("remove test directory");
+}
+
+#[test]
+fn snapshot_digest_rejects_in_place_content_mutation() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-snapshot-content-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create report directory");
+    let path = directory.join("keymap-snapshot-00.json");
+    fs::write(&path, b"changed\n").expect("write changed snapshot");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
+    let metadata = fs::metadata(&path).expect("snapshot metadata");
+    let identity = format!(
+        "file:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec()
+    );
+
+    let error = open_snapshot_input(
+        &path,
+        &identity,
+        "sha256:7bd39a7cbcf687fd60f819645b8bcaf731a9f19cb102484a7b84530516d7e8b8",
+    )
+    .expect_err("changed bytes must not match the published digest");
+
+    assert!(error.contains("content changed"), "{error}");
+    fs::remove_dir_all(directory).expect("remove test directory");
 }
 
 #[test]

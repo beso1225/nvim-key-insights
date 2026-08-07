@@ -190,7 +190,9 @@ local shutdown_report = report.new({
   mkdir = function() return 1 end,
   notify = function() end,
   publish_snapshot = function()
-    return "/state/shutdown-reports/keymap-snapshot-shutdown.json", "file:1:2:3:4:5"
+    return "/state/shutdown-reports/keymap-snapshot-shutdown.json",
+      "file:1:2:3:4:5",
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   end,
   run = function(_, callback)
     shutdown_callback = callback

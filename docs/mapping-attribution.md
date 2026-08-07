@@ -153,20 +153,22 @@ and additionally emits exactly one schema-v1 `mapping_use` event.
 
 Each report request collects a fresh sanitized model after the private report
 directory has been verified. It publishes the encoded bytes as a 0600 regular
-file under a content-addressed, opaque name and passes that exact path as one
-literal `--keymap-snapshot` argument together with its expected filesystem
-identity. The CLI opens and pins a private, single-linked file with that identity
-before analysis, so replacing either the directory or leaf cannot redirect the
-invocation. Publication completes before process launch, and a concurrent
+file in one of 16 fixed private slots and passes that exact path as one literal
+`--keymap-snapshot` argument together with its expected filesystem identity and
+SHA-256 digest. The CLI opens the private, single-linked file, reads at most 1 MiB
+into memory, and verifies both pins before analysis. Replacing the directory or
+leaf, or mutating the same inode in place, therefore cannot redirect later
+parsing. Publication completes before process launch, and a concurrent
 request on the same report instance is rejected before collecting another
 snapshot.
 
 Collection, encoding, directory identity, write, and publication failures stop
 the launch with a content-free notification. A failed attempt cannot replace an
-earlier immutable snapshot. Identical sanitized bytes reuse the same file, and
-publication refuses to create a seventeenth retained snapshot or to scan more
-than 256 directory entries. Snapshots are not automatically unlinked because
-POSIX pathname deletion cannot atomically verify the pinned leaf identity; this
-avoids deleting a same-user replacement. The CLI accepts the optional argument
+earlier immutable snapshot. Identical sanitized bytes reuse an existing slot,
+while deterministic probing and exclusive creation make a seventeenth snapshot
+structurally impossible even across concurrent Neovim processes. Failed writes
+may quarantine their slot instead of deleting an attacker-replaced pathname.
+Snapshots are not automatically unlinked because POSIX pathname deletion cannot
+atomically verify the pinned leaf identity. The CLI accepts the optional argument
 at this slice boundary; strict parsing and deterministic joins are introduced
 by M2-S5.
