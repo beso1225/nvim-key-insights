@@ -1,4 +1,5 @@
 local collector = require("key-insights.collector")
+local config = require("key-insights.config")
 
 local writes = 0
 local buffer = vim.api.nvim_get_current_buf()
@@ -35,25 +36,17 @@ assert(instance:stop())
 vim.keymap.del("n", "z8")
 
 local callback = nil
+local byte_clock = 0
 local byte_limited = collector.new({
-  clock_ms = function() return 1 end,
+  auto_flush = true,
+  clock_ms = function() return byte_clock end,
   current_buffer = function()
     return { id = buffer, buftype = "", filetype = "lua", name = "pending-bytes.lua" }
   end,
   current_cmdtype = function() return "" end,
   current_mode = function() return "n" end,
   keytrans = function(value) return value end,
-  mapping_resolver = {
-    prime = function() return true end,
-    reset = function() end,
-    resolve = function()
-      return {
-        mapping_id = "mapping-v1:" .. string.rep("a", 64),
-        mode = "normal",
-        scope = "global",
-      }
-    end,
-  },
+  mapping_resolver = { prime = function() return false end, reset = function() end },
   new_session_id = function() return "pending-bytes-session" end,
   open_session = function()
     return {
@@ -63,7 +56,7 @@ local byte_limited = collector.new({
       abort = function() end,
     }
   end,
-  pending_byte_limit = 128,
+  options = config.resolve({ collection = { max_sequence_keys = 20000 } }),
   register_on_key = function(handler)
     callback = handler
     return function() callback = nil end
@@ -72,9 +65,14 @@ local byte_limited = collector.new({
 })
 
 assert(byte_limited:start())
-assert(callback("mapped-RHS-must-not-escape", "zq") == nil)
+local large_typed_input = string.rep("j", 20000)
+for _ = 1, 70 do
+  byte_clock = byte_clock + 1001
+  assert(callback("mapped-RHS-must-not-escape", large_typed_input) == nil)
+end
 local byte_status = byte_limited:status()
-assert(byte_status.pending_events == 0 and byte_status.pending_bytes == 0)
+assert(byte_status.pending_events < 1024, "the byte limit must stop this burst before the event limit")
+assert(byte_status.pending_bytes <= 4 * 1024 * 1024)
 assert(byte_status.last_error == "collector pending queue limit exceeded")
 assert(string.find(vim.inspect(byte_status), "mapped-RHS", 1, true) == nil)
 assert(byte_limited:stop())

@@ -112,8 +112,6 @@ function M.new(spec)
     _options = options,
     _pending = {},
     _pending_bytes = 0,
-    _pending_byte_limit = dependencies.pending_byte_limit or MAX_PENDING_BYTES,
-    _pending_event_limit = dependencies.pending_event_limit or MAX_PENDING_EVENTS,
     _register_on_key = dependencies.register_on_key or default_register_on_key,
     _schedule = dependencies.schedule or vim.schedule,
     _started_at_ms = nil,
@@ -316,8 +314,8 @@ function Collector:_queue_many(events)
     table.insert(encoded_events, encoded)
     encoded_bytes = encoded_bytes + #encoded
   end
-  if #self._pending + #encoded_events > self._pending_event_limit
-    or self._pending_bytes + encoded_bytes > self._pending_byte_limit
+  if #self._pending + #encoded_events > MAX_PENDING_EVENTS
+    or self._pending_bytes + encoded_bytes > MAX_PENDING_BYTES
   then
     self._last_error = PENDING_LIMIT_ERROR
     return false
