@@ -4,7 +4,7 @@ local key_tokens = require("key-insights.key_tokens")
 local M = {}
 
 M.VERSION = 1
-M.DEFAULT_LIMITS = {
+local DEFAULT_LIMITS = {
   max_api_entries = 4096,
   max_buffers = 256,
   max_encoded_bytes = 1024 * 1024,
@@ -55,9 +55,9 @@ local DEFAULT_DEPENDENCIES = {
 }
 
 local function resolved_limits(overrides)
-  local limits = vim.tbl_extend("force", M.DEFAULT_LIMITS, overrides or {})
+  local limits = vim.tbl_extend("force", DEFAULT_LIMITS, overrides or {})
   for _, value in pairs(limits) do
-    if type(value) ~= "number" or value < 1 or value ~= math.floor(value) then
+    if type(value) ~= "number" or value < 1 or value >= math.huge or value ~= math.floor(value) then
       return nil
     end
   end
@@ -175,12 +175,17 @@ local function validate_tokens(tokens, limits)
     return nil, "keymap_snapshot:invalid_mapping"
   end
   local copy = {}
+  local total_bytes = 0
   for index = 1, count do
     local token = tokens[index]
     if type(token) ~= "string" or token == "" then
       return nil, "keymap_snapshot:invalid_mapping"
     end
     if #token > limits.max_token_bytes then
+      return nil, "keymap_snapshot:limit_exceeded"
+    end
+    total_bytes = total_bytes + #token
+    if total_bytes > limits.max_lhs_bytes then
       return nil, "keymap_snapshot:limit_exceeded"
     end
     if string.find(token, "[%z\1-\31\127]") ~= nil then
@@ -289,37 +294,74 @@ local function json_string(value)
   return encoded
 end
 
-function M.encode(model, options)
+function M.encode(model, options, dependency_overrides)
   local limits = resolved_limits(options)
-  if limits == nil or type(model) ~= "table" or model.snapshot_version ~= M.VERSION then
+  if limits == nil or type(model) ~= "table" or rawget(model, "snapshot_version") ~= M.VERSION then
     return nil, "keymap_snapshot:invalid_snapshot"
   end
-  local count, array_error = bounded_array(model.mappings, limits.max_api_entries)
+  local input_mappings = rawget(model, "mappings")
+  local count, array_error = bounded_array(input_mappings, limits.max_api_entries)
   if count == nil then
     return nil, array_error == "limit" and "keymap_snapshot:limit_exceeded"
       or "keymap_snapshot:invalid_snapshot"
   end
 
-  local parts = { '{"snapshot_version":1,"mappings":[' }
+  local dependencies = vim.tbl_extend("force", DEFAULT_DEPENDENCIES, dependency_overrides or {})
+  local identities = {}
+  local mappings = {}
+  local tuples = {}
   for index = 1, count do
-    local mapping = model.mappings[index]
-    if type(mapping) ~= "table"
-      or type(mapping.mapping_id) ~= "string"
-      or #mapping.mapping_id ~= 75
-      or string.match(mapping.mapping_id, "^mapping%-v1:[0-9a-f]+$") == nil
-      or VALID_MODES[mapping.mode] ~= true
-      or VALID_SCOPES[mapping.scope] ~= true
+    local mapping = rawget(input_mappings, index)
+    if type(mapping) ~= "table" then
+      return nil, "keymap_snapshot:invalid_snapshot"
+    end
+    local mapping_id = rawget(mapping, "mapping_id")
+    local mode = rawget(mapping, "mode")
+    local scope = rawget(mapping, "scope")
+    if type(mapping_id) ~= "string"
+      or #mapping_id ~= 75
+      or string.match(mapping_id, "^mapping%-v1:[0-9a-f]+$") == nil
+      or VALID_MODES[mode] ~= true
+      or VALID_SCOPES[scope] ~= true
     then
       return nil, "keymap_snapshot:invalid_snapshot"
     end
-    local tokens, validation_error = validate_tokens(mapping.lhs, limits)
+    local tokens, validation_error = validate_tokens(rawget(mapping, "lhs"), limits)
     if tokens == nil then
       return nil, validation_error
     end
+    local expected_id, identity_error = M.mapping_id(mode, scope, tokens, dependencies, limits)
+    if expected_id == nil then
+      if identity_error == "keymap_snapshot:limit_exceeded" then
+        return nil, identity_error
+      end
+      return nil, "keymap_snapshot:invalid_snapshot"
+    end
+    if mapping_id ~= expected_id then
+      return nil, "keymap_snapshot:invalid_snapshot"
+    end
+    local key = tuple_key(mode, scope, tokens)
+    if tuples[key] ~= nil or (identities[mapping_id] ~= nil and identities[mapping_id] ~= key) then
+      return nil, "keymap_snapshot:invalid_snapshot"
+    end
+    tuples[key] = true
+    identities[mapping_id] = key
+    table.insert(mappings, {
+      lhs = tokens,
+      mapping_id = mapping_id,
+      mode = mode,
+      scope = scope,
+    })
+  end
+  table.sort(mappings, mapping_less)
+
+  local parts = { '{"snapshot_version":1,"mappings":[' }
+  for index = 1, count do
+    local mapping = mappings[index]
     local encoded_id = json_string(mapping.mapping_id)
     local encoded_mode = json_string(mapping.mode)
     local encoded_scope = json_string(mapping.scope)
-    local encoded_lhs = json_string(tokens)
+    local encoded_lhs = json_string(mapping.lhs)
     if encoded_id == nil or encoded_mode == nil or encoded_scope == nil or encoded_lhs == nil then
       return nil, "keymap_snapshot:encoding_failed"
     end
@@ -415,20 +457,29 @@ function M.collect(options, dependency_overrides)
   for index = 1, buffer_count do
     local buffer = rawget(buffers, index)
     local valid = safe_call(dependencies.is_buffer_valid, buffer)
+    if type(valid) ~= "boolean" then
+      return nil, "keymap_snapshot:api_failed"
+    end
     local loaded = false
     if valid == true then
       loaded = safe_call(dependencies.is_buffer_loaded, buffer)
+      if type(loaded) ~= "boolean" then
+        return nil, "keymap_snapshot:api_failed"
+      end
     end
     local excluded = true
     if loaded == true then
       excluded = safe_call(dependencies.is_buffer_excluded, buffer, settings.options)
+      if type(excluded) ~= "boolean" then
+        return nil, "keymap_snapshot:api_failed"
+      end
     end
     local sensitive = true
     if excluded == false then
       sensitive = safe_call(dependencies.is_buffer_sensitive, buffer)
-    end
-    if valid == nil or loaded == nil or excluded == nil or sensitive == nil then
-      return nil, "keymap_snapshot:api_failed"
+      if type(sensitive) ~= "boolean" then
+        return nil, "keymap_snapshot:api_failed"
+      end
     end
     if valid == true and loaded == true and excluded == false and sensitive == false then
       for _, mode in ipairs(QUERY_MODES) do
@@ -449,7 +500,7 @@ function M.collect(options, dependency_overrides)
     snapshot_version = M.VERSION,
     mappings = mappings,
   }
-  local encoded, encoding_error = M.encode(model, limits)
+  local encoded, encoding_error = M.encode(model, limits, dependencies)
   if encoded == nil then
     return nil, encoding_error
   end

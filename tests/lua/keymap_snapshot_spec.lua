@@ -243,6 +243,10 @@ assert_failure({
   end,
 }, vim.tbl_extend("force", copy(DEFAULT_LIMITS), { max_buffers = 2 }), "keymap_snapshot:limit_exceeded")
 
+assert_failure({}, vim.tbl_extend("force", copy(DEFAULT_LIMITS), {
+  max_buffers = math.huge,
+}), "keymap_snapshot:invalid_limits")
+
 assert_failure({
   get_global_keymaps = function(mode)
     return mode == "n" and { entry("a"), entry("b"), entry("c") } or {}
@@ -288,6 +292,14 @@ local unsplit_id, unsplit_error = snapshot.mapping_id("normal", "global", { "/pr
 })
 assert(unsplit_id == nil and unsplit_error == "keymap_snapshot:invalid_mapping")
 
+local oversized_lhs_id, oversized_lhs_error = snapshot.mapping_id("normal", "global", {
+  "<a>",
+  "<b>",
+}, { sha256 = fake_sha256 }, vim.tbl_extend("force", copy(DEFAULT_LIMITS), {
+  max_lhs_bytes = 4,
+}))
+assert(oversized_lhs_id == nil and oversized_lhs_error == "keymap_snapshot:limit_exceeded")
+
 local invalid_utf8, invalid_utf8_error = snapshot.canonicalize_lhs(entry("\255"), {
   keytrans = function(value)
     return value
@@ -322,6 +334,15 @@ assert_failure({
   end,
 }, DEFAULT_LIMITS, "keymap_snapshot:api_failed", loaded_api_secret)
 
+assert_failure({
+  is_buffer_loaded = function()
+    return "yes"
+  end,
+  list_buffers = function()
+    return { 1 }
+  end,
+}, DEFAULT_LIMITS, "keymap_snapshot:api_failed")
+
 local keytrans_secret = "keytrans-/private/secret"
 assert_failure({
   get_global_keymaps = function(mode)
@@ -347,6 +368,34 @@ assert(encoded_once == string.format(
   real_id("normal", "global", { "g", "g" })
 ))
 
+local reversed = copy(deterministic)
+reversed.mappings[1], reversed.mappings[2] = reversed.mappings[2], reversed.mappings[1]
+assert(snapshot.encode(reversed, { max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes }) == encoded_once)
+
+local duplicate_model = copy(deterministic)
+table.insert(duplicate_model.mappings, copy(duplicate_model.mappings[1]))
+local duplicate_encoded, duplicate_error = snapshot.encode(duplicate_model, {
+  max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes,
+})
+assert(duplicate_encoded == nil and duplicate_error == "keymap_snapshot:invalid_snapshot")
+
+local oversized_model = {
+  snapshot_version = 1,
+  mappings = {
+    {
+      lhs = { "<a>", "<b>" },
+      mapping_id = real_id("normal", "global", { "<a>", "<b>" }),
+      mode = "normal",
+      scope = "global",
+    },
+  },
+}
+local oversized_encoded, oversized_error = snapshot.encode(oversized_model, {
+  max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes,
+  max_lhs_bytes = 4,
+})
+assert(oversized_encoded == nil and oversized_error == "keymap_snapshot:limit_exceeded")
+
 local hostile_encoded, hostile_encode_error = snapshot.encode({
   snapshot_version = 1,
   mappings = {
@@ -359,6 +408,20 @@ local hostile_encoded, hostile_encode_error = snapshot.encode({
   },
 }, { max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes })
 assert(hostile_encoded == nil and hostile_encode_error == "keymap_snapshot:invalid_snapshot")
+
+local mismatched_id = real_id("normal", "global", { "a" })
+local mismatched_encoded, mismatched_error = snapshot.encode({
+  snapshot_version = 1,
+  mappings = {
+    {
+      lhs = { "b" },
+      mapping_id = mismatched_id,
+      mode = "normal",
+      scope = "global",
+    },
+  },
+}, { max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes })
+assert(mismatched_encoded == nil and mismatched_error == "keymap_snapshot:invalid_snapshot")
 
 -- Exercise one real API dictionary so changes to lhsraw/keytrans behavior do not
 -- silently invalidate the pure adapter contract on supported Neovim versions.

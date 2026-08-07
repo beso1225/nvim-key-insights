@@ -121,5 +121,7 @@ Identical tuples are deduplicated, including the same buffer-local binding seen
 in several eligible buffers. Global and buffer-local bindings with the same mode
 and left-hand side remain separate. Entries sort by normalized mode,
 lexicographic token array, scope, and mapping ID. The encoder writes a fixed JSON
-field order and a trailing newline, so equivalent API state produces identical
-bytes.
+field order and a trailing newline, revalidates each ID against its tuple,
+rejects duplicate or conflicting tuples, and canonically sorts a defensive copy.
+Equivalent sanitized mapping sets therefore produce identical bytes regardless
+of input order.
