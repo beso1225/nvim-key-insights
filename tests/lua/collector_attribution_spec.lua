@@ -1,8 +1,11 @@
 local collector = require("key-insights.collector")
 
-local function memory_session(events)
+local function memory_session(events, on_write)
   return {
     write = function(_, lines)
+      if on_write ~= nil then
+        on_write()
+      end
       for _, line in ipairs(lines) do
         table.insert(events, vim.json.decode(line))
       end
@@ -26,6 +29,8 @@ end
 local function fixture(overrides)
   local events = {}
   local callback = nil
+  local in_callback = false
+  local writes_in_callback = 0
   local mode = "n"
   local buffer = { id = 7, buftype = "", filetype = "lua", name = "" }
   local resolver = {
@@ -66,7 +71,11 @@ local function fixture(overrides)
       return "attribution-session"
     end,
     open_session = function()
-      return memory_session(events)
+      return memory_session(events, function()
+        if in_callback then
+          writes_in_callback = writes_in_callback + 1
+        end
+      end)
     end,
     register_on_key = function(value)
       callback = value
@@ -77,13 +86,20 @@ local function fixture(overrides)
   }, overrides or {})
   return collector.new(spec), events, resolver, {
     callback = function(mapped, typed)
-      return callback(mapped, typed)
+      in_callback = true
+      local result = { pcall(callback, mapped, typed) }
+      in_callback = false
+      assert(result[1], result[2])
+      return unpack(result, 2)
     end,
     set_buffer = function(value)
       buffer = value
     end,
     set_mode = function(value)
       mode = value
+    end,
+    writes_in_callback = function()
+      return writes_in_callback
     end,
   }
 end
@@ -92,6 +108,7 @@ local instance, events, _, controls = fixture()
 assert(instance:start() == true)
 local mapped_secret = "mapped-/private/credential-SECRET"
 assert(controls.callback(mapped_secret, "zq") == nil, "collector callbacks must not consume input")
+assert(controls.writes_in_callback() == 0, "mapping attribution must not perform callback-path storage I/O")
 instance:flush()
 assert(count(events, "mapping_use") == 1, "one confirmed callback must emit exactly one mapping_use")
 assert(count(events, "key_sequence") == 1, "attributed keys must remain ordinary sequence evidence")

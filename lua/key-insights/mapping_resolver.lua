@@ -103,18 +103,6 @@ local function token_key(tokens)
   return table.concat(parts)
 end
 
-local function tokens_are_prefix(prefix, tokens)
-  if #prefix >= #tokens then
-    return false
-  end
-  for index, token in ipairs(prefix) do
-    if tokens[index] ~= token then
-      return false
-    end
-  end
-  return true
-end
-
 local function project(mapping, mode, scope, dependencies, limits)
   local tokens, canonical_error = snapshot.canonicalize_lhs(mapping, {
     keytrans = dependencies.keytrans,
@@ -137,20 +125,34 @@ local function project(mapping, mode, scope, dependencies, limits)
 end
 
 local function mark_prefix_ambiguity(entries)
-  local list = {}
+  local root = { children = {} }
   for _, entry in pairs(entries) do
-    table.insert(list, entry)
+    local node = root
+    for _, token in ipairs(entry.lhs) do
+      local child = node.children[token]
+      if child == nil then
+        child = { children = {} }
+        node.children[token] = child
+      end
+      node = child
+    end
+    node.entry = entry
   end
-  for left_index = 1, #list do
-    for right_index = left_index + 1, #list do
-      local left = list[left_index]
-      local right = list[right_index]
-      if tokens_are_prefix(left.lhs, right.lhs) or tokens_are_prefix(right.lhs, left.lhs) then
-        left.ambiguous = true
-        right.ambiguous = true
+
+  local function visit(node, has_terminal_ancestor)
+    local descendant_has_terminal = false
+    local next_has_terminal_ancestor = has_terminal_ancestor or node.entry ~= nil
+    for _, child in pairs(node.children) do
+      if visit(child, next_has_terminal_ancestor) then
+        descendant_has_terminal = true
       end
     end
+    if node.entry ~= nil and (has_terminal_ancestor or descendant_has_terminal) then
+      node.entry.ambiguous = true
+    end
+    return node.entry ~= nil or descendant_has_terminal
   end
+  visit(root, false)
 end
 
 function M.new(spec)

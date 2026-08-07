@@ -97,6 +97,9 @@ function M.new(spec)
     _current_buffer = dependencies.current_buffer or default_buffer,
     _current_cmdtype = dependencies.current_cmdtype or default_current_cmdtype,
     _current_mode = dependencies.current_mode or default_current_mode,
+    _flush_epoch = 0,
+    _flush_scheduled = false,
+    _in_callback = false,
     _keytrans = dependencies.keytrans or default_keytrans,
     _last_mode = nil,
     _mapping_resolver = resolver,
@@ -106,6 +109,7 @@ function M.new(spec)
     _options = options,
     _pending = {},
     _register_on_key = dependencies.register_on_key or default_register_on_key,
+    _schedule = dependencies.schedule or vim.schedule,
     _started_at_ms = nil,
     _state = "stopped",
     _session_id = nil,
@@ -274,12 +278,40 @@ function Collector:_elapsed_ms()
   return math.max(0, math.floor(self._clock_ms() - self._started_at_ms))
 end
 
+function Collector:_schedule_pending_write()
+  if self._flush_scheduled then
+    return
+  end
+  self._flush_scheduled = true
+  local epoch = self._flush_epoch
+  local scheduled = pcall(self._schedule, function()
+    if epoch ~= self._flush_epoch then
+      return
+    end
+    self._flush_scheduled = false
+    if self._in_callback or self._state ~= "recording" or self._last_error ~= nil then
+      return
+    end
+    local ok, error_message = pcall(self._write_pending, self)
+    if not ok then
+      self._last_error = tostring(error_message)
+    end
+  end)
+  if not scheduled then
+    self._flush_scheduled = false
+  end
+end
+
 function Collector:_queue_many(events)
   for _, event in ipairs(events) do
     table.insert(self._pending, schema.encode(event))
   end
   if self._auto_flush then
-    self:_write_pending()
+    if self._in_callback then
+      self:_schedule_pending_write()
+    else
+      self:_write_pending()
+    end
   end
 end
 
@@ -319,11 +351,14 @@ function Collector:_prime_mapping_resolver()
   if self._mapping_resolver == nil or type(self._mapping_resolver.prime) ~= "function" then
     return false
   end
-  local buffer = self._current_buffer()
-  if type(buffer) ~= "table" or type(buffer.id) ~= "number" then
+  local context_ok, buffer = pcall(self._current_buffer)
+  if not context_ok or type(buffer) ~= "table" or type(buffer.id) ~= "number" then
     return false
   end
-  if config.is_excluded_buffer(buffer, self._options) or config.is_sensitive_buffer(buffer) then
+  local eligibility_ok, excluded = pcall(function()
+    return config.is_excluded_buffer(buffer, self._options) or config.is_sensitive_buffer(buffer)
+  end)
+  if not eligibility_ok or excluded then
     return false
   end
   local ok, primed = pcall(self._mapping_resolver.prime, self._mapping_resolver, buffer.id)
@@ -400,7 +435,9 @@ function Collector:_attach()
   end
 
   self._unregister = self._register_on_key(function(mapped, typed)
+    self._in_callback = true
     local ok, error_message = pcall(self._handle_key, self, mapped, typed)
+    self._in_callback = false
     if not ok then
       self._last_error = tostring(error_message)
     end
@@ -417,6 +454,9 @@ function Collector:_detach()
 end
 
 function Collector:_reset_session()
+  self._flush_epoch = self._flush_epoch + 1
+  self._flush_scheduled = false
+  self._in_callback = false
   self._end_queued = false
   self._pending = {}
   self._last_mode = nil
