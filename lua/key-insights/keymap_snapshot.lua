@@ -55,13 +55,41 @@ local DEFAULT_DEPENDENCIES = {
 }
 
 local function resolved_limits(overrides)
-  local limits = vim.tbl_extend("force", DEFAULT_LIMITS, overrides or {})
+  if overrides ~= nil and type(overrides) ~= "table" then
+    return nil
+  end
+  local limits = {}
+  for name, default in pairs(DEFAULT_LIMITS) do
+    local value = nil
+    if overrides ~= nil then
+      value = rawget(overrides, name)
+    end
+    limits[name] = value == nil and default or value
+  end
   for _, value in pairs(limits) do
     if type(value) ~= "number" or value < 1 or value >= math.huge or value ~= math.floor(value) then
       return nil
     end
   end
   return limits
+end
+
+local function resolved_dependencies(overrides)
+  if overrides ~= nil and type(overrides) ~= "table" then
+    return nil
+  end
+  local dependencies = {}
+  for name, default in pairs(DEFAULT_DEPENDENCIES) do
+    local value = nil
+    if overrides ~= nil then
+      value = rawget(overrides, name)
+    end
+    dependencies[name] = value == nil and default or value
+    if type(dependencies[name]) ~= "function" then
+      return nil
+    end
+  end
+  return dependencies
 end
 
 local function safe_call(callback, ...)
@@ -208,7 +236,14 @@ end
 
 function M.canonicalize_lhs(mapping, dependencies, limit_overrides)
   local limits = resolved_limits(limit_overrides)
-  if limits == nil or type(mapping) ~= "table" then
+  if limits == nil then
+    return nil, "keymap_snapshot:invalid_limits"
+  end
+  local resolved = resolved_dependencies(dependencies)
+  if resolved == nil then
+    return nil, "keymap_snapshot:invalid_dependencies"
+  end
+  if type(mapping) ~= "table" then
     return nil, "keymap_snapshot:invalid_mapping"
   end
   local lhsraw = rawget(mapping, "lhsraw")
@@ -219,8 +254,7 @@ function M.canonicalize_lhs(mapping, dependencies, limit_overrides)
     return nil, "keymap_snapshot:limit_exceeded"
   end
 
-  local keytrans = dependencies and dependencies.keytrans or DEFAULT_DEPENDENCIES.keytrans
-  local canonical = safe_call(keytrans, lhsraw)
+  local canonical = safe_call(resolved.keytrans, lhsraw)
   if type(canonical) ~= "string" or canonical == "" then
     return nil, "keymap_snapshot:canonicalization_failed"
   end
@@ -243,7 +277,14 @@ end
 
 function M.mapping_id(mode, scope, tokens, dependencies, limit_overrides)
   local limits = resolved_limits(limit_overrides)
-  if limits == nil or VALID_MODES[mode] ~= true or VALID_SCOPES[scope] ~= true then
+  if limits == nil then
+    return nil, "keymap_snapshot:invalid_limits"
+  end
+  local resolved = resolved_dependencies(dependencies)
+  if resolved == nil then
+    return nil, "keymap_snapshot:invalid_dependencies"
+  end
+  if VALID_MODES[mode] ~= true or VALID_SCOPES[scope] ~= true then
     return nil, "keymap_snapshot:invalid_mapping"
   end
   local validated, validation_error = validate_tokens(tokens, limits)
@@ -251,8 +292,7 @@ function M.mapping_id(mode, scope, tokens, dependencies, limit_overrides)
     return nil, validation_error
   end
 
-  local sha256 = dependencies and dependencies.sha256 or DEFAULT_DEPENDENCIES.sha256
-  local digest = safe_call(sha256, identity_preimage(mode, scope, validated))
+  local digest = safe_call(resolved.sha256, identity_preimage(mode, scope, validated))
   if type(digest) ~= "string" or string.match(digest, "^[0-9a-f][0-9a-f]+$") == nil or #digest ~= 64 then
     return nil, "keymap_snapshot:hash_failed"
   end
@@ -294,9 +334,37 @@ local function json_string(value)
   return encoded
 end
 
+local function encode_mapping(mapping)
+  local encoded_id = json_string(mapping.mapping_id)
+  local encoded_mode = json_string(mapping.mode)
+  local encoded_scope = json_string(mapping.scope)
+  local encoded_lhs = json_string(mapping.lhs)
+  if encoded_id == nil or encoded_mode == nil or encoded_scope == nil or encoded_lhs == nil then
+    return nil
+  end
+  return table.concat({
+    '{"mapping_id":',
+    encoded_id,
+    ',"mode":',
+    encoded_mode,
+    ',"scope":',
+    encoded_scope,
+    ',"lhs":',
+    encoded_lhs,
+    "}",
+  })
+end
+
 function M.encode(model, options, dependency_overrides)
   local limits = resolved_limits(options)
-  if limits == nil or type(model) ~= "table" or rawget(model, "snapshot_version") ~= M.VERSION then
+  if limits == nil then
+    return nil, "keymap_snapshot:invalid_limits"
+  end
+  local dependencies = resolved_dependencies(dependency_overrides)
+  if dependencies == nil then
+    return nil, "keymap_snapshot:invalid_dependencies"
+  end
+  if type(model) ~= "table" or rawget(model, "snapshot_version") ~= M.VERSION then
     return nil, "keymap_snapshot:invalid_snapshot"
   end
   local input_mappings = rawget(model, "mappings")
@@ -306,10 +374,10 @@ function M.encode(model, options, dependency_overrides)
       or "keymap_snapshot:invalid_snapshot"
   end
 
-  local dependencies = vim.tbl_extend("force", DEFAULT_DEPENDENCIES, dependency_overrides or {})
   local identities = {}
   local mappings = {}
   local tuples = {}
+  local encoded_size = #'{}\n' + #'"snapshot_version":1,"mappings":[]'
   for index = 1, count do
     local mapping = rawget(input_mappings, index)
     if type(mapping) ~= "table" then
@@ -346,37 +414,35 @@ function M.encode(model, options, dependency_overrides)
     end
     tuples[key] = true
     identities[mapping_id] = key
-    table.insert(mappings, {
+    local sanitized = {
       lhs = tokens,
       mapping_id = mapping_id,
       mode = mode,
       scope = scope,
-    })
+    }
+    local encoded_mapping = encode_mapping(sanitized)
+    if encoded_mapping == nil then
+      return nil, "keymap_snapshot:encoding_failed"
+    end
+    encoded_size = encoded_size + #encoded_mapping + (index > 1 and 1 or 0)
+    if encoded_size > limits.max_encoded_bytes then
+      return nil, "keymap_snapshot:limit_exceeded"
+    end
+    table.insert(mappings, sanitized)
   end
   table.sort(mappings, mapping_less)
 
   local parts = { '{"snapshot_version":1,"mappings":[' }
   for index = 1, count do
     local mapping = mappings[index]
-    local encoded_id = json_string(mapping.mapping_id)
-    local encoded_mode = json_string(mapping.mode)
-    local encoded_scope = json_string(mapping.scope)
-    local encoded_lhs = json_string(mapping.lhs)
-    if encoded_id == nil or encoded_mode == nil or encoded_scope == nil or encoded_lhs == nil then
+    local encoded_mapping = encode_mapping(mapping)
+    if encoded_mapping == nil then
       return nil, "keymap_snapshot:encoding_failed"
     end
     if index > 1 then
       table.insert(parts, ",")
     end
-    table.insert(parts, '{"mapping_id":')
-    table.insert(parts, encoded_id)
-    table.insert(parts, ',"mode":')
-    table.insert(parts, encoded_mode)
-    table.insert(parts, ',"scope":')
-    table.insert(parts, encoded_scope)
-    table.insert(parts, ',"lhs":')
-    table.insert(parts, encoded_lhs)
-    table.insert(parts, "}")
+    table.insert(parts, encoded_mapping)
   end
   table.insert(parts, "]}\n")
   local encoded = table.concat(parts)
@@ -387,12 +453,19 @@ function M.encode(model, options, dependency_overrides)
 end
 
 function M.collect(options, dependency_overrides)
+  if options ~= nil and type(options) ~= "table" then
+    return nil, "keymap_snapshot:invalid_options"
+  end
   local settings = options or {}
-  local limits = resolved_limits(settings.limits)
+  local limits = resolved_limits(rawget(settings, "limits"))
   if limits == nil then
     return nil, "keymap_snapshot:invalid_limits"
   end
-  local dependencies = vim.tbl_extend("force", DEFAULT_DEPENDENCIES, dependency_overrides or {})
+  local dependencies = resolved_dependencies(dependency_overrides)
+  if dependencies == nil then
+    return nil, "keymap_snapshot:invalid_dependencies"
+  end
+  local collector_options = rawget(settings, "options")
   local mappings = {}
   local tuples = {}
   local identities = {}
@@ -469,7 +542,7 @@ function M.collect(options, dependency_overrides)
     end
     local excluded = true
     if loaded == true then
-      excluded = safe_call(dependencies.is_buffer_excluded, buffer, settings.options)
+      excluded = safe_call(dependencies.is_buffer_excluded, buffer, collector_options)
       if type(excluded) ~= "boolean" then
         return nil, "keymap_snapshot:api_failed"
       end

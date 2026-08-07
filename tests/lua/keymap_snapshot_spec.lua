@@ -74,6 +74,44 @@ local function assert_failure(dependencies, limits, expected_error, secret)
   end
 end
 
+local function assert_boundary_failure(callback, expected_error)
+  local ok, result, error_code = pcall(callback)
+  assert(ok, "public snapshot boundaries must not throw")
+  assert(result == nil and error_code == expected_error, vim.inspect({ result, error_code }))
+end
+
+assert_boundary_failure(function()
+  return snapshot.collect(42, {})
+end, "keymap_snapshot:invalid_options")
+assert_boundary_failure(function()
+  return snapshot.collect({ limits = {} }, "dependency-secret")
+end, "keymap_snapshot:invalid_dependencies")
+assert_boundary_failure(function()
+  return snapshot.encode({ snapshot_version = 1, mappings = {} }, {}, "dependency-secret")
+end, "keymap_snapshot:invalid_dependencies")
+assert_boundary_failure(function()
+  return snapshot.canonicalize_lhs(entry("g"), {}, 42)
+end, "keymap_snapshot:invalid_limits")
+assert_boundary_failure(function()
+  return snapshot.mapping_id("normal", "global", { "g" }, "dependency-secret")
+end, "keymap_snapshot:invalid_dependencies")
+
+local dependency_metatable_touched = false
+local metatable_dependencies = fake_dependencies()
+setmetatable(metatable_dependencies, {
+  __index = function()
+    dependency_metatable_touched = true
+    error("dependency-metatable-secret")
+  end,
+})
+assert(snapshot.collect({ limits = DEFAULT_LIMITS }, metatable_dependencies))
+assert(dependency_metatable_touched == false)
+
+local invalid_dependencies = fake_dependencies({ sha256 = "not-a-function" })
+assert_boundary_failure(function()
+  return snapshot.collect({ limits = DEFAULT_LIMITS }, invalid_dependencies)
+end, "keymap_snapshot:invalid_dependencies")
+
 -- Canonicalization consumes lhsraw, never the display-oriented lhs field. The
 -- injected keytrans results model aliases that have the same raw representation.
 local raw_tab = "\t"
@@ -371,6 +409,31 @@ assert(encoded_once == string.format(
 local reversed = copy(deterministic)
 reversed.mappings[1], reversed.mappings[2] = reversed.mappings[2], reversed.mappings[1]
 assert(snapshot.encode(reversed, { max_encoded_bytes = DEFAULT_LIMITS.max_encoded_bytes }) == encoded_once)
+
+local bounded_mappings = {}
+for index = 1, 12 do
+  local token = string.char(96 + index)
+  table.insert(bounded_mappings, {
+    lhs = { token },
+    mapping_id = real_id("normal", "global", { token }),
+    mode = "normal",
+    scope = "global",
+  })
+end
+local bounded_hash_calls = 0
+local bounded_encoded, bounded_error = snapshot.encode({
+  snapshot_version = 1,
+  mappings = bounded_mappings,
+}, {
+  max_encoded_bytes = 300,
+}, {
+  sha256 = function(value)
+    bounded_hash_calls = bounded_hash_calls + 1
+    return fake_sha256(value)
+  end,
+})
+assert(bounded_encoded == nil and bounded_error == "keymap_snapshot:limit_exceeded")
+assert(bounded_hash_calls < #bounded_mappings, bounded_hash_calls)
 
 local duplicate_model = copy(deterministic)
 table.insert(duplicate_model.mappings, copy(duplicate_model.mappings[1]))
