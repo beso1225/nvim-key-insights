@@ -1,6 +1,6 @@
 # Milestone 2 mapping attribution implementation plan
 
-Status: in progress (M2-S1 complete; M2-S2 implemented)
+Status: in progress (M2-S1 and M2-S2 complete; M2-S3 in progress)
 
 Roadmap milestone: [Mapping attribution and keymap snapshots](implementation-roadmap.md#milestone-2-mapping-attribution-and-keymap-snapshots)
 

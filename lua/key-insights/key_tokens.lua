@@ -48,6 +48,18 @@ local function character_bytes(value, index)
   return nil
 end
 
+local function valid_utf8(value)
+  local index = 1
+  while index <= #value do
+    local width = character_bytes(value, index)
+    if width == nil then
+      return false
+    end
+    index = index + width
+  end
+  return true
+end
+
 function M.tokenize(canonical, limits)
   if type(canonical) ~= "string" then
     return nil, "key_tokens:invalid_input"
@@ -69,6 +81,9 @@ function M.tokenize(canonical, limits)
   if max_input_bytes ~= nil and #canonical > max_input_bytes then
     return nil, "key_tokens:limit_exceeded"
   end
+  if not valid_utf8(canonical) then
+    return nil, "key_tokens:invalid_input"
+  end
 
   local tokens = {}
   local function append(token)
@@ -83,28 +98,33 @@ function M.tokenize(canonical, limits)
   end
 
   local index = 1
+  local next_closing = nil
+  local closing_search_from = 1
+  local closing_search_exhausted = false
+
+  local function closing_at_or_after(start)
+    while next_closing ~= nil and next_closing < start do
+      next_closing = nil
+    end
+    if next_closing == nil and not closing_search_exhausted then
+      local search_from = math.max(start, closing_search_from)
+      next_closing = string.find(canonical, ">", search_from, true)
+      if next_closing == nil then
+        closing_search_exhausted = true
+      else
+        closing_search_from = next_closing + 1
+      end
+    end
+    return next_closing
+  end
+
   while index <= #canonical do
     local width = character_bytes(canonical, index)
-    if width == nil then
-      return nil, "key_tokens:invalid_input"
-    end
     local token = string.sub(canonical, index, index + width - 1)
     local next_index = index + width
     if token == "<" then
-      local closing = nil
-      local cursor = next_index
-      while cursor <= #canonical and cursor - index + 1 <= MAX_KEY_NOTATION_BYTES do
-        local cursor_width = character_bytes(canonical, cursor)
-        if cursor_width == nil then
-          return nil, "key_tokens:invalid_input"
-        end
-        if string.byte(canonical, cursor) == string.byte(">") then
-          closing = cursor
-          break
-        end
-        cursor = cursor + cursor_width
-      end
-      if closing ~= nil then
+      local closing = closing_at_or_after(next_index)
+      if closing ~= nil and closing - index + 1 <= MAX_KEY_NOTATION_BYTES then
         token = string.sub(canonical, index, closing)
         next_index = closing + 1
       end
