@@ -179,6 +179,47 @@ assert(snapshot_failure:status().running == false)
 assert(string.find(snapshot_failure_notifications[1], "failed to publish keymap snapshot", 1, true) ~= nil)
 assert(string.find(snapshot_failure_notifications[1], "secret", 1, true) == nil, "snapshot errors must be content-free")
 
+local shutdown_callback = nil
+local shutdown_kills = 0
+local shutdown_removals = {}
+local shutdown_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/shutdown-reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function() return true end,
+  mkdir = function() return 1 end,
+  notify = function() end,
+  publish_snapshot = function()
+    return "/state/shutdown-reports/keymap-snapshot-shutdown.json", "file:1:2:3:4:5"
+  end,
+  remove_snapshot = function(path, identity)
+    table.insert(shutdown_removals, { path = path, identity = identity })
+    return true
+  end,
+  run = function(_, callback)
+    shutdown_callback = callback
+    return {
+      kill = function(_, signal)
+        assert(signal == 15)
+        shutdown_kills = shutdown_kills + 1
+      end,
+    }
+  end,
+})
+assert(shutdown_report:start() == true)
+assert(shutdown_report:shutdown() == true)
+assert(shutdown_report:status().running == false)
+assert(shutdown_kills == 1)
+assert(vim.deep_equal(shutdown_removals, {
+  {
+    path = "/state/shutdown-reports/keymap-snapshot-shutdown.json",
+    identity = "file:1:2:3:4:5",
+  },
+}))
+shutdown_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
+assert(#shutdown_removals == 1, "a late process callback must not repeat snapshot cleanup")
+
 assert(instance:open() == true)
 assert(#opened == 2)
 

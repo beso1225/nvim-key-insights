@@ -46,7 +46,8 @@ argument vector equivalent to:
 key-insights analyze --session-dir <sessions> \
   --summary <reports>/summary.json \
   --report <reports>/report.md \
-  --keymap-snapshot <reports>/keymap-snapshot-<opaque>.json
+  --keymap-snapshot <reports>/keymap-snapshot-<opaque>.json \
+  --keymap-snapshot-identity <expected-filesystem-identity>
 ```
 
 Paths are passed as separate arguments without shell interpolation. Only one
@@ -66,6 +67,9 @@ Neovim APIs. The invocation-specific file contains only canonical left-hand
 sides, normalized modes, global/buffer-local scope, and opaque IDs. Mapping
 implementations, descriptions, source metadata, buffer IDs, names, filetypes,
 and paths are excluded.
+The analyzer pins the private snapshot by its expected filesystem identity, and
+the plugin removes that invocation's file after completion, launch failure, or
+Neovim shutdown.
 
 ## Input ordering and discovery
 

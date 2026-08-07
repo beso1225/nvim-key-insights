@@ -141,6 +141,7 @@ function M.new(options, dependencies)
       return capture_outputs(fs, summary_path, report_path)
     end,
     _job = nil,
+    _generation = 0,
     _mkdir = deps.mkdir or vim.fn.mkdir,
     _notify_fn = deps.notify or default_notify,
     _open_file = deps.open_file or default_open_file,
@@ -152,14 +153,15 @@ function M.new(options, dependencies)
     _publish_snapshot = deps.publish_snapshot or function()
       return publisher:publish()
     end,
-    _remove_snapshot = deps.remove_snapshot or (publisher ~= nil and function(path)
-      return publisher:remove(path)
+    _remove_snapshot = deps.remove_snapshot or (publisher ~= nil and function(path, identity)
+      return publisher:remove(path, identity)
     end or function() return false end),
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
     _session_directory = config.session_directory,
     _summary_path = vim.fs.joinpath(config.output_directory, "summary.json"),
     _snapshot_path = nil,
+    _snapshot_identity = nil,
     _validate_outputs = deps.validate_outputs or function(summary_path, report_path, previous)
       return validate_outputs(fs, summary_path, report_path, previous)
     end,
@@ -191,12 +193,17 @@ function Report:_open()
   return true
 end
 
-function Report:_complete(result)
+function Report:_complete(result, generation)
+  if generation ~= self._generation then
+    return
+  end
   self._job = nil
   local snapshot_path = self._snapshot_path
+  local snapshot_identity = self._snapshot_identity
   self._snapshot_path = nil
+  self._snapshot_identity = nil
   if snapshot_path ~= nil then
-    pcall(self._remove_snapshot, snapshot_path)
+    pcall(self._remove_snapshot, snapshot_path, snapshot_identity)
   end
   local previous_outputs = self._previous_outputs
   self._previous_outputs = nil
@@ -243,13 +250,14 @@ function Report:start()
     return false
   end
   self._previous_outputs = previous_outputs
-  local publish_ok, snapshot_path = pcall(self._publish_snapshot)
+  local publish_ok, snapshot_path, snapshot_identity = pcall(self._publish_snapshot)
   if not publish_ok or type(snapshot_path) ~= "string" or snapshot_path == "" then
     self._previous_outputs = nil
     self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
     return false
   end
   self._snapshot_path = snapshot_path
+  self._snapshot_identity = snapshot_identity
   local argv = {
     self._analyzer,
     "analyze",
@@ -262,25 +270,54 @@ function Report:start()
     "--keymap-snapshot",
     snapshot_path,
   }
+  if type(snapshot_identity) == "string" and snapshot_identity ~= "" then
+    table.insert(argv, "--keymap-snapshot-identity")
+    table.insert(argv, snapshot_identity)
+  end
+  self._generation = self._generation + 1
+  local generation = self._generation
   self._job = true
   local completed = false
   local run_ok, job = pcall(self._run, argv, function(result)
     completed = true
-    self:_complete(result)
+    self:_complete(result, generation)
   end)
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._previous_outputs = nil
     local failed_snapshot = self._snapshot_path
+    local failed_identity = self._snapshot_identity
     self._snapshot_path = nil
+    self._snapshot_identity = nil
     if failed_snapshot ~= nil then
-      pcall(self._remove_snapshot, failed_snapshot)
+      pcall(self._remove_snapshot, failed_snapshot, failed_identity)
     end
     self:_notify("failed to start the analyzer: " .. tostring(job), vim.log.levels.ERROR)
     return false
   end
   if not completed then
     self._job = job
+  end
+  return true
+end
+
+function Report:shutdown()
+  if self._job == nil then
+    return false
+  end
+  self._generation = self._generation + 1
+  local job = self._job
+  self._job = nil
+  if type(job) == "table" and type(job.kill) == "function" then
+    pcall(job.kill, job, 15)
+  end
+  local snapshot_path = self._snapshot_path
+  local snapshot_identity = self._snapshot_identity
+  self._snapshot_path = nil
+  self._snapshot_identity = nil
+  self._previous_outputs = nil
+  if snapshot_path ~= nil then
+    pcall(self._remove_snapshot, snapshot_path, snapshot_identity)
   end
   return true
 end

@@ -52,6 +52,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
             || argument == OsStr::new("--report")
             || argument == OsStr::new("--session-dir")
             || argument == OsStr::new("--keymap-snapshot")
+            || argument == OsStr::new("--keymap-snapshot-identity")
         {
             break;
         }
@@ -65,6 +66,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let mut summary_path = None;
     let mut report_path = None;
     let mut keymap_snapshot_path = None;
+    let mut keymap_snapshot_identity = None;
     while index < arguments.len() {
         let flag = arguments[index]
             .to_str()
@@ -81,7 +83,19 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
             "--keymap-snapshot" if keymap_snapshot_path.is_none() => {
                 keymap_snapshot_path = Some(PathBuf::from(value))
             }
-            "--summary" | "--report" | "--session-dir" | "--keymap-snapshot" => {
+            "--keymap-snapshot-identity" if keymap_snapshot_identity.is_none() => {
+                keymap_snapshot_identity = Some(
+                    value
+                        .to_str()
+                        .ok_or_else(|| "snapshot identity must be valid UTF-8".to_owned())?
+                        .to_owned(),
+                )
+            }
+            "--summary"
+            | "--report"
+            | "--session-dir"
+            | "--keymap-snapshot"
+            | "--keymap-snapshot-identity" => {
                 return Err(format!("duplicate option {flag}"));
             }
             _ => return Err(format!("unknown option {flag}")),
@@ -91,7 +105,15 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
 
     let summary_path = summary_path.ok_or_else(|| "missing --summary path".to_owned())?;
     let report_path = report_path.ok_or_else(|| "missing --report path".to_owned())?;
-    let _keymap_snapshot_path = keymap_snapshot_path;
+    let _keymap_snapshot = match (keymap_snapshot_path, keymap_snapshot_identity) {
+        (Some(path), Some(identity)) => Some(open_snapshot_input(&path, &identity)?),
+        (None, None) => None,
+        _ => {
+            return Err(
+                "--keymap-snapshot and --keymap-snapshot-identity must be used together".to_owned(),
+            );
+        }
+    };
     if !input_paths.is_empty() && session_directory.is_some() {
         return Err("explicit inputs and --session-dir are mutually exclusive".to_owned());
     }
@@ -119,6 +141,53 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let report_output = StagedOutput::create(&paths.report, render_markdown(&summary).as_bytes())?;
     publish_pair(summary_output, report_output)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| "failed to open keymap snapshot".to_owned())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+    let actual_identity = format!(
+        "file:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec()
+    );
+    let private_mode = metadata.mode() & 0o7777 == 0o600;
+    // SAFETY: geteuid has no preconditions and does not mutate memory.
+    let owned = metadata.uid() == unsafe { libc::geteuid() };
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || !private_mode
+        || !owned
+        || actual_identity != expected_identity
+    {
+        return Err("keymap snapshot identity or permissions changed".to_owned());
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_snapshot_input(path: &Path, expected_identity: &str) -> Result<File, String> {
+    let file = File::open(path).map_err(|_| "failed to open keymap snapshot".to_owned())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+    let actual_identity = format!("file:{}", metadata.len());
+    if !metadata.is_file() || actual_identity != expected_identity {
+        return Err("keymap snapshot identity changed".to_owned());
+    }
+    Ok(file)
 }
 
 struct ResolvedPaths {
@@ -368,7 +437,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md>".to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json> --keymap-snapshot-identity <identity>]".to_owned()
 }
 
 #[cfg(all(test, unix))]

@@ -1,15 +1,52 @@
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
-    open_input_file, open_private_lock_file, output_lock_path, publish_pair,
+    open_input_file, open_private_lock_file, open_snapshot_input, output_lock_path, publish_pair,
     publish_pair_with_hook, publish_pair_with_hooks, resolve_paths,
 };
+
+#[test]
+fn snapshot_identity_rejects_a_replaced_parent_and_leaf() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "key-insights-snapshot-replacement-{}-{unique}",
+        std::process::id()
+    ));
+    let directory = root.join("reports");
+    let moved = root.join("reports-old");
+    fs::create_dir_all(&directory).expect("create report directory");
+    let path = directory.join("keymap-snapshot-test.json");
+    fs::write(&path, b"trusted\n").expect("write trusted snapshot");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
+    let metadata = fs::metadata(&path).expect("snapshot metadata");
+    let identity = format!(
+        "file:{}:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec()
+    );
+    open_snapshot_input(&path, &identity).expect("matching snapshot identity");
+
+    fs::rename(&directory, &moved).expect("move original directory");
+    fs::create_dir(&directory).expect("replace report directory");
+    fs::write(&path, b"replacement\n").expect("write replacement snapshot");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect replacement");
+
+    let error = open_snapshot_input(&path, &identity).expect_err("replacement must be rejected");
+    assert!(error.contains("identity"), "{error}");
+    fs::remove_dir_all(root).expect("remove test directory");
+}
 
 #[test]
 fn explicit_fifo_input_is_rejected_without_waiting_for_a_writer() {

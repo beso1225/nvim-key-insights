@@ -137,6 +137,9 @@ function M.register_commands()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
     callback = function()
+      if report_instance ~= nil and type(report_instance.shutdown) == "function" then
+        pcall(report_instance.shutdown, report_instance)
+      end
       local ok, error_message = pcall(M.stop)
       if not ok then
         vim.notify("key-insights failed to close its session: " .. tostring(error_message), vim.log.levels.ERROR)

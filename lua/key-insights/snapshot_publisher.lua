@@ -61,6 +61,7 @@ function M.new(options, dependencies)
     _fs = fs,
     _name_suffix = deps.name_suffix or default_suffix,
     _output_directory = output_directory,
+    _published = {},
   }, Publisher)
 end
 
@@ -186,18 +187,23 @@ function Publisher:publish()
     self._fs.fs_close(directory_descriptor)
     return nil, "snapshot_publisher:publish_failed"
   end
-  local directory_closed = self._fs.fs_close(directory_descriptor)
-  if not directory_closed then
-    return nil, "snapshot_publisher:publish_failed"
-  end
-  return final_path
+  self._fs.fs_close(directory_descriptor)
+  local identity = filesystem.stat_identity(published)
+  self._published[final_path] = identity
+  -- A close error after the file and directory have both been synchronized does
+  -- not make the already-published immutable snapshot unusable.
+  return final_path, identity
 end
 
-function Publisher:remove(path)
+function Publisher:remove(path, expected_identity)
   if type(path) ~= "string"
     or vim.fs.dirname(path) ~= self._output_directory
     or string.match(vim.fs.basename(path), "^keymap%-snapshot%-%l[%l%d%-]*%.json$") == nil
   then
+    return false
+  end
+  expected_identity = expected_identity or self._published[path]
+  if type(expected_identity) ~= "string" then
     return false
   end
   local before = self._fs.fs_lstat(self._output_directory)
@@ -208,6 +214,7 @@ function Publisher:remove(path)
     or target.type ~= "file"
     or target.nlink ~= 1
     or target.mode % 512 ~= OWNER_READ_WRITE
+    or filesystem.stat_identity(target) ~= expected_identity
   then
     return false
   end
@@ -218,16 +225,22 @@ function Publisher:remove(path)
   local opened = self._fs.fs_fstat(directory_descriptor)
   local removed = false
   if same_directory(before, opened) then
-    if self._anchored then
-      removed = filesystem.unlink_child(directory_descriptor, vim.fs.basename(path)) == true
-    else
-      removed = self._fs.fs_unlink(path) == true
+    local current = self._fs.fs_lstat(path)
+    if filesystem.stat_identity(current) == expected_identity then
+      if self._anchored then
+        removed = filesystem.unlink_child(directory_descriptor, vim.fs.basename(path)) == true
+      else
+        removed = self._fs.fs_unlink(path) == true
+      end
     end
   end
   if removed then
     self._fs.fs_fsync(directory_descriptor)
   end
   self._fs.fs_close(directory_descriptor)
+  if removed then
+    self._published[path] = nil
+  end
   return removed
 end
 
