@@ -60,17 +60,15 @@ may confirm an attribution only when it supplies exactly one candidate that is:
 - stable across the resolver's observation window;
 - in Normal, Visual, or Operator-pending mode;
 - global or buffer-local;
-- within the documented key-count and token-size limits.
+- represented by canonical tokens that have passed the M2-S2 validation limits.
 
-The initial decision limits are 64 left-hand-side tokens and 256 encoded bytes
-per token. Later canonicalization may tighten a representation but must not make
-these hot-path bounds unbounded.
+Until that canonicalizer exists, the S1 decision function returns a new
+allowlisted object containing only mode and scope. It deliberately does not
+return the candidate left-hand side. Extra candidate fields are discarded. Zero,
+multiple, sparse, unstable, inexact, or text-bearing-mode candidates return no
+attribution.
 
-The decision function returns a new allowlisted object containing only mode,
-scope, and left-hand-side tokens. Extra candidate fields are discarded. Zero,
-multiple, sparse, unstable, inexact, malformed, text-bearing, or oversized
-candidates return no attribution.
-
-M2-S2 will define canonical tokens and mapping identities. M2-S3 will connect
-the resolver and decision function to the collector. Until then, the collector
+M2-S2 will define bounded canonical tokens and mapping identities, then extend
+the decision input with that validated representation. M2-S3 will connect the
+resolver and decision function to the collector. Until then, the collector
 continues to discard mapping expansions and emits no `mapping_use` events.

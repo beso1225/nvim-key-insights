@@ -15,6 +15,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  neovim-compatibility:
+    name: Neovim 0.10 compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Neovim 0.10.4
+        env:
+          NEOVIM_SHA256: 95aaa8e89473f5421114f2787c13ae0ec6e11ebbd1a13a1bd6fcf63420f8073f
+          NEOVIM_URL: https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-x86_64.tar.gz
+        run: |
+          archive="$RUNNER_TEMP/nvim-linux-x86_64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 "$NEOVIM_URL" --output "$archive"
+          echo "$NEOVIM_SHA256  $archive" | sha256sum --check
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+
+      - name: Run Lua tests on the supported lower bound
+        run: |
+          "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u tests/lua/minimal_init.lua -l tests/lua/run.lua
+
   check:
     name: Project checks
     runs-on: ubuntu-24.04

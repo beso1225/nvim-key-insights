@@ -31,11 +31,15 @@ local sanitized = attribution.confirm(only_candidate({
   rhs = ":edit /private/path<CR>",
 }), "typed_different")
 assert(vim.deep_equal(sanitized, {
-  lhs = { "z", "q" },
   mode = "normal",
   scope = "global",
 }))
 assert(string.find(vim.inspect(sanitized), "private", 1, true) == nil)
+
+local hostile_lhs = table.concat({ "/private/credential", "\0", "not-a-token" })
+local hostile_result = attribution.confirm(only_candidate({ lhs = { hostile_lhs } }), "typed_same")
+assert(vim.deep_equal(hostile_result, { mode = "normal", scope = "global" }))
+assert(string.find(vim.inspect(hostile_result), hostile_lhs, 1, true) == nil)
 
 assert(attribution.confirm({}, "typed_different") == nil)
 assert(attribution.confirm({ only_candidate()[1], only_candidate()[1] }, "typed_different") == nil)
@@ -45,15 +49,6 @@ assert(attribution.confirm(only_candidate({ stable = false }), "typed_different"
 assert(attribution.confirm(only_candidate(), "untyped") == nil)
 assert(attribution.confirm(only_candidate({ mode = "insert" }), "typed_same") == nil)
 assert(attribution.confirm(only_candidate({ scope = "window" }), "typed_same") == nil)
-assert(attribution.confirm(only_candidate({ lhs = {} }), "typed_same") == nil)
-assert(attribution.confirm(only_candidate({ lhs = { "" } }), "typed_same") == nil)
-assert(attribution.confirm(only_candidate({ lhs = { string.rep("x", 257) } }), "typed_same") == nil)
-
-local too_many_keys = {}
-for index = 1, 65 do
-  too_many_keys[index] = "x"
-end
-assert(attribution.confirm(only_candidate({ lhs = too_many_keys }), "typed_same") == nil)
 
 local namespace = vim.api.nvim_create_namespace("key-insights.mapping-attribution-test")
 
@@ -131,21 +126,36 @@ assert(vim.deep_equal(normal[1], {
 }))
 assert(normal_cursor[1] == 2, "the listener must not consume the mapped motion")
 
-local ambiguous_prefix = capture({
+local ambiguous_short = capture({
   cleanup = function()
     vim.keymap.del("n", "zxy")
   end,
-  input = "zx",
+  input = "zxk",
   lhs = "zx",
   map_mode = "n",
-  options = { nowait = true },
   rhs = "j",
   setup = function()
     vim.keymap.set("n", "zxy", "k", { noremap = true })
   end,
 })
-assert(#ambiguous_prefix == 1 and ambiguous_prefix[1].typed == "zx")
-assert(ambiguous_prefix[1].evidence == "typed_different")
+assert(#ambiguous_short == 2)
+assert(ambiguous_short[1].typed == "zx" and ambiguous_short[1].evidence == "typed_different")
+assert(ambiguous_short[2].typed == "k" and ambiguous_short[2].evidence == "typed_same")
+
+local ambiguous_long = capture({
+  cleanup = function()
+    vim.keymap.del("n", "zx")
+  end,
+  input = "zxy",
+  lhs = "zxy",
+  map_mode = "n",
+  rhs = "k",
+  setup = function()
+    vim.keymap.set("n", "zx", "j", { noremap = true })
+  end,
+})
+assert(#ambiguous_long == 1)
+assert(ambiguous_long[1].typed == "zxy" and ambiguous_long[1].evidence == "typed_different")
 
 local recursive = capture({
   cleanup = function()
