@@ -122,6 +122,64 @@ pause_buffered:start()
 pause_buffered:pause()
 assert(pause_writes == 1, "pause must flush buffered events")
 
+local retry_callback = nil
+local retry_batch = nil
+local retry_attempts = 0
+local pause_retry = collector.new({
+  clock_ms = function() return 1 end,
+  current_buffer = function()
+    return { id = 1, buftype = "", filetype = "lua", name = "pause-retry.lua" }
+  end,
+  current_cmdtype = function() return "" end,
+  current_mode = function() return "n" end,
+  keytrans = function(value) return value end,
+  mapping_resolver = { prime = function() return false end, reset = function() end },
+  new_session_id = function() return "session-pause-retry" end,
+  open_session = function()
+    return {
+      write = function(_, lines)
+        retry_attempts = retry_attempts + 1
+        local batch = table.concat(lines)
+        if retry_attempts == 2 then
+          retry_batch = batch
+          error("transient pause write failure")
+        end
+        if retry_batch ~= nil then
+          assert(batch == retry_batch, "a failed pause batch must be retried byte-for-byte before resume")
+          if retry_attempts == 3 then
+            error("repeated pause write failure")
+          end
+          retry_batch = nil
+        end
+      end,
+      flush = function() end,
+      finish = function() end,
+      abort = function() end,
+    }
+  end,
+  register_on_key = function(handler)
+    retry_callback = handler
+    return function() retry_callback = nil end
+  end,
+})
+
+assert(pause_retry:start())
+assert(retry_callback("mapped-secret", "j") == nil)
+local pause_ok, pause_error = pcall(pause_retry.pause, pause_retry)
+assert(not pause_ok and string.find(pause_error, "transient pause write failure", 1, true))
+assert(pause_retry:status().state == "paused")
+assert(pause_retry:status().pending_events == 1)
+local resume_ok, resume_error = pcall(pause_retry.start, pause_retry)
+assert(not resume_ok and string.find(resume_error, "repeated pause write failure", 1, true))
+assert(pause_retry:status().state == "paused")
+assert(pause_retry:status().pending_events == 1)
+assert(retry_callback == nil, "a failed recovery must not reattach the input callback")
+assert(pause_retry:start(), "resume must recover the unchanged failed pause batch")
+assert(pause_retry:status().pending_events == 0)
+assert(retry_callback("mapped-secret", "k") == nil)
+assert(pause_retry:stop())
+assert(retry_batch == nil)
+
 local excluded_callback = nil
 local excluded_writes = {}
 local excluded = collector.new({

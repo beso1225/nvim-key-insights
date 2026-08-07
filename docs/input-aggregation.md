@@ -51,7 +51,9 @@ shutdown all flush it. Deferred writes retain at most 1,024 events and 4 MiB.
 If a synchronous input burst reaches either limit before Neovim services the
 scheduled writer, collection records a fixed error and ignores later input until
 pause or stop flushes the bounded batch. Pausing and starting again resumes the
-same session after recovery.
+same session after recovery. The batch that would cross a limit and any
+unpublished aggregate tail are dropped together, so a finalized log remains an
+accepted prefix rather than containing evidence from after a gap.
 
 ## Timing
 

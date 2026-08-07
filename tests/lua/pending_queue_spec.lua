@@ -32,7 +32,9 @@ assert(status.pending_bytes <= 4 * 1024 * 1024, "a synchronous input burst must 
 assert(status.last_error == "collector pending queue limit exceeded")
 assert(writes == 1, "scheduled storage I/O must not run inside the synchronous feedkeys burst")
 
+local accepted_before_stop = status.pending_events
 assert(instance:stop())
+assert(writes == accepted_before_stop + 2, "stop must finalize the accepted prefix without an overflow tail")
 vim.keymap.del("n", "z8")
 
 local callback = nil
