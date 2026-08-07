@@ -88,6 +88,9 @@ without manually concatenating files.
 
 ## Milestone 2: mapping attribution and keymap snapshots
 
+Status: planned. See the
+[detailed implementation plan](milestone-2-mapping-attribution-plan.md).
+
 Measure mapping use without persisting mapping right-hand sides, callback bodies,
 source files, or other potentially sensitive implementation details.
 
@@ -292,8 +295,8 @@ decision and rationale added to this document or a dedicated design note:
 
 1. the multi-session CLI input syntax and deterministic discovery rules;
 2. synchronous versus asynchronous Neovim command behavior and cancellation;
-3. whether new timing, filetype, or mapping events require schema version 2;
-4. the opaque mapping-ID derivation and snapshot lifetime;
+3. whether new timing or filetype events require event schema version 2;
+4. the summary-schema migration required by snapshot-derived output;
 5. the exact underuse thresholds and minimum observation window;
 6. Codex executable discovery, timeout, output locations, and retry behavior;
 7. the installation boundary between the repository, nix-dotfiles, and a future

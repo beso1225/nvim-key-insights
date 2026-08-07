@@ -118,4 +118,7 @@ Insert and Select input becomes text-run counts and timing. Command/search
 contents and mapping expansions are discarded. Mapping attribution, richer
 ergonomic metrics, and Codex integration remain incremental TDD work.
 
-See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered remaining milestones, dependencies, and completion gates.
+See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
+remaining milestones and the
+[Milestone 2 implementation plan](docs/milestone-2-mapping-attribution-plan.md)
+for the next mapping-attribution work.
