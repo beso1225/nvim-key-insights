@@ -46,9 +46,7 @@ argument vector equivalent to:
 key-insights analyze --session-dir <sessions> \
   --summary <reports>/summary.json \
   --report <reports>/report.md \
-  --keymap-snapshot <reports>/keymap-snapshot-<slot>.json \
-  --keymap-snapshot-identity <expected-filesystem-identity> \
-  --keymap-snapshot-digest <expected-sha256>
+  --keymap-snapshot -
 ```
 
 Paths are passed as separate arguments without shell interpolation. Only one
@@ -64,15 +62,14 @@ owner-only where the platform supports Unix permissions. Paths are local
 configuration and are not written to events or summaries.
 
 Immediately before launch, the plugin derives a bounded mapping snapshot from
-Neovim APIs. The private fixed-slot file contains only canonical left-hand
-sides, normalized modes, global/buffer-local scope, and opaque IDs. Mapping
+Neovim APIs. The JSON payload contains only canonical left-hand sides,
+normalized modes, global/buffer-local scope, and opaque IDs. Mapping
 implementations, descriptions, source metadata, buffer IDs, names, filetypes,
 and paths are excluded.
-The analyzer reads at most 1 MiB and pins the bytes by expected filesystem
-identity and SHA-256 digest. Identical snapshots are reused, the fixed namespace
-makes more than 16 retained snapshots impossible under concurrency, and the
-plugin does not automatically unlink them because pathname deletion cannot
-atomically verify that the pinned leaf was not replaced.
+The plugin writes this payload directly to the analyzer's standard input. The
+analyzer reads at most 1 MiB before strict parsing, and no snapshot file or
+cleanup lifecycle exists. Manual CLI use can pass a private file path instead of
+`-`.
 
 ## Input ordering and discovery
 

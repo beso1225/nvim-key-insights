@@ -10,7 +10,8 @@ The Rust analyzer validates collector JSONL and produces two local artifacts wit
 ```sh
 key-insights analyze <input.jsonl>... \
   --summary <summary.json> \
-  --report <report.md>
+  --report <report.md> \
+  [--keymap-snapshot <snapshot.json|->]
 ```
 
 Each input must contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Inputs are processed in the supplied order with shared session-identity, cardinality, retained-byte, and duration limits. Canonical or hard-linked duplicate inputs and incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, neither output may alias any input, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules.
@@ -45,6 +46,20 @@ be selected explicitly.
 - mode-transition and opaque mapping-use counts;
 - deterministic key and mapping frequency rankings, capped at 100 rows each;
 - consecutive repeated-key runs within each collected sequence.
+
+With a snapshot, schema-v2 output additionally joins every observed and
+snapshotted mapping as `observed`, `observed_not_in_snapshot`, or
+`unobserved_in_sample`. It reports only potential global/buffer shadowing for an
+exact mode and canonical LHS match; it does not claim that a buffer-local entry
+was active in every context. Omitting the snapshot preserves the schema-v1 JSON
+and Markdown bytes. Snapshot JSON is limited to 1 MiB and 4,096 canonical,
+strictly ordered mappings. Unknown fields, unsupported versions, malformed or
+inconsistent IDs, invalid tokens, duplicates, and noncanonical ordering fail
+before output publication. `-` reads the automatic Neovim payload from stdin;
+an explicit path must be an owner-only, single-linked regular file.
+Snapshot-derived outputs remain bounded by the validated snapshot and event
+cardinality budgets; the Neovim workflow reads each generated artifact up to
+16 MiB before accepting it.
 
 Rankings use descending count with lexical identifiers as the tie-break. The summary retains total unique-token cardinalities when ranked rows are truncated. Mode rows use lexical mode order. JSON object layout and Markdown sections are stable for identical validated input.
 

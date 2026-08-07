@@ -85,6 +85,8 @@ Each session is written under `stdpath("state")/key-insights/sessions/` with own
 By default, the analyzer is `key-insights`, and reports live under
 `stdpath("state")/key-insights/reports/`. The plugin verifies that directory and
 sets owner-only permissions before passing paths as argv without a shell. It
+passes the sanitized mapping snapshot through the analyzer's standard input and
+does not create a snapshot file. It
 allows one report process at a time. An active collector's
 `.jsonl.part` file remains excluded. After a successful exit, the plugin opens
 only fresh, bounded, valid outputs; analyzer errors keep the current editor view
@@ -111,12 +113,15 @@ docs/                         Public design contracts
 ## Status
 
 The current implementation covers privacy-safe collection, bounded retention and
-validation, deterministic multi-session reports, asynchronous Neovim report
+validation, privacy-safe mapping attribution, strict API-derived keymap
+snapshots, deterministic multi-session reports, asynchronous Neovim report
 commands, explicit bounded purge, and a headless local-workflow privacy test.
 Normal, Visual, and Operator-pending input becomes bounded typed-key sequences;
 Insert and Select input becomes text-run counts and timing. Command/search
-contents and mapping expansions are discarded. Mapping attribution, richer
-ergonomic metrics, and Codex integration remain incremental TDD work.
+contents and mapping expansions are discarded. Confirmed Normal, Visual, and
+Operator-pending mappings emit only opaque IDs and canonical typed keys; mapping
+implementations remain callback-local. Richer ergonomic metrics and Codex
+integration remain incremental TDD work.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the

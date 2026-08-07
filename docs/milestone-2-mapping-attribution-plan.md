@@ -1,6 +1,6 @@
 # Milestone 2 mapping attribution implementation plan
 
-Status: in progress (M2-S1 through M2-S4 implemented; M2-S4 review in progress)
+Status: in progress (M2-S1 through M2-S5 implemented; M2-S6 in progress)
 
 Roadmap milestone: [Mapping attribution and keymap snapshots](implementation-roadmap.md#milestone-2-mapping-attribution-and-keymap-snapshots)
 
@@ -106,8 +106,9 @@ its mappings.
 
 Snapshot collection is bounded by an explicit maximum number of inspected
 buffers, API entries, canonical key tokens, and encoded bytes. Exceeding a bound
-fails without publishing a partial snapshot. Snapshot files use private
-permissions and failure-atomic replacement under the existing state directory.
+fails without returning a partial snapshot. Snapshot files use private
+permissions when supplied manually. Automatic reports transport the encoded
+payload over standard input without creating a snapshot file.
 
 ### Snapshot lifetime is point-in-time and analysis is conservative
 
@@ -123,8 +124,9 @@ not historical proof that a mapping existed for an entire session. Consequently:
 - mappings added, removed, or changed during collection may reduce attribution
   coverage but must never cause speculative attribution.
 
-The CLI accepts the snapshot through an optional `--keymap-snapshot <path>`
-argument. Omitting it preserves the current event-only analysis behavior. The
+The CLI accepts the snapshot through an optional `--keymap-snapshot <path|->`
+argument, where `-` reads the bounded payload from standard input. Omitting it
+preserves the current event-only analysis behavior. The
 summary schema is versioned independently from the event and snapshot schemas;
 adding snapshot-derived output requires an explicit summary-schema decision and
 fixture migration in the analyzer slice.
@@ -218,24 +220,21 @@ Refactor gate:
 - callback work has explicit state and token bounds and performs no writes
   beyond the existing event queue.
 
-### M2-S4: snapshot publication and Neovim report integration
+### M2-S4: snapshot transport and Neovim report integration
 
 Red tests:
 
 - only loaded, valid, non-sensitive buffers contribute buffer-local mappings;
-- a replaced output directory, symlink, oversized enumeration, encoding error,
-  or publication failure leaves the previous snapshot unchanged;
-- report argv passes the snapshot as one literal argument without shell
-  interpolation;
-- concurrent report requests cannot race snapshot publication or mismatch a
-  report with another invocation's snapshot.
-- identical snapshots are reused in a fixed 16-slot namespace, content is pinned
-  by digest, and retention is bounded without a check-then-unlink cleanup path.
+- collection and encoding failures do not launch the analyzer;
+- report argv passes `--keymap-snapshot -` without shell interpolation and the
+  bounded sanitized bytes are the process stdin payload;
+- concurrent report requests cannot recollect or mismatch the running payload;
+- no snapshot pathname, retention policy, or cleanup race exists.
 
 Green implementation:
 
-- publish a private sanitized snapshot immediately before report launch;
-- reuse existing anchored-directory, staging, and process-runner boundaries;
+- collect a bounded sanitized snapshot immediately before report launch;
+- transport it directly through the existing process runner's stdin boundary;
 - add the optional CLI argument without changing event discovery.
 
 ### M2-S5: deterministic analyzer integration

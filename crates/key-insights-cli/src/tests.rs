@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
+    os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,77 +12,34 @@ use super::{
 };
 
 #[test]
-fn snapshot_identity_rejects_a_replaced_parent_and_leaf() {
+fn snapshot_input_is_read_once_and_rejects_unsafe_leaf_types() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "key-insights-snapshot-replacement-{}-{unique}",
+        "key-insights-snapshot-input-{}-{unique}",
         std::process::id()
     ));
     let directory = root.join("reports");
-    let moved = root.join("reports-old");
     fs::create_dir_all(&directory).expect("create report directory");
     let path = directory.join("keymap-snapshot-test.json");
     fs::write(&path, b"trusted\n").expect("write trusted snapshot");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
-    let metadata = fs::metadata(&path).expect("snapshot metadata");
-    let identity = format!(
-        "file:{}:{}:{}:{}:{}",
-        metadata.dev(),
-        metadata.ino(),
-        metadata.size(),
-        metadata.mtime(),
-        metadata.mtime_nsec()
+    assert_eq!(
+        open_snapshot_input(&path).expect("private snapshot").bytes,
+        b"trusted\n"
     );
-    let digest = "sha256:7bd39a7cbcf687fd60f819645b8bcaf731a9f19cb102484a7b84530516d7e8b8";
-    open_snapshot_input(&path, &identity, digest).expect("matching snapshot identity");
 
-    fs::rename(&directory, &moved).expect("move original directory");
-    fs::create_dir(&directory).expect("replace report directory");
-    fs::write(&path, b"replacement\n").expect("write replacement snapshot");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect replacement");
+    let link = directory.join("linked.json");
+    fs::hard_link(&path, &link).expect("create hard link");
+    let error = open_snapshot_input(&path).expect_err("linked snapshot must be rejected");
+    assert!(error.contains("permissions"), "{error}");
 
-    let error =
-        open_snapshot_input(&path, &identity, digest).expect_err("replacement must be rejected");
-    assert!(error.contains("identity"), "{error}");
+    let symlink_path = directory.join("symlink.json");
+    symlink(&path, &symlink_path).expect("create symlink");
+    assert!(open_snapshot_input(&symlink_path).is_err());
     fs::remove_dir_all(root).expect("remove test directory");
-}
-
-#[test]
-fn snapshot_digest_rejects_in_place_content_mutation() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
-        "key-insights-snapshot-content-{}-{unique}",
-        std::process::id()
-    ));
-    fs::create_dir(&directory).expect("create report directory");
-    let path = directory.join("keymap-snapshot-00.json");
-    fs::write(&path, b"changed\n").expect("write changed snapshot");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
-    let metadata = fs::metadata(&path).expect("snapshot metadata");
-    let identity = format!(
-        "file:{}:{}:{}:{}:{}",
-        metadata.dev(),
-        metadata.ino(),
-        metadata.size(),
-        metadata.mtime(),
-        metadata.mtime_nsec()
-    );
-
-    let error = open_snapshot_input(
-        &path,
-        &identity,
-        "sha256:7bd39a7cbcf687fd60f819645b8bcaf731a9f19cb102484a7b84530516d7e8b8",
-    )
-    .expect_err("changed bytes must not match the published digest");
-
-    assert!(error.contains("content changed"), "{error}");
-    fs::remove_dir_all(directory).expect("remove test directory");
 }
 
 #[test]
@@ -898,7 +855,7 @@ fn failed_second_publication_restores_the_previous_pair() {
 }
 
 #[test]
-fn next_publication_recovers_a_pair_interrupted_after_the_summary() {
+fn invalid_input_does_not_recover_an_interrupted_pair() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     let unique = SystemTime::now()
@@ -948,12 +905,12 @@ fn next_publication_recovers_a_pair_interrupted_after_the_summary() {
     .expect_err("analysis must fail after startup recovery");
     assert!(
         retry_error.contains("session"),
-        "recovery must complete before validation: {retry_error}"
+        "validation must fail before recovery: {retry_error}"
     );
 
     assert_eq!(
         fs::read_to_string(&summary).expect("read recovered summary"),
-        "old summary\n"
+        "interrupted summary\n"
     );
     assert_eq!(
         fs::read_to_string(&report).expect("read recovered report"),

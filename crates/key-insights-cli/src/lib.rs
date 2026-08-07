@@ -2,14 +2,21 @@
 
 mod analyzer;
 mod event;
+mod keymap_snapshot;
 mod validator;
 
 pub use analyzer::{
     AnalysisError, AnalysisInputsError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS,
-    MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, MappingCount, ModeStats, RepeatedKeyStats,
-    analyze_jsonl, analyze_jsonl_inputs, render_markdown, render_summary_json,
+    MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, MappingAttribution, MappingAttributionEntry,
+    MappingAttributionStatus, MappingCollision, MappingCount, ModeStats, RepeatedKeyStats,
+    analyze_jsonl, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
+    analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
 };
 pub use event::{Event, Mode, SequenceMode};
+pub use keymap_snapshot::{
+    KeymapSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MAPPINGS, SNAPSHOT_VERSION, SnapshotError,
+    SnapshotMapping, SnapshotMode, SnapshotScope, parse_keymap_snapshot,
+};
 pub use validator::{
     MAX_EVENT_LINE_BYTES, MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationError,
     ValidationErrorKind, ValidationSummary, validate_jsonl,

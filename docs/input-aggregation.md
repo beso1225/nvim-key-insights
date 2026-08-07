@@ -9,7 +9,13 @@ The collector converts `vim.on_key` callbacks into bounded, privacy-sanitized ev
 - Command-line and Search modes produce mode transitions but discard all input content.
 - Other modes do not produce input payload events.
 
-The collector canonicalizes only the callback's pre-mapping `typed` value. It does not persist the mapping-applied value, and callbacks with an empty `typed` value are ignored as mapping expansions. Mapping attribution will use opaque mapping identities in a later implementation.
+The collector canonicalizes only the callback's pre-mapping `typed` value. It
+does not persist the mapping-applied value, and callbacks with an empty `typed`
+value are ignored as mapping expansions. When a bounded, freshly validated
+mapping baseline identifies exactly one effective binding, the collector also
+emits `mapping_use` with an opaque ID and the same canonical typed keys.
+Ambiguity, mutation, unsupported modes, and excluded buffers reduce attribution
+coverage instead of producing a guess.
 
 ## Sequence boundaries
 

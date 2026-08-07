@@ -88,7 +88,7 @@ without manually concatenating files.
 
 ## Milestone 2: mapping attribution and keymap snapshots
 
-Status: planned. See the
+Status: in progress. See the
 [detailed implementation plan](milestone-2-mapping-attribution-plan.md).
 
 Measure mapping use without persisting mapping right-hand sides, callback bodies,

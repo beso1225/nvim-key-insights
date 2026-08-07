@@ -1,7 +1,7 @@
 # Mapping attribution contract
 
-Status: M2-S1 through M2-S4 implemented; analyzer snapshot parsing and joins are
-not yet enabled.
+Status: M2-S1 through M2-S5 implemented; end-to-end privacy hardening is in
+progress for M2-S6.
 
 This document records the observed `vim.on_key` behavior used by the
 privacy-safe attribution design. It complements the
@@ -149,26 +149,31 @@ may therefore miss its first observation, but stale state is never used to
 guess an attribution. Every confirmed action remains ordinary sequence evidence
 and additionally emits exactly one schema-v1 `mapping_use` event.
 
-## Report-time snapshot publication
+## Report-time snapshot transport
 
-Each report request collects a fresh sanitized model after the private report
-directory has been verified. It publishes the encoded bytes as a 0600 regular
-file in one of 16 fixed private slots and passes that exact path as one literal
-`--keymap-snapshot` argument together with its expected filesystem identity and
-SHA-256 digest. The CLI opens the private, single-linked file, reads at most 1 MiB
-into memory, and verifies both pins before analysis. Replacing the directory or
-leaf, or mutating the same inode in place, therefore cannot redirect later
-parsing. Publication completes before process launch, and a concurrent
+Each report request collects and encodes a fresh sanitized model after the
+private report directory has been verified. The plugin passes the bounded JSON
+directly to the analyzer's standard input and supplies `--keymap-snapshot -` as
+one literal argument. No snapshot pathname is created, retained, replaced, or
+unlinked. The 1 MiB payload is fixed before process launch, and a concurrent
 request on the same report instance is rejected before collecting another
 snapshot.
 
-Collection, encoding, directory identity, write, and publication failures stop
-the launch with a content-free notification. A failed attempt cannot replace an
-earlier immutable snapshot. Identical sanitized bytes reuse an existing slot,
-while deterministic probing and exclusive creation make a seventeenth snapshot
-structurally impossible even across concurrent Neovim processes. Failed writes
-may quarantine their slot instead of deleting an attacker-replaced pathname.
-Snapshots are not automatically unlinked because POSIX pathname deletion cannot
-atomically verify the pinned leaf identity. The CLI accepts the optional argument
-at this slice boundary; strict parsing and deterministic joins are introduced
-by M2-S5.
+Collection or encoding failures stop the launch with a content-free
+notification. The CLI reads the complete bounded payload into memory before
+strict parsing, so later editor state cannot mutate the analysis input. Manual
+CLI use may instead provide an owner-only, single-linked regular file path.
+
+Snapshot-aware summaries use schema version 2 and contain all joined mapping
+bindings plus conservative `potential_buffer_shadowing` collision groups.
+Event-only analysis remains byte-for-byte schema-v1 compatible.
+
+## Callback performance budget
+
+The headless regression suite measures the complete Normal-mode callback path
+with a real registered mapping and resolver lookup over 2,000 iterations. On
+2026-08-08, Neovim 0.12.2 release on arm64 measured 13.37 microseconds per
+callback. CI enforces a deliberately portable 500-microsecond average ceiling;
+the gap accommodates shared runners while still detecting accidental blocking
+I/O or unbounded work on the callback path. The test excludes deferred flush and
+report work from the timed region.

@@ -1,14 +1,14 @@
 local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
-local snapshot_publisher = require("key-insights.snapshot_publisher")
+local snapshot_payload = require("key-insights.snapshot_payload")
 
 local M = {}
 local Report = {}
 Report.__index = Report
 
 local OWNER_DIRECTORY = 448 -- 0700
-local MAX_SUMMARY_BYTES = 4 * 1024 * 1024
-local MAX_REPORT_BYTES = 1024 * 1024
+local MAX_SUMMARY_BYTES = 16 * 1024 * 1024
+local MAX_REPORT_BYTES = 16 * 1024 * 1024
 local REPORT_HEADER = "# Neovim Key Insights"
 
 local function default_notify(message, level)
@@ -79,7 +79,7 @@ local function validate_outputs(fs, summary_path, report_path, previous)
   local decoded_ok, summary = pcall(vim.json.decode, contents)
   if not decoded_ok
     or type(summary) ~= "table"
-    or summary.schema_version ~= 1
+    or (summary.schema_version ~= 1 and summary.schema_version ~= 2)
     or type(summary.sessions) ~= "number"
     or type(summary.events) ~= "number"
   then
@@ -128,12 +128,11 @@ function M.new(options, dependencies)
   assert_nonempty(config.session_directory, "report session directory")
   local deps = dependencies or {}
   local fs = deps.fs or vim.uv
-  local publisher = nil
-  if deps.publish_snapshot == nil then
-    publisher = snapshot_publisher.new({
+  local payload = nil
+  if deps.collect_snapshot_payload == nil then
+    payload = snapshot_payload.new({
       collector_options = config.collector_options,
-      output_directory = config.output_directory,
-    }, { fs = fs })
+    })
   end
   return setmetatable({
     _analyzer = config.analyzer,
@@ -150,8 +149,8 @@ function M.new(options, dependencies)
     _protect_directory = deps.protect_directory or function(path, mode)
       return protect_directory(fs, path, mode)
     end,
-    _publish_snapshot = deps.publish_snapshot or function()
-      return publisher:publish()
+    _collect_snapshot_payload = deps.collect_snapshot_payload or function()
+      return payload:collect()
     end,
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
@@ -238,17 +237,10 @@ function Report:start()
     return false
   end
   self._previous_outputs = previous_outputs
-  local publish_ok, snapshot_path, snapshot_identity, snapshot_digest = pcall(self._publish_snapshot)
-  if not publish_ok or type(snapshot_path) ~= "string" or snapshot_path == "" then
+  local collect_ok, snapshot = pcall(self._collect_snapshot_payload)
+  if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
     self._previous_outputs = nil
-    self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
-    return false
-  end
-  local has_identity = type(snapshot_identity) == "string" and snapshot_identity ~= ""
-  local has_digest = type(snapshot_digest) == "string" and snapshot_digest ~= ""
-  if has_identity ~= has_digest then
-    self._previous_outputs = nil
-    self:_notify("failed to publish keymap snapshot", vim.log.levels.ERROR)
+    self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
     return false
   end
   local argv = {
@@ -261,16 +253,8 @@ function Report:start()
     "--report",
     self._report_path,
     "--keymap-snapshot",
-    snapshot_path,
+    "-",
   }
-  if has_identity then
-    table.insert(argv, "--keymap-snapshot-identity")
-    table.insert(argv, snapshot_identity)
-  end
-  if has_digest then
-    table.insert(argv, "--keymap-snapshot-digest")
-    table.insert(argv, snapshot_digest)
-  end
   self._generation = self._generation + 1
   local generation = self._generation
   self._job = true
@@ -278,7 +262,7 @@ function Report:start()
   local run_ok, job = pcall(self._run, argv, function(result)
     completed = true
     self:_complete(result, generation)
-  end)
+  end, snapshot)
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._previous_outputs = nil
