@@ -1,28 +1,16 @@
 local M = {}
 
 local native_ffi = nil
-local native_linkat = nil
-local native_openat = nil
 local native_unlinkat = nil
 do
   local loaded, ffi = pcall(require, "ffi")
   if loaded then
     pcall(ffi.cdef, [[
-      int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
-      int openat(int dirfd, const char *pathname, int flags, ...);
       int unlinkat(int dirfd, const char *pathname, int flags);
     ]])
-    local link_found, linkat = pcall(function() return ffi.C.linkat end)
-    local open_found, openat = pcall(function() return ffi.C.openat end)
     local unlink_found, unlinkat = pcall(function() return ffi.C.unlinkat end)
-    if link_found or open_found or unlink_found then
+    if unlink_found then
       native_ffi = ffi
-    end
-    if link_found then
-      native_linkat = linkat
-    end
-    if open_found then
-      native_openat = openat
     end
     if unlink_found then
       native_unlinkat = unlinkat
@@ -42,42 +30,6 @@ end
 function M.open_read(fs, path)
   local flags = vim.uv.constants.O_RDONLY + vim.uv.constants.O_NONBLOCK
   return fs.fs_open(path, flags, 0)
-end
-
-function M.open_child_exclusive(directory_descriptor, name, mode)
-  if type(directory_descriptor) ~= "number" or not valid_child(name) or type(mode) ~= "number" then
-    return nil, "invalid descriptor-relative open target"
-  end
-  if native_openat == nil then
-    return nil, "descriptor-relative open is unavailable on this platform"
-  end
-  local constants = vim.uv.constants
-  local flags = constants.O_WRONLY + constants.O_CREAT + constants.O_EXCL
-  if constants.O_CLOEXEC ~= nil then
-    flags = flags + constants.O_CLOEXEC
-  end
-  local descriptor = native_openat(directory_descriptor, name, flags, mode)
-  if descriptor >= 0 then
-    return tonumber(descriptor)
-  end
-  return nil, "descriptor-relative open failed with errno " .. tostring(native_ffi.errno())
-end
-
-function M.publish_child_exclusive(directory_descriptor, staging_name, final_name)
-  if type(directory_descriptor) ~= "number" or not valid_child(staging_name) or not valid_child(final_name) then
-    return nil, "invalid descriptor-relative publication target"
-  end
-  if native_linkat == nil then
-    return nil, "descriptor-relative publication is unavailable on this platform"
-  end
-  if native_linkat(directory_descriptor, staging_name, directory_descriptor, final_name, 0) ~= 0 then
-    return nil, "descriptor-relative publication failed with errno " .. tostring(native_ffi.errno())
-  end
-  if native_unlinkat(directory_descriptor, staging_name, 0) == 0 then
-    return true
-  end
-  native_unlinkat(directory_descriptor, final_name, 0)
-  return nil, "descriptor-relative staging cleanup failed with errno " .. tostring(native_ffi.errno())
 end
 
 function M.unlink_child(directory_descriptor, name)
