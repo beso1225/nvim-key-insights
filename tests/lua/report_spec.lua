@@ -181,7 +181,6 @@ assert(string.find(snapshot_failure_notifications[1], "secret", 1, true) == nil,
 
 local shutdown_callback = nil
 local shutdown_kills = 0
-local shutdown_removals = {}
 local shutdown_report = report.new({
   analyzer = "key-insights",
   output_directory = "/state/shutdown-reports",
@@ -192,10 +191,6 @@ local shutdown_report = report.new({
   notify = function() end,
   publish_snapshot = function()
     return "/state/shutdown-reports/keymap-snapshot-shutdown.json", "file:1:2:3:4:5"
-  end,
-  remove_snapshot = function(path, identity)
-    table.insert(shutdown_removals, { path = path, identity = identity })
-    return true
   end,
   run = function(_, callback)
     shutdown_callback = callback
@@ -211,14 +206,8 @@ assert(shutdown_report:start() == true)
 assert(shutdown_report:shutdown() == true)
 assert(shutdown_report:status().running == false)
 assert(shutdown_kills == 1)
-assert(vim.deep_equal(shutdown_removals, {
-  {
-    path = "/state/shutdown-reports/keymap-snapshot-shutdown.json",
-    identity = "file:1:2:3:4:5",
-  },
-}))
 shutdown_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
-assert(#shutdown_removals == 1, "a late process callback must not repeat snapshot cleanup")
+assert(shutdown_report:status().running == false, "a late process callback must stay ignored")
 
 assert(instance:open() == true)
 assert(#opened == 2)

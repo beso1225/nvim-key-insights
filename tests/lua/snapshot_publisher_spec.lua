@@ -57,6 +57,10 @@ local second_path = assert(second:publish())
 assert(second_path ~= published_path, "each publication must return an immutable invocation-specific path")
 assert(read(published_path) == encoded, "later publication must not mutate a prior invocation's snapshot")
 
+local reused_path, reused_identity = assert(second:publish())
+assert(reused_path == second_path, "identical content must reuse its immutable snapshot")
+assert(reused_identity ~= nil, "reused snapshots must retain filesystem identity pinning")
+
 local function assert_failure_preserves_prior(name, dependencies, expected_error)
   local old_contents = read(published_path)
   local failed = publisher.new({ output_directory = directory }, vim.tbl_extend("force", {
@@ -148,9 +152,21 @@ assert(assert(vim.uv.fs_lstat(symlink_path)).type == "link", "publication must n
 assert(read(symlink_target) == "outside\n")
 assert(read(published_path) == prior_before_symlink)
 
-assert(second:remove(second_path) == true)
-assert(vim.uv.fs_lstat(second_path) == nil, "completed report snapshots must be removable")
-assert(read(published_path) == encoded, "cleanup must not remove another invocation's snapshot")
+local retention_directory = make_directory()
+for index = 1, 16 do
+  local path = vim.fs.joinpath(retention_directory, string.format("keymap-snapshot-%02d.json", index))
+  assert(vim.fn.writefile({ encoded }, path) == 0)
+  assert(vim.uv.fs_chmod(path, OWNER_READ_WRITE))
+end
+local retention_instance = publisher.new({ output_directory = retention_directory }, {
+  collect_snapshot = function() return model end,
+  encode_snapshot = function() return encoded .. "new" end,
+  name_suffix = function() return "new" end,
+})
+local retention_path, retention_error = retention_instance:publish()
+assert(retention_path == nil and retention_error == "snapshot_publisher:retention_limit")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(retention_directory, "keymap-snapshot-new.json")) == nil)
+vim.fn.delete(retention_directory, "rf")
 
 vim.fn.delete(directory, "rf")
 

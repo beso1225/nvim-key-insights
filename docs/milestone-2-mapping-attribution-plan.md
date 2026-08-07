@@ -229,6 +229,8 @@ Red tests:
   interpolation;
 - concurrent report requests cannot race snapshot publication or mismatch a
   report with another invocation's snapshot.
+- content-addressed snapshots are reused and retention is bounded without an
+  unsafe check-then-unlink cleanup path.
 
 Green implementation:
 

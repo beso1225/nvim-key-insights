@@ -153,7 +153,7 @@ and additionally emits exactly one schema-v1 `mapping_use` event.
 
 Each report request collects a fresh sanitized model after the private report
 directory has been verified. It publishes the encoded bytes as a 0600 regular
-file under an invocation-specific, opaque name and passes that exact path as one
+file under a content-addressed, opaque name and passes that exact path as one
 literal `--keymap-snapshot` argument together with its expected filesystem
 identity. The CLI opens and pins a private, single-linked file with that identity
 before analysis, so replacing either the directory or leaf cannot redirect the
@@ -163,7 +163,10 @@ snapshot.
 
 Collection, encoding, directory identity, write, and publication failures stop
 the launch with a content-free notification. A failed attempt cannot replace an
-earlier invocation's immutable snapshot. The CLI accepts the optional argument
+earlier immutable snapshot. Identical sanitized bytes reuse the same file, and
+publication refuses to create a seventeenth retained snapshot or to scan more
+than 256 directory entries. Snapshots are not automatically unlinked because
+POSIX pathname deletion cannot atomically verify the pinned leaf identity; this
+avoids deleting a same-user replacement. The CLI accepts the optional argument
 at this slice boundary; strict parsing and deterministic joins are introduced
-by M2-S5. Normal completion, launch failure, and Neovim shutdown remove only the
-identity-matched snapshot for that invocation.
+by M2-S5.
