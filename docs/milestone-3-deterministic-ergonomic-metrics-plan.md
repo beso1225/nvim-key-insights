@@ -95,7 +95,11 @@ eligible. Initial guards require all of:
 Insufficient samples still produce aggregate metrics but no candidate. Mapping
 underuse evidence additionally requires a sanitized snapshot and never labels a
 mapping as useless; it reports only that the current bounded sample did not
-observe it.
+observe it. For this candidate kind, `observations` means the number of complete
+sampled sessions, while measurements record `observed_uses = 0`. It does not
+claim that the currently snapped mapping existed throughout those sessions.
+The three-observation guard therefore requires three complete sampled sessions,
+not three invented absence events.
 
 ### Bounds and arithmetic
 

@@ -113,6 +113,7 @@ fn joins_observed_missing_unobserved_and_collisions_deterministically() {
     .expect("valid snapshot");
 
     let summary = analyze_jsonl_with_snapshot(Cursor::new(log), &snapshot).expect("valid analysis");
+    assert!(summary.ergonomics.candidates.is_empty());
     let attribution = summary.mapping_attribution.expect("snapshot attribution");
 
     assert_eq!(summary.schema_version, 3);
@@ -191,6 +192,94 @@ fn snapshot_join_keeps_all_bindings_before_the_top_100_ranking() {
 
     assert_eq!(summary.mappings.len(), 100);
     assert_eq!(summary.mapping_attribution.unwrap().mappings.len(), 101);
+}
+
+#[test]
+fn mapping_coverage_candidates_are_snapshot_scoped_and_sample_guarded() {
+    let snapshot = parse_keymap_snapshot(Cursor::new(snapshot(
+        &[
+            mapping(GLOBAL_GG, "normal", "global", r#"["g","g"]"#),
+            mapping(VISUAL_X, "visual", "global", r#"["x"]"#),
+        ]
+        .join(","),
+    )))
+    .expect("valid snapshot");
+    let mut log = String::new();
+    for session in 0..3 {
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"coverage-{session}\",\"elapsed_ms\":0}}\n"
+        ));
+        if session == 0 {
+            let keys = vec!["q"; 100];
+            log.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"coverage-0\",\"elapsed_ms\":1,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
+                serde_json::to_string(&keys).unwrap()
+            ));
+            log.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"mapping_use\",\"session_id\":\"coverage-0\",\"elapsed_ms\":2,\"mode\":\"normal\",\"mapping_id\":\"{GLOBAL_GG}\",\"typed_keys\":[\"g\",\"g\"]}}\n"
+            ));
+        }
+        let elapsed_ms = if session == 0 { 2 } else { 0 };
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"coverage-{session}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+
+    let summary = analyze_jsonl_with_snapshot(Cursor::new(log), &snapshot).expect("valid analysis");
+    assert_eq!(
+        summary.ergonomics.mapping_coverage.snapshot_version,
+        Some(1)
+    );
+    assert_eq!(
+        summary.ergonomics.mapping_coverage.total_snapshot_mappings,
+        2
+    );
+    assert_eq!(summary.ergonomics.mapping_coverage.observed_mappings, 1);
+    assert_eq!(summary.ergonomics.mapping_coverage.unobserved_mappings, 1);
+    assert_eq!(summary.ergonomics.candidates.len(), 1);
+    let candidate = &summary.ergonomics.candidates[0];
+    assert_eq!(
+        candidate.candidate_id,
+        format!("mapping-unobserved-v1:{VISUAL_X}")
+    );
+    assert_eq!(candidate.kind, "current_mapping_unobserved_in_sample");
+    assert_eq!(candidate.kind_version, 1);
+    assert_eq!(candidate.observations, 3);
+    assert_eq!(candidate.measurements["observed_uses"], 0);
+    assert_eq!(candidate.measurements["sampled_sessions"], 3);
+}
+
+#[test]
+fn mapping_coverage_candidates_share_the_global_output_cap() {
+    let mut mappings = Vec::new();
+    for index in 0..101 {
+        let token = char::from_u32(0x300 + index).unwrap().to_string();
+        let id = mapping_id("normal", "global", &[token.as_str()]);
+        mappings.push(mapping(&id, "normal", "global", &format!("[\"{token}\"]")));
+    }
+    let snapshot = parse_keymap_snapshot(Cursor::new(snapshot(&mappings.join(","))))
+        .expect("valid large snapshot");
+    let mut log = String::new();
+    for session in 0..3 {
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"cap-{session}\",\"elapsed_ms\":0}}\n"
+        ));
+        if session == 0 {
+            let keys = vec!["q"; 100];
+            log.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"cap-0\",\"elapsed_ms\":1,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
+                serde_json::to_string(&keys).unwrap()
+            ));
+        }
+        let elapsed_ms = usize::from(session == 0);
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"cap-{session}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+
+    let summary = analyze_jsonl_with_snapshot(Cursor::new(log), &snapshot).expect("valid analysis");
+    assert_eq!(summary.ergonomics.mapping_coverage.unobserved_mappings, 101);
+    assert_eq!(summary.ergonomics.candidates.len(), 100);
 }
 
 fn mapping_id(mode: &str, scope: &str, lhs: &[&str]) -> String {

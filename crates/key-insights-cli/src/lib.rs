@@ -18,8 +18,9 @@ pub use ergonomics::{
     DIRECTIONAL_MOTION_TOKEN_SET_VERSION, ERGONOMICS_CONTRACT_VERSION, ErgonomicCandidate,
     ErgonomicDistributions, ErgonomicSummary, ErgonomicThresholds, HISTOGRAM_VERSION,
     HistogramBucket, MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS,
-    MIN_CANDIDATE_SEQUENCE_KEYS, MIN_CANDIDATE_SESSIONS, ModeTransitionCount,
-    OPERATION_TOKEN_SET_VERSION, OperationEvidence, RepeatedMotionEvidence, RepeatedMotionSummary,
+    MIN_CANDIDATE_SEQUENCE_KEYS, MIN_CANDIDATE_SESSIONS, MappingCoverageEvidence,
+    ModeTransitionCount, OPERATION_TOKEN_SET_VERSION, OperationEvidence, RepeatedMotionEvidence,
+    RepeatedMotionSummary,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use keymap_snapshot::{

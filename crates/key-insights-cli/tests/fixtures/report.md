@@ -99,4 +99,8 @@ _Ranked tables show at most 100 items._
 
 _No repeated motion runs observed._
 
+### Mapping coverage
+
+_No keymap snapshot was provided._
+
 _No ergonomic candidates met the sample guard._

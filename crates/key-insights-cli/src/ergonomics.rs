@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fmt::Write};
 
 use serde::Serialize;
 
-use crate::Mode;
+use crate::{KeymapSnapshot, Mode};
 
 pub const ERGONOMICS_CONTRACT_VERSION: u32 = 1;
 pub const MAX_ERGONOMIC_CANDIDATES: usize = 100;
@@ -29,6 +29,7 @@ pub struct ErgonomicSummary {
     pub count_prefixes: CountPrefixEvidence,
     pub mode_transitions: Vec<ModeTransitionCount>,
     pub repeated_motions: RepeatedMotionSummary,
+    pub mapping_coverage: MappingCoverageEvidence,
     pub candidates: Vec<ErgonomicCandidate>,
 }
 
@@ -43,6 +44,7 @@ impl Default for ErgonomicSummary {
             count_prefixes: CountPrefixEvidence::default(),
             mode_transitions: Vec::new(),
             repeated_motions: RepeatedMotionSummary::default(),
+            mapping_coverage: MappingCoverageEvidence::default(),
             candidates: Vec::new(),
         }
     }
@@ -140,6 +142,14 @@ impl Default for RepeatedMotionSummary {
             items: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct MappingCoverageEvidence {
+    pub snapshot_version: Option<u32>,
+    pub total_snapshot_mappings: u64,
+    pub observed_mappings: u64,
+    pub unobserved_mappings: u64,
 }
 
 impl Default for CountPrefixEvidence {
@@ -261,7 +271,13 @@ impl ErgonomicAccumulator {
         self.overflowed
     }
 
-    pub(crate) fn finish(self, sessions: u64, sequence_keys: u64) -> ErgonomicSummary {
+    pub(crate) fn finish(
+        self,
+        sessions: u64,
+        sequence_keys: u64,
+        snapshot: Option<&KeymapSnapshot>,
+        mapping_counts: &BTreeMap<String, u64>,
+    ) -> ErgonomicSummary {
         let mut repeated_motions: Vec<_> = self
             .repeated_motions
             .into_iter()
@@ -280,7 +296,7 @@ impl ErgonomicAccumulator {
         });
         repeated_motions.truncate(MAX_ERGONOMIC_CANDIDATES);
 
-        let candidates =
+        let mut candidates =
             if sessions >= MIN_CANDIDATE_SESSIONS && sequence_keys >= MIN_CANDIDATE_SEQUENCE_KEYS {
                 repeated_motions
                     .iter()
@@ -308,6 +324,63 @@ impl ErgonomicAccumulator {
                 Vec::new()
             };
 
+        let mapping_coverage = if let Some(snapshot) = snapshot {
+            let observed_mappings = snapshot
+                .mappings
+                .iter()
+                .filter(|mapping| {
+                    mapping_counts
+                        .get(&mapping.mapping_id)
+                        .is_some_and(|count| *count > 0)
+                })
+                .count() as u64;
+            let total_snapshot_mappings = snapshot.mappings.len() as u64;
+            let unobserved_mappings = total_snapshot_mappings - observed_mappings;
+            if sessions >= MIN_CANDIDATE_SESSIONS
+                && sequence_keys >= MIN_CANDIDATE_SEQUENCE_KEYS
+                && sessions >= MIN_CANDIDATE_OBSERVATIONS
+            {
+                candidates.extend(
+                    snapshot
+                        .mappings
+                        .iter()
+                        .filter(|mapping| !mapping_counts.contains_key(&mapping.mapping_id))
+                        .map(|mapping| ErgonomicCandidate {
+                            candidate_id: format!("mapping-unobserved-v1:{}", mapping.mapping_id),
+                            kind: "current_mapping_unobserved_in_sample".to_owned(),
+                            kind_version: CANDIDATE_KIND_VERSION,
+                            observations: sessions,
+                            measurements: BTreeMap::from([
+                                ("observed_uses".to_owned(), 0),
+                                ("sampled_sessions".to_owned(), sessions),
+                            ]),
+                            guard: CandidateGuard {
+                                observed_sessions: sessions,
+                                observed_sequence_keys: sequence_keys,
+                                required_sessions: MIN_CANDIDATE_SESSIONS,
+                                required_sequence_keys: MIN_CANDIDATE_SEQUENCE_KEYS,
+                                required_observations: MIN_CANDIDATE_OBSERVATIONS,
+                            },
+                        }),
+                );
+            }
+            MappingCoverageEvidence {
+                snapshot_version: Some(snapshot.snapshot_version),
+                total_snapshot_mappings,
+                observed_mappings,
+                unobserved_mappings,
+            }
+        } else {
+            MappingCoverageEvidence::default()
+        };
+        candidates.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| right.observations.cmp(&left.observations))
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        candidates.truncate(MAX_ERGONOMIC_CANDIDATES);
+
         ErgonomicSummary {
             distributions: ErgonomicDistributions::from_counts(
                 self.session_duration,
@@ -325,6 +398,7 @@ impl ErgonomicAccumulator {
                 token_set_version: DIRECTIONAL_MOTION_TOKEN_SET_VERSION,
                 items: repeated_motions,
             },
+            mapping_coverage,
             candidates,
             ..ErgonomicSummary::default()
         }
@@ -587,6 +661,25 @@ pub(crate) fn render_markdown(output: &mut String, summary: &ErgonomicSummary) {
             .unwrap();
         }
         output.push('\n');
+    }
+    writeln!(output, "### Mapping coverage\n").unwrap();
+    if let Some(snapshot_version) = summary.mapping_coverage.snapshot_version {
+        writeln!(output, "- Snapshot version: {snapshot_version}").unwrap();
+        writeln!(
+            output,
+            "- Observed mappings: {}/{}",
+            summary.mapping_coverage.observed_mappings,
+            summary.mapping_coverage.total_snapshot_mappings
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "- Current mappings unobserved in sample: {}\n",
+            summary.mapping_coverage.unobserved_mappings
+        )
+        .unwrap();
+    } else {
+        writeln!(output, "_No keymap snapshot was provided._\n").unwrap();
     }
     if summary.candidates.is_empty() {
         writeln!(output, "_No ergonomic candidates met the sample guard._").unwrap();

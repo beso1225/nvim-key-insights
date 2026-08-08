@@ -181,6 +181,12 @@
       "token_set_version": 1,
       "items": []
     },
+    "mapping_coverage": {
+      "snapshot_version": null,
+      "total_snapshot_mappings": 0,
+      "observed_mappings": 0,
+      "unobserved_mappings": 0
+    },
     "candidates": []
   }
 }

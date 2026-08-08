@@ -450,6 +450,9 @@ impl Accumulator {
             .collect();
         let mapping_attribution =
             snapshot.map(|value| build_mapping_attribution(value, &self.mappings));
+        let ergonomics =
+            self.ergonomics
+                .finish(sessions, self.sequence_keys, snapshot, &self.mappings);
         let mappings = ranked(self.mappings)
             .into_iter()
             .map(|(mapping_id, count)| MappingCount { mapping_id, count })
@@ -487,7 +490,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
-            ergonomics: self.ergonomics.finish(sessions, self.sequence_keys),
+            ergonomics,
             mapping_attribution,
         }
     }
