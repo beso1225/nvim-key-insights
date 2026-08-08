@@ -4,12 +4,11 @@ use serde::Serialize;
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
-    Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode, ValidationError,
-    keymap_snapshot::mapping_order, validator::JsonlValidator,
+    ErgonomicSummary, Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode,
+    ValidationError, ergonomics, keymap_snapshot::mapping_order, validator::JsonlValidator,
 };
 
-const SUMMARY_SCHEMA_VERSION: u32 = 1;
-const SNAPSHOT_SUMMARY_SCHEMA_VERSION: u32 = 2;
+const SUMMARY_SCHEMA_VERSION: u32 = 3;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -113,6 +112,7 @@ pub struct AnalysisSummary {
     pub keys: Vec<KeyCount>,
     pub mappings: Vec<MappingCount>,
     pub repeated_keys: Vec<RepeatedKeyStats>,
+    pub ergonomics: ErgonomicSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapping_attribution: Option<MappingAttribution>,
 }
@@ -444,11 +444,7 @@ impl Accumulator {
         repeated_keys.truncate(MAX_RANKED_ITEMS);
 
         AnalysisSummary {
-            schema_version: if snapshot.is_some() {
-                SNAPSHOT_SUMMARY_SCHEMA_VERSION
-            } else {
-                SUMMARY_SCHEMA_VERSION
-            },
+            schema_version: SUMMARY_SCHEMA_VERSION,
             ranking_limit: MAX_RANKED_ITEMS,
             sessions,
             events,
@@ -468,6 +464,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
+            ergonomics: ErgonomicSummary::default(),
             mapping_attribution,
         }
     }
@@ -674,6 +671,8 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
     render_mappings(&mut output, summary);
     render_mapping_attribution(&mut output, summary);
     render_repeated_keys(&mut output, summary);
+    output.push('\n');
+    ergonomics::render_markdown(&mut output, &summary.ergonomics);
     output
 }
 

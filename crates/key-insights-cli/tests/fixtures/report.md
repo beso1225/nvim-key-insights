@@ -45,3 +45,11 @@ _Ranked tables show at most 100 items._
 | --- | ---: | ---: |
 | <code>d</code> | 1 | 2 |
 | <code>j</code> | 1 | 2 |
+
+## Ergonomic evidence
+
+- Contract version: 1
+- Candidate limit: 100
+- Candidate guard: 3 sessions, 100 sequence keys, 3 observations
+
+_No ergonomic candidates met the sample guard._

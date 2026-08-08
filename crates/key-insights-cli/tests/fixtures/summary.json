@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "ranking_limit": 100,
   "sessions": 2,
   "events": 12,
@@ -71,5 +71,15 @@
       "runs": 1,
       "presses": 2
     }
-  ]
+  ],
+  "ergonomics": {
+    "contract_version": 1,
+    "candidate_limit": 100,
+    "thresholds": {
+      "minimum_candidate_sessions": 3,
+      "minimum_candidate_sequence_keys": 100,
+      "minimum_candidate_observations": 3
+    },
+    "candidates": []
+  }
 }

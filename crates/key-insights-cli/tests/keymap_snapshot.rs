@@ -115,7 +115,7 @@ fn joins_observed_missing_unobserved_and_collisions_deterministically() {
     let summary = analyze_jsonl_with_snapshot(Cursor::new(log), &snapshot).expect("valid analysis");
     let attribution = summary.mapping_attribution.expect("snapshot attribution");
 
-    assert_eq!(summary.schema_version, 2);
+    assert_eq!(summary.schema_version, 3);
     assert_eq!(attribution.snapshot_version, 1);
     assert_eq!(attribution.mappings.len(), 4);
     assert_eq!(attribution.mappings[0].mapping_id, GLOBAL_GG);
