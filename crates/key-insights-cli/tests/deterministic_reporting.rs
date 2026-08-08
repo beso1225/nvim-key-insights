@@ -174,6 +174,41 @@ fn ergonomic_operations_and_mode_transitions_are_canonical_and_deterministic() {
 }
 
 #[test]
+fn count_prefixes_stay_within_sequences_and_preserve_zero_as_a_motion() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"counts","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":1,"mode":"normal","keys":["0","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":2,"mode":"normal","keys":["2","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":3,"mode":"visual","keys":["1","2","w"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":4,"mode":"operator_pending","keys":["9","0","d"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":5,"mode":"normal","keys":["3","q"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":6,"mode":"normal","keys":["4"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"counts","elapsed_ms":7,"mode":"normal","mapping_id":"mapped-count","typed_keys":["7","j"]}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"counts","elapsed_ms":7}"#,
+        "\n",
+    );
+
+    let value = serde_json::to_value(analyze_jsonl(Cursor::new(input)).expect("valid analysis"))
+        .expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["count_prefixes"],
+        serde_json::json!({
+            "token_set_version": 1,
+            "occurrences": 3,
+            "digit_presses": 5
+        })
+    );
+}
+
+#[test]
 fn aggregates_multiple_input_readers_with_global_validation_state() {
     let first = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,

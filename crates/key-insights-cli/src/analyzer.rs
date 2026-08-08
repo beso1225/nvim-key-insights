@@ -312,6 +312,7 @@ impl Accumulator {
             } => {
                 self.ergonomics.observe_sequence(keys.len(), *duration_ms);
                 self.ergonomics.observe_operations(keys);
+                self.ergonomics.observe_count_prefixes(keys);
                 self.key_sequences = self.key_sequences.saturating_add(1);
                 self.sequence_keys = self.sequence_keys.saturating_add(keys.len() as u64);
                 let mode = sequence_mode_name(mode).to_owned();

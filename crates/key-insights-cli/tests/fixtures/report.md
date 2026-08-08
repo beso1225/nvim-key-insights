@@ -84,6 +84,11 @@ _Ranked tables show at most 100 items._
 | Search start | 0 |
 | Search navigation | 0 |
 
+### Count prefixes
+
+- Occurrences: 0
+- Digit presses: 0
+
 ### Mode transitions
 
 | From | To | Count |

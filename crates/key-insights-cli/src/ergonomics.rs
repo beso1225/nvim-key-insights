@@ -11,6 +11,7 @@ pub const MIN_CANDIDATE_SEQUENCE_KEYS: u64 = 100;
 pub const MIN_CANDIDATE_OBSERVATIONS: u64 = 3;
 pub const HISTOGRAM_VERSION: u32 = 1;
 pub const OPERATION_TOKEN_SET_VERSION: u32 = 1;
+pub const COUNTABLE_TOKEN_SET_VERSION: u32 = 1;
 
 const SESSION_DURATION_BUCKETS: [&str; 5] = ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
 const SEQUENCE_LENGTH_BUCKETS: [&str; 7] = ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
@@ -23,6 +24,7 @@ pub struct ErgonomicSummary {
     pub thresholds: ErgonomicThresholds,
     pub distributions: ErgonomicDistributions,
     pub operations: OperationEvidence,
+    pub count_prefixes: CountPrefixEvidence,
     pub mode_transitions: Vec<ModeTransitionCount>,
     pub candidates: Vec<ErgonomicCandidate>,
 }
@@ -35,6 +37,7 @@ impl Default for ErgonomicSummary {
             thresholds: ErgonomicThresholds::default(),
             distributions: ErgonomicDistributions::default(),
             operations: OperationEvidence::default(),
+            count_prefixes: CountPrefixEvidence::default(),
             mode_transitions: Vec::new(),
             candidates: Vec::new(),
         }
@@ -106,12 +109,30 @@ pub struct ModeTransitionCount {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CountPrefixEvidence {
+    pub token_set_version: u32,
+    pub occurrences: u64,
+    pub digit_presses: u64,
+}
+
+impl Default for CountPrefixEvidence {
+    fn default() -> Self {
+        Self {
+            token_set_version: COUNTABLE_TOKEN_SET_VERSION,
+            occurrences: 0,
+            digit_presses: 0,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ErgonomicAccumulator {
     session_duration: [u64; 5],
     sequence_length: [u64; 7],
     latency: [u64; 5],
     operations: OperationEvidence,
+    count_prefixes: CountPrefixEvidence,
     mode_transitions: BTreeMap<(&'static str, &'static str), u64>,
 }
 
@@ -145,6 +166,29 @@ impl ErgonomicAccumulator {
         }
     }
 
+    pub(crate) fn observe_count_prefixes(&mut self, keys: &[String]) {
+        let mut index = 0;
+        while index < keys.len() {
+            if is_nonzero_digit(&keys[index]) {
+                let mut operation = index + 1;
+                while operation < keys.len() && is_digit(&keys[operation]) {
+                    operation += 1;
+                }
+                if operation < keys.len() && is_countable_operation(&keys[operation]) {
+                    self.count_prefixes.occurrences =
+                        self.count_prefixes.occurrences.saturating_add(1);
+                    self.count_prefixes.digit_presses = self
+                        .count_prefixes
+                        .digit_presses
+                        .saturating_add((operation - index) as u64);
+                    index = operation + 1;
+                    continue;
+                }
+            }
+            index += 1;
+        }
+    }
+
     pub(crate) fn observe_mode_transition(&mut self, from: &Mode, to: &Mode) {
         let count = self
             .mode_transitions
@@ -161,6 +205,7 @@ impl ErgonomicAccumulator {
                 self.latency,
             ),
             operations: self.operations,
+            count_prefixes: self.count_prefixes,
             mode_transitions: self
                 .mode_transitions
                 .into_iter()
@@ -169,6 +214,58 @@ impl ErgonomicAccumulator {
             ..ErgonomicSummary::default()
         }
     }
+}
+
+fn is_digit(token: &str) -> bool {
+    matches!(
+        token,
+        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+    )
+}
+
+fn is_nonzero_digit(token: &str) -> bool {
+    matches!(token, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+}
+
+fn is_countable_operation(token: &str) -> bool {
+    matches!(
+        token,
+        "h" | "j"
+            | "k"
+            | "l"
+            | "w"
+            | "W"
+            | "b"
+            | "B"
+            | "e"
+            | "E"
+            | "0"
+            | "$"
+            | "^"
+            | "_"
+            | "+"
+            | "-"
+            | "G"
+            | "|"
+            | "%"
+            | "{"
+            | "}"
+            | "("
+            | ")"
+            | "n"
+            | "N"
+            | "*"
+            | "#"
+            | "d"
+            | "c"
+            | "y"
+            | "x"
+            | "X"
+            | "p"
+            | "P"
+            | "u"
+            | "."
+    )
 }
 
 fn mode_name(mode: &Mode) -> &'static str {
@@ -309,6 +406,19 @@ pub(crate) fn render_markdown(output: &mut String, summary: &ErgonomicSummary) {
     ] {
         writeln!(output, "| {operation} | {count} |").unwrap();
     }
+    writeln!(output, "\n### Count prefixes\n").unwrap();
+    writeln!(
+        output,
+        "- Occurrences: {}",
+        summary.count_prefixes.occurrences
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "- Digit presses: {}",
+        summary.count_prefixes.digit_presses
+    )
+    .unwrap();
     writeln!(output, "\n### Mode transitions\n").unwrap();
     if summary.mode_transitions.is_empty() {
         writeln!(output, "_No mode transitions observed._\n").unwrap();

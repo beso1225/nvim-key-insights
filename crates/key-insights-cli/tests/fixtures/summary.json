@@ -165,6 +165,11 @@
       "search_start": 0,
       "search_navigation": 0
     },
+    "count_prefixes": {
+      "token_set_version": 1,
+      "occurrences": 0,
+      "digit_presses": 0
+    },
     "mode_transitions": [
       {
         "from": "normal",
