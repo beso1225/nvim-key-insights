@@ -80,6 +80,83 @@
       "minimum_candidate_sequence_keys": 100,
       "minimum_candidate_observations": 3
     },
+    "distributions": {
+      "histogram_version": 1,
+      "session_duration_ms": [
+        {
+          "bucket": "0-1s",
+          "count": 2
+        },
+        {
+          "bucket": "1-10s",
+          "count": 0
+        },
+        {
+          "bucket": "10-60s",
+          "count": 0
+        },
+        {
+          "bucket": "1-5m",
+          "count": 0
+        },
+        {
+          "bucket": "over-5m",
+          "count": 0
+        }
+      ],
+      "sequence_length_keys": [
+        {
+          "bucket": "1",
+          "count": 0
+        },
+        {
+          "bucket": "2",
+          "count": 2
+        },
+        {
+          "bucket": "3-4",
+          "count": 1
+        },
+        {
+          "bucket": "5-8",
+          "count": 0
+        },
+        {
+          "bucket": "9-16",
+          "count": 0
+        },
+        {
+          "bucket": "17-32",
+          "count": 0
+        },
+        {
+          "bucket": "33-plus",
+          "count": 0
+        }
+      ],
+      "average_inter_key_latency_ms": [
+        {
+          "bucket": "0-50ms",
+          "count": 3
+        },
+        {
+          "bucket": "50-100ms",
+          "count": 0
+        },
+        {
+          "bucket": "100-250ms",
+          "count": 0
+        },
+        {
+          "bucket": "250-500ms",
+          "count": 0
+        },
+        {
+          "bucket": "over-500ms",
+          "count": 0
+        }
+      ]
+    },
     "candidates": []
   }
 }

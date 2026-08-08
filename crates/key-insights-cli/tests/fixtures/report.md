@@ -52,4 +52,26 @@ _Ranked tables show at most 100 items._
 - Candidate limit: 100
 - Candidate guard: 3 sessions, 100 sequence keys, 3 observations
 
+### Distributions
+
+| Metric | Bucket | Count |
+| --- | --- | ---: |
+| Session duration | 0-1s | 2 |
+| Session duration | 1-10s | 0 |
+| Session duration | 10-60s | 0 |
+| Session duration | 1-5m | 0 |
+| Session duration | over-5m | 0 |
+| Sequence length | 1 | 0 |
+| Sequence length | 2 | 2 |
+| Sequence length | 3-4 | 1 |
+| Sequence length | 5-8 | 0 |
+| Sequence length | 9-16 | 0 |
+| Sequence length | 17-32 | 0 |
+| Sequence length | 33-plus | 0 |
+| Average inter-key latency | 0-50ms | 3 |
+| Average inter-key latency | 50-100ms | 0 |
+| Average inter-key latency | 100-250ms | 0 |
+| Average inter-key latency | 250-500ms | 0 |
+| Average inter-key latency | over-500ms | 0 |
+
 _No ergonomic candidates met the sample guard._

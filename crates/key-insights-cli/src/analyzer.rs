@@ -5,7 +5,8 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
     ErgonomicSummary, Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode,
-    ValidationError, ergonomics, keymap_snapshot::mapping_order, validator::JsonlValidator,
+    ValidationError, ergonomics, ergonomics::ErgonomicAccumulator, keymap_snapshot::mapping_order,
+    validator::JsonlValidator,
 };
 
 const SUMMARY_SCHEMA_VERSION: u32 = 3;
@@ -211,6 +212,7 @@ struct Accumulator {
     keys: BTreeMap<String, u64>,
     mappings: BTreeMap<String, u64>,
     repeated_keys: BTreeMap<String, RepeatedAccumulator>,
+    ergonomics: ErgonomicAccumulator,
 }
 
 pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisError> {
@@ -296,12 +298,19 @@ impl Accumulator {
     fn observe(&mut self, event: &Event, snapshot: Option<&KeymapSnapshot>) {
         match event {
             Event::SessionEnd { elapsed_ms, .. } => {
+                self.ergonomics.observe_session_duration(*elapsed_ms);
                 match self.total_session_duration_ms.checked_add(*elapsed_ms) {
                     Some(total) => self.total_session_duration_ms = total,
                     None => self.record_error(AnalysisError::SessionDurationOverflow),
                 }
             }
-            Event::KeySequence { mode, keys, .. } => {
+            Event::KeySequence {
+                mode,
+                keys,
+                duration_ms,
+                ..
+            } => {
+                self.ergonomics.observe_sequence(keys.len(), *duration_ms);
                 self.key_sequences = self.key_sequences.saturating_add(1);
                 self.sequence_keys = self.sequence_keys.saturating_add(keys.len() as u64);
                 let mode = sequence_mode_name(mode).to_owned();
@@ -464,7 +473,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
-            ergonomics: ErgonomicSummary::default(),
+            ergonomics: self.ergonomics.finish(),
             mapping_attribution,
         }
     }

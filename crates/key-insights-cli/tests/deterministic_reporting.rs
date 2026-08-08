@@ -46,6 +46,91 @@ fn summary_v3_exposes_the_versioned_ergonomic_contract() {
 }
 
 #[test]
+fn ergonomic_histograms_use_fixed_boundary_buckets() {
+    let mut input = String::new();
+    for (index, elapsed_ms) in [
+        0_u64, 999, 1_000, 9_999, 10_000, 59_999, 60_000, 299_999, 300_000, 600_000,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"duration-{index}\",\"elapsed_ms\":0}}\n{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"duration-{index}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid duration boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(value["ergonomics"]["distributions"]["histogram_version"], 1);
+    assert_eq!(
+        value["ergonomics"]["distributions"]["session_duration_ms"],
+        serde_json::json!([
+            {"bucket": "0-1s", "count": 2},
+            {"bucket": "1-10s", "count": 2},
+            {"bucket": "10-60s", "count": 2},
+            {"bucket": "1-5m", "count": 2},
+            {"bucket": "over-5m", "count": 2}
+        ])
+    );
+
+    let mut input = String::from(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"lengths\",\"elapsed_ms\":0}\n",
+    );
+    for length in [1_usize, 2, 3, 4, 5, 8, 9, 16, 17, 32, 33] {
+        let keys = vec!["j"; length];
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"lengths\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":0}}\n",
+            serde_json::to_string(&keys).unwrap()
+        ));
+    }
+    input.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"lengths\",\"elapsed_ms\":0}\n",
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid length boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["distributions"]["sequence_length_keys"],
+        serde_json::json!([
+            {"bucket": "1", "count": 1},
+            {"bucket": "2", "count": 1},
+            {"bucket": "3-4", "count": 2},
+            {"bucket": "5-8", "count": 2},
+            {"bucket": "9-16", "count": 2},
+            {"bucket": "17-32", "count": 2},
+            {"bucket": "33-plus", "count": 1}
+        ])
+    );
+
+    let mut input = String::from(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"latency\",\"elapsed_ms\":0}\n",
+    );
+    for duration_ms in [0_u64, 49, 50, 99, 100, 249, 250, 499, 500, 1_000] {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":[\"j\",\"k\"],\"duration_ms\":{duration_ms}}}\n"
+        ));
+    }
+    for duration_ms in [199_u64, 200] {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":[\"j\",\"k\",\"l\"],\"duration_ms\":{duration_ms}}}\n"
+        ));
+    }
+    input.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"latency\",\"elapsed_ms\":1000}\n",
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid latency boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["distributions"]["average_inter_key_latency_ms"],
+        serde_json::json!([
+            {"bucket": "0-50ms", "count": 2},
+            {"bucket": "50-100ms", "count": 3},
+            {"bucket": "100-250ms", "count": 3},
+            {"bucket": "250-500ms", "count": 2},
+            {"bucket": "over-500ms", "count": 2}
+        ])
+    );
+}
+
+#[test]
 fn aggregates_multiple_input_readers_with_global_validation_state() {
     let first = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
@@ -79,6 +164,14 @@ fn aggregates_multiple_input_readers_with_global_validation_state() {
             .collect::<Vec<_>>(),
         [("j", 1), ("k", 1)]
     );
+
+    let combined =
+        analyze_jsonl(Cursor::new(format!("{first}{second}"))).expect("valid combined analysis");
+    assert_eq!(
+        render_summary_json(&summary),
+        render_summary_json(&combined)
+    );
+    assert_eq!(render_markdown(&summary), render_markdown(&combined));
 }
 
 #[test]

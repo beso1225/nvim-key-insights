@@ -14,9 +14,10 @@ pub use analyzer::{
     analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
 };
 pub use ergonomics::{
-    CandidateGuard, ERGONOMICS_CONTRACT_VERSION, ErgonomicCandidate, ErgonomicSummary,
-    ErgonomicThresholds, MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS,
-    MIN_CANDIDATE_SEQUENCE_KEYS, MIN_CANDIDATE_SESSIONS,
+    CandidateGuard, ERGONOMICS_CONTRACT_VERSION, ErgonomicCandidate, ErgonomicDistributions,
+    ErgonomicSummary, ErgonomicThresholds, HISTOGRAM_VERSION, HistogramBucket,
+    MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS, MIN_CANDIDATE_SEQUENCE_KEYS,
+    MIN_CANDIDATE_SESSIONS,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use keymap_snapshot::{
