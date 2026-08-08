@@ -135,6 +135,9 @@ keymap collisions using an API-derived sanitized snapshot.
 
 ## Milestone 3: deterministic ergonomic metrics
 
+Status: in progress. See the
+[detailed implementation plan](milestone-3-deterministic-ergonomic-metrics-plan.md).
+
 Add metrics only when they support an explainable recommendation and remain
 stable for identical inputs.
 
