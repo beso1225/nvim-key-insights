@@ -24,11 +24,14 @@ assert(system_result.code == 0)
 
 local notifications = {}
 local invocations = {}
+local invocation_stdin = {}
 local opened = {}
 local created_directories = {}
 local protected_directories = {}
 local pending_callback = nil
 local outputs_valid = true
+local snapshot_collections = 0
+local workflow_events = {}
 
 local instance = report.new({
   analyzer = "/tools/key insights;$analyzer",
@@ -49,8 +52,15 @@ local instance = report.new({
   open_file = function(path)
     table.insert(opened, path)
   end,
-  run = function(argv, callback)
+  collect_snapshot_payload = function()
+    snapshot_collections = snapshot_collections + 1
+    table.insert(workflow_events, "collect")
+    return string.format('{"snapshot_version":1,"mappings":[],"marker":%d}', snapshot_collections)
+  end,
+  run = function(argv, callback, stdin)
+    table.insert(workflow_events, "run")
     table.insert(invocations, vim.deepcopy(argv))
+    table.insert(invocation_stdin, stdin)
     pending_callback = callback
     return { pid = 42 }
   end,
@@ -69,6 +79,7 @@ assert(instance:start() == true)
 assert(instance:status().running == true)
 assert(instance:status().job ~= nil)
 assert(instance:status().summary_path == nil, "status must not expose local output paths")
+assert(vim.deep_equal(workflow_events, { "collect", "run" }), "snapshot collection must precede process launch")
 assert(#created_directories == 1)
 assert(created_directories[1].path == "/state/key insights/reports;draft")
 assert(created_directories[1].parents == "p")
@@ -84,10 +95,14 @@ assert(vim.deep_equal(invocations[1], {
   "/state/key insights/reports;draft/summary.json",
   "--report",
   "/state/key insights/reports;draft/report.md",
+  "--keymap-snapshot",
+  "-",
 }), "report command must preserve argv without shell interpolation")
+assert(invocation_stdin[1] == '{"snapshot_version":1,"mappings":[],"marker":1}')
 
 assert(instance:start() == false, "a running report must reject concurrent invocation")
 assert(#invocations == 1, "concurrent reports must not queue another process")
+assert(snapshot_collections == 1, "concurrent reports must not recollect or mismatch the running snapshot")
 assert(string.find(notifications[#notifications].message, "already running", 1, true) ~= nil)
 
 pending_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
@@ -127,6 +142,9 @@ local missing = report.new({
   notify = function(message)
     table.insert(missing_notifications, message)
   end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
   run = function()
     error("executable not found")
   end,
@@ -134,6 +152,65 @@ local missing = report.new({
 assert(missing:start() == false)
 assert(missing:status().running == false)
 assert(string.find(missing_notifications[1], "failed to start", 1, true) ~= nil)
+
+local snapshot_failure_notifications = {}
+local snapshot_failure_ran = false
+local snapshot_failure = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function()
+    return true
+  end,
+  mkdir = function()
+    return 1
+  end,
+  notify = function(message)
+    table.insert(snapshot_failure_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return nil, "snapshot_payload:collection_failed secret-buffer-name"
+  end,
+  run = function()
+    snapshot_failure_ran = true
+  end,
+})
+assert(snapshot_failure:start() == false)
+assert(snapshot_failure_ran == false, "snapshot failures must prevent analyzer launch")
+assert(snapshot_failure:status().running == false)
+assert(string.find(snapshot_failure_notifications[1], "failed to collect keymap snapshot", 1, true) ~= nil)
+assert(string.find(snapshot_failure_notifications[1], "secret", 1, true) == nil, "snapshot errors must be content-free")
+
+local shutdown_callback = nil
+local shutdown_kills = 0
+local shutdown_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/shutdown-reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function() return true end,
+  mkdir = function() return 1 end,
+  notify = function() end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  run = function(_, callback)
+    shutdown_callback = callback
+    return {
+      kill = function(_, signal)
+        assert(signal == 15)
+        shutdown_kills = shutdown_kills + 1
+      end,
+    }
+  end,
+})
+assert(shutdown_report:start() == true)
+assert(shutdown_report:shutdown() == true)
+assert(shutdown_report:status().running == false)
+assert(shutdown_kills == 1)
+shutdown_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
+assert(shutdown_report:status().running == false, "a late process callback must stay ignored")
 
 assert(instance:open() == true)
 assert(#opened == 2)

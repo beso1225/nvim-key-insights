@@ -1,5 +1,6 @@
 local collector = require("key-insights.collector")
 local config = require("key-insights.config")
+local keymap_snapshot = require("key-insights.keymap_snapshot")
 local process = require("key-insights.process")
 local report = require("key-insights.report")
 local storage = require("key-insights.storage")
@@ -13,6 +14,11 @@ local forbidden = {
   "COMMAND_TEXT_SECRET",
   "SEARCH_TEXT_SECRET",
   "MAPPING_EXPANSION_SECRET",
+  "GLOBAL_MAPPING_RHS_SECRET",
+  "BUFFER_MAPPING_RHS_SECRET",
+  "REMOVED_MAPPING_RHS_SECRET",
+  "COLLISION_GLOBAL_RHS_SECRET",
+  "COLLISION_BUFFER_RHS_SECRET",
 }
 
 local function assert_absent(boundary, contents, values)
@@ -31,6 +37,23 @@ local callback = nil
 local mode = "n"
 local command_type = ""
 local now_ms = 0
+local current_buffer_id = vim.api.nvim_get_current_buf()
+local original_buffer_name = vim.api.nvim_buf_get_name(current_buffer_id)
+vim.api.nvim_buf_set_name(current_buffer_id, "/private/BUFFER_PATH_SECRET/source.lua")
+
+local mapping_ids = {
+  global = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "1" })),
+  removed = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "2" })),
+  buffer = assert(keymap_snapshot.mapping_id("normal", "buffer", { "z", "3" })),
+  collision_global = assert(keymap_snapshot.mapping_id("normal", "global", { "z", "4" })),
+  collision_buffer = assert(keymap_snapshot.mapping_id("normal", "buffer", { "z", "4" })),
+}
+
+vim.keymap.set("n", "z1", ":echo 'GLOBAL_MAPPING_RHS_SECRET'<CR>")
+vim.keymap.set("n", "z2", ":echo 'REMOVED_MAPPING_RHS_SECRET'<CR>")
+vim.keymap.set("n", "z4", ":echo 'COLLISION_GLOBAL_RHS_SECRET'<CR>")
+vim.keymap.set("n", "z3", ":echo 'BUFFER_MAPPING_RHS_SECRET'<CR>", { buffer = current_buffer_id })
+vim.keymap.set("n", "z4", ":echo 'COLLISION_BUFFER_RHS_SECRET'<CR>", { buffer = current_buffer_id })
 
 local instance = collector.new({
   clock_ms = function()
@@ -38,6 +61,7 @@ local instance = collector.new({
   end,
   current_buffer = function()
     return {
+      id = current_buffer_id,
       buftype = "",
       filetype = "lua",
       name = "/private/BUFFER_PATH_SECRET/source.lua",
@@ -67,6 +91,14 @@ local instance = collector.new({
 
 assert(instance:start())
 assert(callback("MAPPING_EXPANSION_SECRET", "j") == nil)
+now_ms = 2
+assert(callback("GLOBAL_MAPPING_RHS_SECRET", "z1") == nil)
+now_ms = 4
+assert(callback("REMOVED_MAPPING_RHS_SECRET", "z2") == nil)
+now_ms = 6
+assert(callback("BUFFER_MAPPING_RHS_SECRET", "z3") == nil)
+now_ms = 8
+assert(callback("COLLISION_BUFFER_RHS_SECRET", "z4") == nil)
 now_ms = 10
 mode = "i"
 assert(callback("MAPPING_EXPANSION_SECRET", "INSERT_TEXT_SECRET") == nil)
@@ -88,6 +120,8 @@ now_ms = 60
 assert(callback("MAPPING_EXPANSION_SECRET", "j") == nil)
 now_ms = 70
 assert(instance:stop())
+
+vim.keymap.del("n", "z2")
 
 now_ms = 100
 assert(instance:start())
@@ -112,6 +146,7 @@ end
 
 local notifications = {}
 local invocations = {}
+local snapshot_payloads = {}
 local opened = 0
 local workflow = report.new({
   analyzer = analyzer,
@@ -124,9 +159,10 @@ local workflow = report.new({
   open_file = function()
     opened = opened + 1
   end,
-  run = function(argv, on_exit)
+  run = function(argv, on_exit, stdin)
     table.insert(invocations, vim.deepcopy(argv))
-    return process.run(argv, on_exit)
+    table.insert(snapshot_payloads, stdin)
+    return process.run(argv, on_exit, stdin)
   end,
 })
 
@@ -144,22 +180,66 @@ local report_path = vim.fs.joinpath(report_directory, "report.md")
 local summary_json = table.concat(vim.fn.readfile(summary_path, "b"), "\n")
 local report_markdown = table.concat(vim.fn.readfile(report_path, "b"), "\n")
 local summary = vim.json.decode(summary_json)
-assert(summary.schema_version == 1)
+assert(summary.schema_version == 2)
+assert(summary.mapping_attribution.snapshot_version == 1)
 assert(summary.sessions == 2)
 assert(summary.text_runs == 1)
-assert(summary.keys[1].key == "j" and summary.keys[1].count == 2)
+local j_count = nil
+for _, key in ipairs(summary.keys) do
+  if key.key == "j" then
+    j_count = key.count
+  end
+end
+assert(j_count == 2)
+local attribution_by_id = {}
+for _, mapping in ipairs(summary.mapping_attribution.mappings) do
+  attribution_by_id[mapping.mapping_id] = mapping
+end
+assert(attribution_by_id[mapping_ids.global].status == "observed")
+assert(attribution_by_id[mapping_ids.global].scope == "global")
+assert(attribution_by_id[mapping_ids.global].count == 1)
+assert(attribution_by_id[mapping_ids.removed].status == "observed_not_in_snapshot")
+assert(attribution_by_id[mapping_ids.removed].scope == nil)
+assert(attribution_by_id[mapping_ids.removed].count == 1)
+assert(attribution_by_id[mapping_ids.buffer].status == "observed")
+assert(attribution_by_id[mapping_ids.buffer].scope == "buffer")
+assert(attribution_by_id[mapping_ids.buffer].count == 1)
+assert(attribution_by_id[mapping_ids.collision_buffer].status == "observed")
+assert(attribution_by_id[mapping_ids.collision_buffer].scope == "buffer")
+assert(attribution_by_id[mapping_ids.collision_buffer].count == 1)
+assert(attribution_by_id[mapping_ids.collision_global].status == "unobserved_in_sample")
+assert(attribution_by_id[mapping_ids.collision_global].scope == "global")
+assert(attribution_by_id[mapping_ids.collision_global].count == 0)
+local expected_collision = false
+for _, collision in ipairs(summary.mapping_attribution.collisions) do
+  if collision.global_mapping_id == mapping_ids.collision_global
+    and collision.buffer_mapping_id == mapping_ids.collision_buffer
+  then
+    expected_collision = true
+  end
+end
+assert(expected_collision, "the exact global/buffer shadowing pair must be reported")
 
 local local_only = vim.list_extend(vim.deepcopy(forbidden), session_ids)
 assert_absent("summary.json", summary_json, local_only)
 assert_absent("report.md", report_markdown, local_only)
 assert_absent("notifications", table.concat(notifications, "\n"), local_only)
 assert_absent("analyzer argv", table.concat(invocations[1], "\n"), local_only)
+assert_absent("snapshot stdin", snapshot_payloads[1], local_only)
 
 run_report()
 assert(opened == 2)
 assert(summary_json == table.concat(vim.fn.readfile(summary_path, "b"), "\n"))
 assert(report_markdown == table.concat(vim.fn.readfile(report_path, "b"), "\n"))
 assert(#invocations == 2)
+
+for _, lhs in ipairs({ "z1", "z4" }) do
+  vim.keymap.del("n", lhs)
+end
+for _, lhs in ipairs({ "z3", "z4" }) do
+  vim.keymap.del("n", lhs, { buffer = current_buffer_id })
+end
+vim.api.nvim_buf_set_name(current_buffer_id, original_buffer_name)
 
 vim.fn.delete(root, "rf")
 print("Headless local workflow E2E: ok")

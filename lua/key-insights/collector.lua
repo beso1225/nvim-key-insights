@@ -1,4 +1,7 @@
 local config = require("key-insights.config")
+local key_tokens = require("key-insights.key_tokens")
+local mapping_attribution = require("key-insights.mapping_attribution")
+local mapping_resolver = require("key-insights.mapping_resolver")
 local schema = require("key-insights.schema")
 
 local M = {}
@@ -10,8 +13,10 @@ local SEQUENCE_MODES = {
   operator_pending = true,
   visual = true,
 }
-local MAX_KEY_NOTATION_BYTES = 256
-
+local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
+local MAX_PENDING_EVENTS = 1024
+local MAX_PENDING_BYTES = 4 * 1024 * 1024
+local PENDING_LIMIT_ERROR = "collector pending queue limit exceeded"
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
 end
@@ -28,6 +33,7 @@ end
 local function default_buffer()
   local buffer = vim.api.nvim_get_current_buf()
   return {
+    id = buffer,
     buftype = vim.bo[buffer].buftype,
     filetype = vim.bo[buffer].filetype,
     name = vim.api.nvim_buf_get_name(buffer),
@@ -83,19 +89,33 @@ end
 
 function M.new(spec)
   local dependencies = spec or {}
+  local options = dependencies.options or config.defaults()
+  local resolver = dependencies.mapping_resolver
+  if resolver == nil then
+    resolver = mapping_resolver.new()
+  end
   local instance = setmetatable({
     _auto_flush = dependencies.auto_flush ~= false,
     _clock_ms = dependencies.clock_ms or default_clock_ms,
     _current_buffer = dependencies.current_buffer or default_buffer,
     _current_cmdtype = dependencies.current_cmdtype or default_current_cmdtype,
     _current_mode = dependencies.current_mode or default_current_mode,
+    _flush_epoch = 0,
+    _flush_scheduled = false,
+    _in_callback = false,
     _keytrans = dependencies.keytrans or default_keytrans,
     _last_mode = nil,
+    _mapping_reprime_needed = false,
+    _mapping_reprime_scheduled = false,
+    _mapping_resolver = resolver,
+    _mapping_ready = false,
     _new_session_id = dependencies.new_session_id or default_session_id,
     _open_session = dependencies.open_session or default_open_session,
-    _options = dependencies.options or config.defaults(),
+    _options = options,
     _pending = {},
+    _pending_bytes = 0,
     _register_on_key = dependencies.register_on_key or default_register_on_key,
+    _schedule = dependencies.schedule or vim.schedule,
     _started_at_ms = nil,
     _state = "stopped",
     _session_id = nil,
@@ -112,7 +132,7 @@ end
 function Collector:_emit_sequence(elapsed_ms)
   local sequence = self._sequence
   if sequence == nil then
-    return
+    return true
   end
   self._sequence = nil
 
@@ -174,16 +194,16 @@ function Collector:_emit_sequence(elapsed_ms)
     end
   end
   finish_chunk()
-  self:_queue_many(events)
+  return self:_queue_many(events)
 end
 
 function Collector:_emit_text_run(elapsed_ms)
   local text_run = self._text_run
   if text_run == nil then
-    return
+    return true
   end
   self._text_run = nil
-  self:_queue(schema.text_run(
+  return self:_queue(schema.text_run(
     self._session_id,
     elapsed_ms,
     text_run.key_count,
@@ -192,12 +212,15 @@ function Collector:_emit_text_run(elapsed_ms)
 end
 
 function Collector:_flush_input(elapsed_ms)
-  self:_emit_sequence(elapsed_ms)
-  self:_emit_text_run(elapsed_ms)
+  if not self:_emit_sequence(elapsed_ms) then
+    self._text_run = nil
+    return false
+  end
+  return self:_emit_text_run(elapsed_ms)
 end
 
 function Collector:_typed_tokens(typed)
-  if type(typed) ~= "string" or typed == "" then
+  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
     return {}
   end
   local canonical = self._keytrans(typed)
@@ -205,40 +228,25 @@ function Collector:_typed_tokens(typed)
     return {}
   end
 
-  local characters = vim.fn.split(canonical, "\\zs")
-  local tokens = {}
-  local index = 1
-  while index <= #characters do
-    if characters[index] == "<" then
-      local closing = index + 1
-      while closing <= #characters and characters[closing] ~= ">" do
-        closing = closing + 1
-      end
-      local notation = closing <= #characters and table.concat(characters, "", index, closing) or nil
-      if notation ~= nil and #notation <= MAX_KEY_NOTATION_BYTES then
-        table.insert(tokens, notation)
-        index = closing + 1
-      else
-        table.insert(tokens, characters[index])
-        index = index + 1
-      end
-    else
-      table.insert(tokens, characters[index])
-      index = index + 1
-    end
-  end
-  return tokens
+  local tokens = key_tokens.tokenize(canonical, {
+    max_input_bytes = MAX_CALLBACK_INPUT_BYTES,
+    max_token_bytes = 256,
+    max_tokens = MAX_CALLBACK_INPUT_BYTES,
+  })
+  return tokens or {}
 end
 
-function Collector:_record_sequence(mode, typed, elapsed_ms)
-  for _, key in ipairs(self:_typed_tokens(typed)) do
+function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
+  for _, key in ipairs(typed_tokens or self:_typed_tokens(typed)) do
     local sequence = self._sequence
     local timeout_ms = self._options.collection.sequence_timeout_ms
     local max_keys = self._options.collection.max_sequence_keys
     if sequence ~= nil
       and (sequence.mode ~= mode or elapsed_ms - sequence.last_ms > timeout_ms or #sequence.keys >= max_keys)
     then
-      self:_emit_sequence(elapsed_ms)
+      if not self:_emit_sequence(elapsed_ms) then
+        return false
+      end
       sequence = nil
     end
 
@@ -256,6 +264,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms)
     table.insert(sequence.key_elapsed_ms, elapsed_ms)
     sequence.last_ms = elapsed_ms
   end
+  return true
 end
 
 function Collector:_record_text_keys(typed, elapsed_ms)
@@ -281,17 +290,89 @@ function Collector:_elapsed_ms()
   return math.max(0, math.floor(self._clock_ms() - self._started_at_ms))
 end
 
-function Collector:_queue_many(events)
-  for _, event in ipairs(events) do
-    table.insert(self._pending, schema.encode(event))
+function Collector:_schedule_pending_write()
+  if self._flush_scheduled then
+    return
   end
-  if self._auto_flush then
-    self:_write_pending()
+  self._flush_scheduled = true
+  local epoch = self._flush_epoch
+  local scheduled = pcall(self._schedule, function()
+    if epoch ~= self._flush_epoch then
+      return
+    end
+    self._flush_scheduled = false
+    if self._in_callback or self._state ~= "recording" or self._last_error ~= nil then
+      return
+    end
+    local ok, error_message = pcall(self._write_pending, self)
+    if not ok then
+      self._last_error = tostring(error_message)
+    end
+  end)
+  if not scheduled then
+    self._flush_scheduled = false
   end
 end
 
+function Collector:_schedule_mapping_reprime()
+  if not self._mapping_reprime_needed or self._mapping_reprime_scheduled then
+    return
+  end
+  self._mapping_reprime_scheduled = true
+  local epoch = self._flush_epoch
+  local scheduled = pcall(self._schedule, function()
+    if epoch ~= self._flush_epoch then
+      return
+    end
+    self._mapping_reprime_scheduled = false
+    if self._state ~= "recording" or self._last_error ~= nil or not self._mapping_reprime_needed then
+      return
+    end
+    if not self:_prime_mapping_resolver() then
+      self._mapping_reprime_needed = true
+    end
+  end)
+  if not scheduled then
+    self._mapping_reprime_scheduled = false
+  end
+end
+
+function Collector:_queue_many(events)
+  if self._in_callback and self._last_error ~= nil then
+    return false
+  end
+  local encoded_events = {}
+  local encoded_bytes = 0
+  for _, event in ipairs(events) do
+    local encoded = schema.encode(event)
+    table.insert(encoded_events, encoded)
+    encoded_bytes = encoded_bytes + #encoded
+  end
+  if #self._pending + #encoded_events > MAX_PENDING_EVENTS
+    or self._pending_bytes + encoded_bytes > MAX_PENDING_BYTES
+  then
+    self._last_error = PENDING_LIMIT_ERROR
+    self._sequence = nil
+    self._text_run = nil
+    self:_mapping_boundary()
+    return false
+  end
+  for _, encoded in ipairs(encoded_events) do
+    table.insert(self._pending, encoded)
+  end
+  self._pending_bytes = self._pending_bytes + encoded_bytes
+  if self._auto_flush then
+    if self._in_callback then
+      self:_schedule_pending_write()
+    else
+      self:_write_pending()
+    end
+  end
+  return true
+end
+
 function Collector:_queue(event)
-  self:_queue_many({ event })
+  return self:_queue_many({ event })
 end
 
 function Collector:_write_pending()
@@ -303,6 +384,7 @@ function Collector:_write_pending()
   local pending = self._pending
   self._session_writer:write(pending)
   self._pending = {}
+  self._pending_bytes = 0
   return #pending
 end
 
@@ -311,7 +393,76 @@ function Collector:_is_excluded()
   return config.is_excluded_buffer(buffer, self._options) or config.is_sensitive_buffer(buffer)
 end
 
-function Collector:_handle_key(_mapped, typed)
+function Collector:_mapping_boundary()
+  if self._mapping_resolver == nil then
+    return
+  end
+  local callback = self._mapping_resolver.boundary or self._mapping_resolver.reset
+  if type(callback) == "function" then
+    pcall(callback, self._mapping_resolver)
+  end
+end
+
+function Collector:_prime_mapping_resolver()
+  self._mapping_ready = false
+  if self._mapping_resolver == nil or type(self._mapping_resolver.prime) ~= "function" then
+    return false
+  end
+  local context_ok, buffer = pcall(self._current_buffer)
+  if not context_ok or type(buffer) ~= "table" or type(buffer.id) ~= "number" then
+    return false
+  end
+  local eligibility_ok, excluded = pcall(function()
+    return config.is_excluded_buffer(buffer, self._options) or config.is_sensitive_buffer(buffer)
+  end)
+  if not eligibility_ok or excluded then
+    return false
+  end
+  local ok, primed = pcall(self._mapping_resolver.prime, self._mapping_resolver, buffer.id)
+  self._mapping_ready = ok and primed == true
+  if self._mapping_ready then
+    self._mapping_reprime_needed = false
+  end
+  return self._mapping_ready
+end
+
+function Collector:_record_mapping_use(mapped, typed, mode, typed_tokens, elapsed_ms)
+  if self._mapping_resolver == nil or not self._mapping_ready then
+    return
+  end
+  local evidence = mapping_attribution.classify_callback(mapped, typed)
+  if evidence ~= "typed_same" and evidence ~= "typed_different" then
+    return
+  end
+  local ok, candidate = pcall(self._mapping_resolver.resolve, self._mapping_resolver, mode, typed_tokens)
+  if not ok or type(candidate) ~= "table" then
+    local is_dirty = self._mapping_resolver.is_dirty
+    if type(is_dirty) == "function" then
+      local dirty_ok, dirty = pcall(is_dirty, self._mapping_resolver)
+      if dirty_ok and dirty == true then
+        self._mapping_ready = false
+        self._mapping_reprime_needed = true
+        self:_schedule_mapping_reprime()
+      end
+    end
+    return
+  end
+  local mapping_id = rawget(candidate, "mapping_id")
+  local candidate_mode = rawget(candidate, "mode")
+  local scope = rawget(candidate, "scope")
+  if candidate_mode ~= mode
+    or (scope ~= "global" and scope ~= "buffer")
+    or type(mapping_id) ~= "string"
+    or #mapping_id ~= 75
+    or string.match(mapping_id, "^mapping%-v1:[0-9a-f]+$") == nil
+    or #typed_tokens == 0
+  then
+    return
+  end
+  self:_queue(schema.mapping_use(self._session_id, elapsed_ms, mode, mapping_id, typed_tokens))
+end
+
+function Collector:_handle_key(mapped, typed)
   if self._state ~= "recording" or self._last_error ~= nil then
     return
   end
@@ -319,22 +470,38 @@ function Collector:_handle_key(_mapped, typed)
   local elapsed_ms = self:_elapsed_ms()
   if self:_is_excluded() then
     self._last_mode = nil
+    self:_mapping_boundary()
     self:_flush_input(elapsed_ms)
     return
+  end
+  if self._mapping_reprime_needed then
+    self:_schedule_mapping_reprime()
   end
 
   local mode = normalize_mode(self._current_mode(), self._current_cmdtype())
   if self._last_mode ~= nil and self._last_mode ~= mode then
     local previous_mode = self._last_mode
     self._last_mode = mode
-    self:_flush_input(elapsed_ms)
-    self:_queue(schema.mode_transition(self._session_id, elapsed_ms, previous_mode, mode))
+    if not self:_flush_input(elapsed_ms) then
+      return
+    end
+    self:_mapping_boundary()
+    if not self:_queue(schema.mode_transition(self._session_id, elapsed_ms, previous_mode, mode)) then
+      return
+    end
   else
+    if self._last_mode == nil then
+      self:_mapping_boundary()
+    end
     self._last_mode = mode
   end
 
   if SEQUENCE_MODES[mode] then
-    self:_record_sequence(mode, typed, elapsed_ms)
+    local typed_tokens = self:_typed_tokens(typed)
+    if not self:_record_sequence(mode, typed, elapsed_ms, typed_tokens) then
+      return
+    end
+    self:_record_mapping_use(mapped, typed, mode, typed_tokens, elapsed_ms)
   elseif mode == "insert" then
     self:_record_text_keys(typed, elapsed_ms)
   end
@@ -346,7 +513,9 @@ function Collector:_attach()
   end
 
   self._unregister = self._register_on_key(function(mapped, typed)
+    self._in_callback = true
     local ok, error_message = pcall(self._handle_key, self, mapped, typed)
+    self._in_callback = false
     if not ok then
       self._last_error = tostring(error_message)
     end
@@ -363,9 +532,19 @@ function Collector:_detach()
 end
 
 function Collector:_reset_session()
+  self._flush_epoch = self._flush_epoch + 1
+  self._flush_scheduled = false
+  self._in_callback = false
   self._end_queued = false
   self._pending = {}
+  self._pending_bytes = 0
   self._last_mode = nil
+  self._mapping_reprime_needed = false
+  self._mapping_reprime_scheduled = false
+  self._mapping_ready = false
+  if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
+    pcall(self._mapping_resolver.reset, self._mapping_resolver)
+  end
   self._sequence = nil
   self._session_id = nil
   self._session_writer = nil
@@ -384,7 +563,11 @@ function Collector:start()
   end
 
   if self._state == "paused" then
-    local ok, error_message = pcall(self._attach, self)
+    local ok, error_message = pcall(function()
+      self:flush()
+      self:_prime_mapping_resolver()
+      self:_attach()
+    end)
     if not ok then
       self._last_error = tostring(error_message)
       error(error_message, 0)
@@ -405,6 +588,7 @@ function Collector:start()
   local ok, error_message = pcall(function()
     self:_queue(schema.session_start(self._session_id))
     self:flush()
+    self:_prime_mapping_resolver()
     self:_attach()
   end)
   if not ok then
@@ -426,6 +610,11 @@ function Collector:pause()
   end
   self:_detach()
   self._state = "paused"
+  self._mapping_reprime_needed = false
+  self._mapping_ready = false
+  if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
+    pcall(self._mapping_resolver.reset, self._mapping_resolver)
+  end
   local ok, error_message = pcall(self.flush, self)
   if not ok then
     self._last_error = tostring(error_message)
@@ -468,9 +657,17 @@ function Collector:flush()
     return 0
   end
 
-  self:_flush_input(self:_elapsed_ms())
   local count = self:_write_pending()
+  self:_flush_input(self:_elapsed_ms())
+  self._mapping_ready = false
+  if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
+    pcall(self._mapping_resolver.reset, self._mapping_resolver)
+  end
+  count = count + self:_write_pending()
   self._session_writer:flush()
+  if self._state == "recording" then
+    self:_prime_mapping_resolver()
+  end
   return count
 end
 
@@ -479,6 +676,7 @@ function Collector:status()
     state = self._state,
     session_id = self._session_id,
     pending_events = #self._pending,
+    pending_bytes = self._pending_bytes,
     last_error = self._last_error,
   }
 end

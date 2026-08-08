@@ -13,7 +13,8 @@ use std::{
 };
 
 use key_insights::{
-    MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs, render_markdown, render_summary_json,
+    MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
+    parse_keymap_snapshot, render_markdown, render_summary_json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         if argument == OsStr::new("--summary")
             || argument == OsStr::new("--report")
             || argument == OsStr::new("--session-dir")
+            || argument == OsStr::new("--keymap-snapshot")
         {
             break;
         }
@@ -63,6 +65,7 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let mut session_directory = None;
     let mut summary_path = None;
     let mut report_path = None;
+    let mut keymap_snapshot_path = None;
     while index < arguments.len() {
         let flag = arguments[index]
             .to_str()
@@ -76,7 +79,10 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
             "--session-dir" if session_directory.is_none() => {
                 session_directory = Some(PathBuf::from(value))
             }
-            "--summary" | "--report" | "--session-dir" => {
+            "--keymap-snapshot" if keymap_snapshot_path.is_none() => {
+                keymap_snapshot_path = Some(PathBuf::from(value))
+            }
+            "--summary" | "--report" | "--session-dir" | "--keymap-snapshot" => {
                 return Err(format!("duplicate option {flag}"));
             }
             _ => return Err(format!("unknown option {flag}")),
@@ -96,11 +102,33 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         }
         None => return Err(usage()),
     };
+    let keymap_snapshot = match keymap_snapshot_path {
+        Some(path) if path == Path::new("-") => Some(SnapshotInput {
+            bytes: read_snapshot(std::io::stdin().lock())?,
+            identity: None,
+            path: None,
+        }),
+        Some(path) => Some(open_snapshot_input(&path)?),
+        None => None,
+    };
     let paths = resolve_paths_for_inputs(inputs, &summary_path, &report_path)?;
-    recover_outputs_anchored(&paths.summary, &paths.report)?;
-
+    if let Some(snapshot) = &keymap_snapshot
+        && (output_matches_snapshot(snapshot, &paths.summary)?
+            || output_matches_snapshot(snapshot, &paths.report)?)
+    {
+        return Err("output paths must not overwrite the keymap snapshot".to_owned());
+    }
+    let snapshot = keymap_snapshot
+        .as_ref()
+        .map(|input| parse_keymap_snapshot(input.bytes.as_slice()))
+        .transpose()
+        .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
     let readers = paths.inputs.iter().map(|input| BufReader::new(&input.file));
-    let summary = analyze_jsonl_inputs(readers).map_err(|error| match error.input_index {
+    let analysis = match snapshot.as_ref() {
+        Some(snapshot) => analyze_jsonl_inputs_with_snapshot(readers, snapshot),
+        None => analyze_jsonl_inputs(readers),
+    };
+    let summary = analysis.map_err(|error| match error.input_index {
         Some(index) => format!(
             "failed to analyze {}: {}",
             paths.inputs[index].path.display(),
@@ -108,11 +136,80 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         ),
         None => error.error.to_string(),
     })?;
+    recover_outputs_anchored(&paths.summary, &paths.report)?;
     let summary_output =
         StagedOutput::create(&paths.summary, render_summary_json(&summary).as_bytes())?;
     let report_output = StagedOutput::create(&paths.report, render_markdown(&summary).as_bytes())?;
     publish_pair(summary_output, report_output)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| "failed to open keymap snapshot".to_owned())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+    let permissions = metadata.mode() & 0o7777;
+    let private_mode = permissions == 0o400 || permissions == 0o600;
+    // SAFETY: geteuid has no preconditions and does not mutate memory.
+    let owned = metadata.uid() == unsafe { libc::geteuid() };
+    if !metadata.is_file() || metadata.nlink() != 1 || !private_mode || !owned {
+        return Err("keymap snapshot permissions are unsafe".to_owned());
+    }
+    let identity = (metadata.dev(), metadata.ino());
+    Ok(SnapshotInput {
+        bytes: read_snapshot(file)?,
+        identity: Some(identity),
+        path: Some(
+            fs::canonicalize(path).map_err(|_| "failed to resolve keymap snapshot".to_owned())?,
+        ),
+    })
+}
+
+#[cfg(not(unix))]
+fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
+    let file = File::open(path).map_err(|_| "failed to open keymap snapshot".to_owned())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+    if !metadata.is_file() {
+        return Err("keymap snapshot is not a regular file".to_owned());
+    }
+    Ok(SnapshotInput {
+        bytes: read_snapshot(file)?,
+        path: Some(path.to_owned()),
+        identity: Some(
+            fs::canonicalize(path).map_err(|_| "failed to resolve keymap snapshot".to_owned())?,
+        ),
+    })
+}
+
+const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+
+fn read_snapshot<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut reader)
+        .take((MAX_SNAPSHOT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "failed to read keymap snapshot".to_owned())?;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err("keymap snapshot exceeds the size limit".to_owned());
+    }
+    Ok(bytes)
+}
+
+#[derive(Debug)]
+struct SnapshotInput {
+    bytes: Vec<u8>,
+    identity: Option<InputIdentity>,
+    path: Option<PathBuf>,
 }
 
 struct ResolvedPaths {
@@ -290,12 +387,47 @@ fn output_matches_input(
         .is_some_and(|metadata| (metadata.device_u64(), metadata.inode_u64()) == input.identity))
 }
 
+#[cfg(unix)]
+fn output_matches_snapshot(
+    snapshot: &SnapshotInput,
+    output: &ResolvedOutputPath,
+) -> Result<bool, String> {
+    let Some(identity) = snapshot.identity else {
+        return Ok(false);
+    };
+    if snapshot.path.as_ref() == Some(&output.path) {
+        return Ok(true);
+    }
+    let name = output
+        .path
+        .file_name()
+        .ok_or_else(|| format!("output path has no file name: {}", output.path.display()))?;
+    let metadata = output.directory.child_metadata(name).map_err(|error| {
+        format!(
+            "failed to inspect output {}: {error}",
+            output.path.display()
+        )
+    })?;
+    Ok(metadata.is_some_and(|metadata| (metadata.device_u64(), metadata.inode_u64()) == identity))
+}
+
 #[cfg(not(unix))]
 fn output_matches_input(
     input: &ResolvedInputPath,
     output: &ResolvedOutputPath,
 ) -> Result<bool, String> {
     Ok(input.path == output.path || same_file(&input.path, &output.path))
+}
+
+#[cfg(not(unix))]
+fn output_matches_snapshot(
+    snapshot: &SnapshotInput,
+    output: &ResolvedOutputPath,
+) -> Result<bool, String> {
+    Ok(snapshot
+        .path
+        .as_ref()
+        .is_some_and(|path| path == &output.path || same_file(path, &output.path)))
 }
 
 struct ResolvedOutputPath {
@@ -362,7 +494,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md>".to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json|->]".to_owned()
 }
 
 #[cfg(all(test, unix))]

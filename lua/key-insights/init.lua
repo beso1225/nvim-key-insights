@@ -37,6 +37,7 @@ local function get_report_instance()
     local output_directory = options.report.directory or report.default_directory()
     report_instance = report.new({
       analyzer = options.report.analyzer,
+      collector_options = options,
       output_directory = output_directory,
       session_directory = get_writer().directory,
     })
@@ -98,7 +99,7 @@ end
 
 function M.status()
   local status = instance == nil
-      and { state = "stopped", session_id = nil, pending_events = 0, last_error = nil }
+      and { state = "stopped", session_id = nil, pending_events = 0, pending_bytes = 0, last_error = nil }
     or instance:status()
   status.report_running = report_instance ~= nil and report_instance:status().running
   return status
@@ -136,6 +137,9 @@ function M.register_commands()
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
     callback = function()
+      if report_instance ~= nil and type(report_instance.shutdown) == "function" then
+        pcall(report_instance.shutdown, report_instance)
+      end
       local ok, error_message = pcall(M.stop)
       if not ok then
         vim.notify("key-insights failed to close its session: " .. tostring(error_message), vim.log.levels.ERROR)

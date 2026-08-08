@@ -3,7 +3,13 @@ use std::{cmp::Reverse, collections::BTreeMap, fmt::Write, io::BufRead};
 use serde::Serialize;
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-use crate::{Event, SCHEMA_VERSION, SequenceMode, ValidationError, validator::JsonlValidator};
+use crate::{
+    Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode, ValidationError,
+    keymap_snapshot::mapping_order, validator::JsonlValidator,
+};
+
+const SUMMARY_SCHEMA_VERSION: u32 = 1;
+const SNAPSHOT_SUMMARY_SCHEMA_VERSION: u32 = 2;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -18,6 +24,7 @@ pub enum AnalysisError {
     TooManyDistinctRepeatedKeys,
     RetainedTokenBytesExceeded,
     SessionDurationOverflow,
+    SnapshotEventMismatch,
 }
 
 impl std::fmt::Display for AnalysisError {
@@ -44,6 +51,8 @@ impl std::fmt::Display for AnalysisError {
             Self::SessionDurationOverflow => {
                 formatter.write_str("total session duration exceeds u64::MAX milliseconds")
             }
+            Self::SnapshotEventMismatch => formatter
+                .write_str("mapping event mode or typed keys conflict with the keymap snapshot"),
         }
     }
 }
@@ -104,6 +113,8 @@ pub struct AnalysisSummary {
     pub keys: Vec<KeyCount>,
     pub mappings: Vec<MappingCount>,
     pub repeated_keys: Vec<RepeatedKeyStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping_attribution: Option<MappingAttribution>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -123,6 +134,45 @@ pub struct KeyCount {
 pub struct MappingCount {
     pub mapping_id: String,
     pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MappingAttribution {
+    pub snapshot_version: u32,
+    pub mappings: Vec<MappingAttributionEntry>,
+    pub collisions: Vec<MappingCollision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MappingAttributionEntry {
+    pub mapping_id: String,
+    pub status: MappingAttributionStatus,
+    pub count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lhs: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub collision_mapping_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MappingAttributionStatus {
+    Observed,
+    ObservedNotInSnapshot,
+    UnobservedInSample,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MappingCollision {
+    pub kind: String,
+    pub mode: String,
+    pub lhs: Vec<String>,
+    pub global_mapping_id: String,
+    pub buffer_mapping_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -167,6 +217,14 @@ pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisE
     analyze_jsonl_inputs(std::iter::once(reader)).map_err(|error| error.error)
 }
 
+pub fn analyze_jsonl_with_snapshot<R: BufRead>(
+    reader: R,
+    snapshot: &KeymapSnapshot,
+) -> Result<AnalysisSummary, AnalysisError> {
+    analyze_jsonl_inputs_with_snapshot(std::iter::once(reader), snapshot)
+        .map_err(|error| error.error)
+}
+
 /// Analyzes complete JSONL sources as one bounded deterministic dataset.
 ///
 /// Every source must contain at least one complete session. Session identities
@@ -176,12 +234,34 @@ where
     I: IntoIterator<Item = R>,
     R: BufRead,
 {
+    analyze_jsonl_inputs_impl(readers, None)
+}
+
+pub fn analyze_jsonl_inputs_with_snapshot<I, R>(
+    readers: I,
+    snapshot: &KeymapSnapshot,
+) -> Result<AnalysisSummary, AnalysisInputsError>
+where
+    I: IntoIterator<Item = R>,
+    R: BufRead,
+{
+    analyze_jsonl_inputs_impl(readers, Some(snapshot))
+}
+
+fn analyze_jsonl_inputs_impl<I, R>(
+    readers: I,
+    snapshot: Option<&KeymapSnapshot>,
+) -> Result<AnalysisSummary, AnalysisInputsError>
+where
+    I: IntoIterator<Item = R>,
+    R: BufRead,
+{
     let mut accumulator = Accumulator::default();
     let mut analysis_error_input = None;
     let mut validator = JsonlValidator::new();
     for (input_index, reader) in readers.into_iter().enumerate() {
         let source_sessions = validator
-            .consume(reader, |event| accumulator.observe(event))
+            .consume(reader, |event| accumulator.observe(event, snapshot))
             .map_err(|error| AnalysisInputsError {
                 input_index: Some(input_index),
                 error: AnalysisError::Validation(error),
@@ -209,11 +289,11 @@ where
             error,
         });
     }
-    Ok(accumulator.finish(validation.sessions, validation.events))
+    Ok(accumulator.finish(validation.sessions, validation.events, snapshot))
 }
 
 impl Accumulator {
-    fn observe(&mut self, event: &Event) {
+    fn observe(&mut self, event: &Event, snapshot: Option<&KeymapSnapshot>) {
         match event {
             Event::SessionEnd { elapsed_ms, .. } => {
                 match self.total_session_duration_ms.checked_add(*elapsed_ms) {
@@ -249,8 +329,23 @@ impl Accumulator {
             Event::ModeTransition { .. } => {
                 self.mode_transitions = self.mode_transitions.saturating_add(1);
             }
-            Event::MappingUse { mapping_id, .. } => {
+            Event::MappingUse {
+                mode,
+                mapping_id,
+                typed_keys,
+                ..
+            } => {
                 self.mapping_uses = self.mapping_uses.saturating_add(1);
+                if let Some(mapping) = snapshot.and_then(|value| {
+                    value
+                        .by_id
+                        .get(mapping_id)
+                        .map(|index| &value.mappings[*index])
+                }) && (mapping.mode.as_str() != sequence_mode_name(mode)
+                    || mapping.lhs != *typed_keys)
+                {
+                    self.record_error(AnalysisError::SnapshotEventMismatch);
+                }
                 match increment_bounded(
                     &mut self.mappings,
                     &mut self.retained_token_bytes,
@@ -308,7 +403,12 @@ impl Accumulator {
         }
     }
 
-    fn finish(self, sessions: u64, events: u64) -> AnalysisSummary {
+    fn finish(
+        self,
+        sessions: u64,
+        events: u64,
+        snapshot: Option<&KeymapSnapshot>,
+    ) -> AnalysisSummary {
         let unique_keys = self.keys.len() as u64;
         let unique_mappings = self.mappings.len() as u64;
         let unique_repeated_keys = self.repeated_keys.len() as u64;
@@ -325,6 +425,8 @@ impl Accumulator {
             .into_iter()
             .map(|(key, count)| KeyCount { key, count })
             .collect();
+        let mapping_attribution =
+            snapshot.map(|value| build_mapping_attribution(value, &self.mappings));
         let mappings = ranked(self.mappings)
             .into_iter()
             .map(|(mapping_id, count)| MappingCount { mapping_id, count })
@@ -342,7 +444,11 @@ impl Accumulator {
         repeated_keys.truncate(MAX_RANKED_ITEMS);
 
         AnalysisSummary {
-            schema_version: SCHEMA_VERSION,
+            schema_version: if snapshot.is_some() {
+                SNAPSHOT_SUMMARY_SCHEMA_VERSION
+            } else {
+                SUMMARY_SCHEMA_VERSION
+            },
             ranking_limit: MAX_RANKED_ITEMS,
             sessions,
             events,
@@ -362,6 +468,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
+            mapping_attribution,
         }
     }
 }
@@ -416,6 +523,114 @@ fn sequence_mode_name(mode: &SequenceMode) -> &'static str {
     }
 }
 
+fn build_mapping_attribution(
+    snapshot: &KeymapSnapshot,
+    counts: &BTreeMap<String, u64>,
+) -> MappingAttribution {
+    let mut collision_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut collision_groups: BTreeMap<(SnapshotMode, Vec<String>), Vec<&SnapshotMapping>> =
+        BTreeMap::new();
+    for mapping in &snapshot.mappings {
+        collision_groups
+            .entry((mapping.mode, mapping.lhs.clone()))
+            .or_default()
+            .push(mapping);
+    }
+
+    let mut collisions = Vec::new();
+    for ((mode, lhs), mappings) in collision_groups {
+        let global = mappings
+            .iter()
+            .find(|mapping| mapping.scope.as_str() == "global");
+        let buffer = mappings
+            .iter()
+            .find(|mapping| mapping.scope.as_str() == "buffer");
+        if let (Some(global), Some(buffer)) = (global, buffer) {
+            collision_ids
+                .entry(global.mapping_id.clone())
+                .or_default()
+                .push(buffer.mapping_id.clone());
+            collision_ids
+                .entry(buffer.mapping_id.clone())
+                .or_default()
+                .push(global.mapping_id.clone());
+            collisions.push(MappingCollision {
+                kind: "potential_buffer_shadowing".to_owned(),
+                mode: mode.as_str().to_owned(),
+                lhs,
+                global_mapping_id: global.mapping_id.clone(),
+                buffer_mapping_id: buffer.mapping_id.clone(),
+            });
+        }
+    }
+
+    let mut mappings = Vec::with_capacity(snapshot.mappings.len() + counts.len());
+    for mapping in &snapshot.mappings {
+        let count = counts.get(&mapping.mapping_id).copied().unwrap_or(0);
+        mappings.push(MappingAttributionEntry {
+            mapping_id: mapping.mapping_id.clone(),
+            status: if count > 0 {
+                MappingAttributionStatus::Observed
+            } else {
+                MappingAttributionStatus::UnobservedInSample
+            },
+            count,
+            mode: Some(mapping.mode.as_str().to_owned()),
+            scope: Some(mapping.scope.as_str().to_owned()),
+            lhs: Some(mapping.lhs.clone()),
+            collision_mapping_ids: collision_ids
+                .remove(&mapping.mapping_id)
+                .unwrap_or_default(),
+        });
+    }
+    for (mapping_id, count) in counts {
+        if !snapshot.by_id.contains_key(mapping_id) {
+            mappings.push(MappingAttributionEntry {
+                mapping_id: mapping_id.clone(),
+                status: MappingAttributionStatus::ObservedNotInSnapshot,
+                count: *count,
+                mode: None,
+                scope: None,
+                lhs: None,
+                collision_mapping_ids: Vec::new(),
+            });
+        }
+    }
+    mappings.sort_by(|left, right| {
+        attribution_status_rank(left.status)
+            .cmp(&attribution_status_rank(right.status))
+            .then_with(|| match left.status {
+                MappingAttributionStatus::Observed
+                | MappingAttributionStatus::ObservedNotInSnapshot => right
+                    .count
+                    .cmp(&left.count)
+                    .then_with(|| left.mapping_id.cmp(&right.mapping_id)),
+                MappingAttributionStatus::UnobservedInSample => {
+                    let left_index = snapshot.by_id[&left.mapping_id];
+                    let right_index = snapshot.by_id[&right.mapping_id];
+                    mapping_order(
+                        &snapshot.mappings[left_index],
+                        &snapshot.mappings[right_index],
+                    )
+                }
+            })
+    });
+
+    MappingAttribution {
+        snapshot_version: snapshot.snapshot_version,
+        mappings,
+        collisions,
+    }
+}
+
+fn attribution_status_rank(status: MappingAttributionStatus) -> u8 {
+    match status {
+        MappingAttributionStatus::Observed => 0,
+        MappingAttributionStatus::ObservedNotInSnapshot => 1,
+        MappingAttributionStatus::UnobservedInSample => 2,
+    }
+}
+
 pub fn render_summary_json(summary: &AnalysisSummary) -> String {
     let mut output =
         serde_json::to_string_pretty(summary).expect("analysis summary is serializable");
@@ -457,6 +672,7 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
     render_modes(&mut output, summary);
     render_keys(&mut output, summary);
     render_mappings(&mut output, summary);
+    render_mapping_attribution(&mut output, summary);
     render_repeated_keys(&mut output, summary);
     output
 }
@@ -531,6 +747,69 @@ fn render_repeated_keys(output: &mut String, summary: &AnalysisSummary) {
             key.presses
         )
         .unwrap();
+    }
+}
+
+fn render_mapping_attribution(output: &mut String, summary: &AnalysisSummary) {
+    let Some(attribution) = &summary.mapping_attribution else {
+        return;
+    };
+    writeln!(output, "## Snapshot mapping attribution\n").unwrap();
+    if attribution.mappings.is_empty() {
+        writeln!(output, "_No observed or snapshotted mappings._\n").unwrap();
+    } else {
+        writeln!(output, "| Status | Mapping ID | Binding | Count |").unwrap();
+        writeln!(output, "| --- | --- | --- | ---: |").unwrap();
+        for mapping in &attribution.mappings {
+            let binding = match (&mapping.mode, &mapping.scope, &mapping.lhs) {
+                (Some(mode), Some(scope), Some(lhs)) => {
+                    format!("{mode} / {scope} / {}", html_code(&lhs.concat()))
+                }
+                _ => "_not in snapshot_".to_owned(),
+            };
+            writeln!(
+                output,
+                "| {} | {} | {} | {} |",
+                attribution_status_name(mapping.status),
+                html_code(&mapping.mapping_id),
+                binding,
+                mapping.count
+            )
+            .unwrap();
+        }
+        output.push('\n');
+    }
+
+    writeln!(output, "### Potential buffer shadowing\n").unwrap();
+    if attribution.collisions.is_empty() {
+        writeln!(
+            output,
+            "_No global/buffer mapping collisions in the snapshot._\n"
+        )
+        .unwrap();
+        return;
+    }
+    writeln!(output, "| Mode | LHS | Global mapping | Buffer mapping |").unwrap();
+    writeln!(output, "| --- | --- | --- | --- |").unwrap();
+    for collision in &attribution.collisions {
+        writeln!(
+            output,
+            "| {} | {} | {} | {} |",
+            collision.mode,
+            html_code(&collision.lhs.concat()),
+            html_code(&collision.global_mapping_id),
+            html_code(&collision.buffer_mapping_id)
+        )
+        .unwrap();
+    }
+    output.push('\n');
+}
+
+fn attribution_status_name(status: MappingAttributionStatus) -> &'static str {
+    match status {
+        MappingAttributionStatus::Observed => "observed",
+        MappingAttributionStatus::ObservedNotInSnapshot => "observed_not_in_snapshot",
+        MappingAttributionStatus::UnobservedInSample => "unobserved_in_sample",
     }
 }
 

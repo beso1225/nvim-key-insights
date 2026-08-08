@@ -45,7 +45,8 @@ argument vector equivalent to:
 ```text
 key-insights analyze --session-dir <sessions> \
   --summary <reports>/summary.json \
-  --report <reports>/report.md
+  --report <reports>/report.md \
+  --keymap-snapshot -
 ```
 
 Paths are passed as separate arguments without shell interpolation. Only one
@@ -59,6 +60,16 @@ The default output directory is
 `stdpath("state")/key-insights/reports/`. The plugin creates and verifies it as
 owner-only where the platform supports Unix permissions. Paths are local
 configuration and are not written to events or summaries.
+
+Immediately before launch, the plugin derives a bounded mapping snapshot from
+Neovim APIs. The JSON payload contains only canonical left-hand sides,
+normalized modes, global/buffer-local scope, and opaque IDs. Mapping
+implementations, descriptions, source metadata, buffer IDs, names, filetypes,
+and paths are excluded.
+The plugin writes this payload directly to the analyzer's standard input. The
+analyzer reads at most 1 MiB before strict parsing, and no snapshot file or
+cleanup lifecycle exists. Manual CLI use can pass a private file path instead of
+`-`.
 
 ## Input ordering and discovery
 

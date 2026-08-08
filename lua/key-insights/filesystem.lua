@@ -5,15 +5,26 @@ local native_unlinkat = nil
 do
   local loaded, ffi = pcall(require, "ffi")
   if loaded then
-    pcall(ffi.cdef, "int unlinkat(int dirfd, const char *pathname, int flags);")
-    local found, unlinkat = pcall(function()
-      return ffi.C.unlinkat
-    end)
-    if found then
+    pcall(ffi.cdef, [[
+      int unlinkat(int dirfd, const char *pathname, int flags);
+    ]])
+    local unlink_found, unlinkat = pcall(function() return ffi.C.unlinkat end)
+    if unlink_found then
       native_ffi = ffi
+    end
+    if unlink_found then
       native_unlinkat = unlinkat
     end
   end
+end
+
+local function valid_child(name)
+  return type(name) == "string"
+    and name ~= ""
+    and name ~= "."
+    and name ~= ".."
+    and string.find(name, "/", 1, true) == nil
+    and string.find(name, "\0", 1, true) == nil
 end
 
 function M.open_read(fs, path)
@@ -22,14 +33,7 @@ function M.open_read(fs, path)
 end
 
 function M.unlink_child(directory_descriptor, name)
-  if type(directory_descriptor) ~= "number"
-    or type(name) ~= "string"
-    or name == ""
-    or name == "."
-    or name == ".."
-    or string.find(name, "/", 1, true) ~= nil
-    or string.find(name, "\0", 1, true) ~= nil
-  then
+  if type(directory_descriptor) ~= "number" or not valid_child(name) then
     return nil, "invalid descriptor-relative unlink target"
   end
   if native_unlinkat == nil then

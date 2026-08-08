@@ -7,9 +7,40 @@ use std::{
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
-    open_input_file, open_private_lock_file, output_lock_path, publish_pair,
+    open_input_file, open_private_lock_file, open_snapshot_input, output_lock_path, publish_pair,
     publish_pair_with_hook, publish_pair_with_hooks, resolve_paths,
 };
+
+#[test]
+fn snapshot_input_is_read_once_and_rejects_unsafe_leaf_types() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "key-insights-snapshot-input-{}-{unique}",
+        std::process::id()
+    ));
+    let directory = root.join("reports");
+    fs::create_dir_all(&directory).expect("create report directory");
+    let path = directory.join("keymap-snapshot-test.json");
+    fs::write(&path, b"trusted\n").expect("write trusted snapshot");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).expect("protect snapshot");
+    assert_eq!(
+        open_snapshot_input(&path).expect("private snapshot").bytes,
+        b"trusted\n"
+    );
+
+    let link = directory.join("linked.json");
+    fs::hard_link(&path, &link).expect("create hard link");
+    let error = open_snapshot_input(&path).expect_err("linked snapshot must be rejected");
+    assert!(error.contains("permissions"), "{error}");
+
+    let symlink_path = directory.join("symlink.json");
+    symlink(&path, &symlink_path).expect("create symlink");
+    assert!(open_snapshot_input(&symlink_path).is_err());
+    fs::remove_dir_all(root).expect("remove test directory");
+}
 
 #[test]
 fn explicit_fifo_input_is_rejected_without_waiting_for_a_writer() {
@@ -824,7 +855,7 @@ fn failed_second_publication_restores_the_previous_pair() {
 }
 
 #[test]
-fn next_publication_recovers_a_pair_interrupted_after_the_summary() {
+fn invalid_input_does_not_recover_an_interrupted_pair() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     let unique = SystemTime::now()
@@ -874,12 +905,12 @@ fn next_publication_recovers_a_pair_interrupted_after_the_summary() {
     .expect_err("analysis must fail after startup recovery");
     assert!(
         retry_error.contains("session"),
-        "recovery must complete before validation: {retry_error}"
+        "validation must fail before recovery: {retry_error}"
     );
 
     assert_eq!(
         fs::read_to_string(&summary).expect("read recovered summary"),
-        "old summary\n"
+        "interrupted summary\n"
     );
     assert_eq!(
         fs::read_to_string(&report).expect("read recovered report"),

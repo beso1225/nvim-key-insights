@@ -205,7 +205,7 @@ local select_runs = events_of_type(select_mode.events, "text_run")
 assert(#select_runs == 1 and select_runs[1].key_count == vim.fn.strchars("select-secret"))
 assert(string.find(vim.json.encode(select_mode.events), "select-secret", 1, true) == nil)
 
-local retry = { callback = nil, now_ms = 0, write_state = "partial" }
+local retry = { callback = nil, now_ms = 0, scheduled = {}, write_state = "partial" }
 local retry_directory = vim.fn.tempname()
 local retry_fs = setmetatable({}, { __index = vim.uv })
 retry_fs.fs_write = function(descriptor, data, offset)
@@ -251,6 +251,9 @@ local retry_collector = collector.new({
       retry.callback = nil
     end
   end,
+  schedule = function(callback)
+    table.insert(retry.scheduled, callback)
+  end,
 })
 
 retry_collector:start()
@@ -258,11 +261,18 @@ retry.now_ms = 10
 retry.callback("mapped-retry-secret", "j")
 retry.now_ms = 1011
 retry.callback("mapped-trigger-secret", "k")
+assert(retry_collector:status().last_error == nil, "callback-path writes must be deferred")
+assert(#retry.scheduled == 1)
+table.remove(retry.scheduled, 1)()
 assert(retry_collector:status().state == "recording")
 assert(retry_collector:status().pending_events == 1)
 assert(string.find(retry_collector:status().last_error, "injected aggregation write failure", 1, true) ~= nil)
+assert(retry_collector:pause(), "pause must retry the unchanged in-flight batch before flushing its tail")
+assert(retry_collector:status().state == "paused")
+assert(retry_collector:status().pending_events == 0)
+assert(retry_collector:start(), "a recovered paused collector must resume")
 retry.now_ms = 1020
-retry.callback("mapped-ignored-secret", "l")
+retry.callback("mapped-resumed-secret", "l")
 retry.now_ms = 2021
 retry.callback("mapped-second-boundary-secret", "m")
 retry.now_ms = 2030
@@ -272,12 +282,15 @@ local retry_lines =
   vim.fn.readfile(vim.fs.joinpath(retry_directory, "nvim-key-insights-aggregation-retry.jsonl"))
 local retry_events = vim.tbl_map(vim.json.decode, retry_lines)
 local retry_sequences = events_of_type(retry_events, "key_sequence")
-assert(#retry_sequences == 1, "a retried aggregation event must be persisted exactly once")
+assert(#retry_sequences == 4, "recovery must preserve the failed batch, its tail, and resumed input")
 assert(vim.deep_equal(retry_sequences[1].keys, { "j" }))
+assert(vim.deep_equal(retry_sequences[2].keys, { "k" }))
+assert(vim.deep_equal(retry_sequences[3].keys, { "l" }))
+assert(vim.deep_equal(retry_sequences[4].keys, { "m" }))
 assert(#events_of_type(retry_events, "session_start") == 1)
 assert(#events_of_type(retry_events, "session_end") == 1)
 local retry_json = vim.json.encode(retry_events)
-for _, secret in ipairs({ "retry-secret", "trigger-secret", "ignored-secret", "second-boundary-secret" }) do
+for _, secret in ipairs({ "retry-secret", "trigger-secret", "resumed-secret", "second-boundary-secret" }) do
   assert(string.find(retry_json, secret, 1, true) == nil)
 end
 vim.fn.delete(retry_directory, "rf")

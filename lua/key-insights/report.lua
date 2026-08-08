@@ -1,13 +1,14 @@
 local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
+local snapshot_payload = require("key-insights.snapshot_payload")
 
 local M = {}
 local Report = {}
 Report.__index = Report
 
 local OWNER_DIRECTORY = 448 -- 0700
-local MAX_SUMMARY_BYTES = 4 * 1024 * 1024
-local MAX_REPORT_BYTES = 1024 * 1024
+local MAX_SUMMARY_BYTES = 16 * 1024 * 1024
+local MAX_REPORT_BYTES = 16 * 1024 * 1024
 local REPORT_HEADER = "# Neovim Key Insights"
 
 local function default_notify(message, level)
@@ -78,7 +79,7 @@ local function validate_outputs(fs, summary_path, report_path, previous)
   local decoded_ok, summary = pcall(vim.json.decode, contents)
   if not decoded_ok
     or type(summary) ~= "table"
-    or summary.schema_version ~= 1
+    or (summary.schema_version ~= 1 and summary.schema_version ~= 2)
     or type(summary.sessions) ~= "number"
     or type(summary.events) ~= "number"
   then
@@ -127,12 +128,19 @@ function M.new(options, dependencies)
   assert_nonempty(config.session_directory, "report session directory")
   local deps = dependencies or {}
   local fs = deps.fs or vim.uv
+  local payload = nil
+  if deps.collect_snapshot_payload == nil then
+    payload = snapshot_payload.new({
+      collector_options = config.collector_options,
+    })
+  end
   return setmetatable({
     _analyzer = config.analyzer,
     _capture_outputs = deps.capture_outputs or function(summary_path, report_path)
       return capture_outputs(fs, summary_path, report_path)
     end,
     _job = nil,
+    _generation = 0,
     _mkdir = deps.mkdir or vim.fn.mkdir,
     _notify_fn = deps.notify or default_notify,
     _open_file = deps.open_file or default_open_file,
@@ -140,6 +148,9 @@ function M.new(options, dependencies)
     _previous_outputs = nil,
     _protect_directory = deps.protect_directory or function(path, mode)
       return protect_directory(fs, path, mode)
+    end,
+    _collect_snapshot_payload = deps.collect_snapshot_payload or function()
+      return payload:collect()
     end,
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
@@ -176,7 +187,10 @@ function Report:_open()
   return true
 end
 
-function Report:_complete(result)
+function Report:_complete(result, generation)
+  if generation ~= self._generation then
+    return
+  end
   self._job = nil
   local previous_outputs = self._previous_outputs
   self._previous_outputs = nil
@@ -223,6 +237,12 @@ function Report:start()
     return false
   end
   self._previous_outputs = previous_outputs
+  local collect_ok, snapshot = pcall(self._collect_snapshot_payload)
+  if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
+    self._previous_outputs = nil
+    self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
+    return false
+  end
   local argv = {
     self._analyzer,
     "analyze",
@@ -232,13 +252,17 @@ function Report:start()
     self._summary_path,
     "--report",
     self._report_path,
+    "--keymap-snapshot",
+    "-",
   }
+  self._generation = self._generation + 1
+  local generation = self._generation
   self._job = true
   local completed = false
   local run_ok, job = pcall(self._run, argv, function(result)
     completed = true
-    self:_complete(result)
-  end)
+    self:_complete(result, generation)
+  end, snapshot)
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._previous_outputs = nil
@@ -248,6 +272,20 @@ function Report:start()
   if not completed then
     self._job = job
   end
+  return true
+end
+
+function Report:shutdown()
+  if self._job == nil then
+    return false
+  end
+  self._generation = self._generation + 1
+  local job = self._job
+  self._job = nil
+  if type(job) == "table" and type(job.kill) == "function" then
+    pcall(job.kill, job, 15)
+  end
+  self._previous_outputs = nil
   return true
 end
 

@@ -1,4 +1,5 @@
 local M = {}
+local MAX_SEQUENCE_KEYS = 65536
 
 local SENSITIVE_NAME_PATTERNS = {
   "^%.env",
@@ -49,13 +50,16 @@ function M.resolve(options)
   local max_sequence_keys = resolved.collection.max_sequence_keys
   assert(
     type(max_sequence_keys) == "number"
+      and max_sequence_keys < math.huge
       and max_sequence_keys == math.floor(max_sequence_keys)
-      and max_sequence_keys > 0,
-    "collection.max_sequence_keys must be a positive integer"
+      and max_sequence_keys > 0
+      and max_sequence_keys <= MAX_SEQUENCE_KEYS,
+    "collection.max_sequence_keys must be an integer between 1 and 65536"
   )
   local sequence_timeout_ms = resolved.collection.sequence_timeout_ms
   assert(
     type(sequence_timeout_ms) == "number"
+      and sequence_timeout_ms < math.huge
       and sequence_timeout_ms == math.floor(sequence_timeout_ms)
       and sequence_timeout_ms >= 0,
     "collection.sequence_timeout_ms must be a non-negative integer"

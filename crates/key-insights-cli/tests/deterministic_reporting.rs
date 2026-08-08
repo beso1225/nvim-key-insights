@@ -1,8 +1,8 @@
 use std::{
     fs,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -236,6 +236,146 @@ fn cli_writes_the_same_deterministic_outputs() {
         fs::read_to_string(report).expect("read report"),
         EXPECTED_REPORT
     );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn cli_accepts_a_snapshot_file_and_snapshot_stdin() {
+    let directory = temporary_directory("snapshot-cli");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let snapshot = directory.join("snapshot.json");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write input fixture");
+    let snapshot_bytes = b"{\"snapshot_version\":1,\"mappings\":[]}\n";
+    fs::write(&snapshot, snapshot_bytes).expect("write snapshot");
+    protect_snapshot(&snapshot);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            path(&input),
+            "--summary",
+            path(&summary),
+            "--report",
+            path(&report),
+            "--keymap-snapshot",
+            path(&snapshot),
+        ])
+        .output()
+        .expect("run snapshot file analysis");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&summary).expect("read summary"))
+            .expect("summary JSON");
+    assert_eq!(value["schema_version"], 2);
+    assert_eq!(
+        value["mapping_attribution"]["mappings"][0]["status"],
+        "observed_not_in_snapshot"
+    );
+
+    let stdin_summary = directory.join("stdin-summary.json");
+    let stdin_report = directory.join("stdin-report.md");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            path(&input),
+            "--summary",
+            path(&stdin_summary),
+            "--report",
+            path(&stdin_report),
+            "--keymap-snapshot",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("start snapshot stdin analysis");
+    child
+        .stdin
+        .take()
+        .expect("child stdin")
+        .write_all(snapshot_bytes)
+        .expect("write snapshot stdin");
+    assert!(child.wait().expect("wait for analyzer").success());
+    assert_eq!(
+        fs::read_to_string(&stdin_summary).expect("read stdin summary"),
+        fs::read_to_string(&summary).expect("read file summary")
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn invalid_snapshot_preserves_existing_outputs() {
+    let directory = temporary_directory("invalid-snapshot");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let snapshot = directory.join("snapshot.json");
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write input fixture");
+    fs::write(
+        &snapshot,
+        r#"{"snapshot_version":1,"mappings":[],"secret":"must-fail"}"#,
+    )
+    .expect("write invalid snapshot");
+    protect_snapshot(&snapshot);
+    fs::write(&summary, "old summary\n").expect("write old summary");
+    fs::write(&report, "old report\n").expect("write old report");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            path(&input),
+            "--summary",
+            path(&summary),
+            "--report",
+            path(&report),
+            "--keymap-snapshot",
+            path(&snapshot),
+        ])
+        .output()
+        .expect("run invalid snapshot analysis");
+
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(&summary).unwrap(), "old summary\n");
+    assert_eq!(fs::read_to_string(&report).unwrap(), "old report\n");
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn cli_refuses_to_overwrite_the_snapshot_input() {
+    let directory = temporary_directory("snapshot-output-alias");
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    let snapshot = directory.join("snapshot.json");
+    let report = directory.join("report.md");
+    fs::write(&input, INPUT).expect("write input fixture");
+    let original = "{\"snapshot_version\":1,\"mappings\":[]}\n";
+    fs::write(&snapshot, original).expect("write snapshot");
+    protect_snapshot(&snapshot);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .args([
+            "analyze",
+            path(&input),
+            "--summary",
+            path(&snapshot),
+            "--report",
+            path(&report),
+            "--keymap-snapshot",
+            path(&snapshot),
+        ])
+        .output()
+        .expect("run aliased snapshot analysis");
+
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(&snapshot).unwrap(), original);
+    assert!(!report.exists());
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 
@@ -1254,3 +1394,12 @@ fn temporary_directory(label: &str) -> PathBuf {
 fn path(path: &Path) -> &str {
     path.to_str().expect("UTF-8 test path")
 }
+
+#[cfg(unix)]
+fn protect_snapshot(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("protect snapshot");
+}
+
+#[cfg(not(unix))]
+fn protect_snapshot(_path: &Path) {}
