@@ -82,6 +82,33 @@ fn rejects_session_id_changes_and_backwards_time() {
 }
 
 #[test]
+fn rejects_key_sequence_durations_beyond_elapsed_session_time() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":1,"mode":"normal","keys":["j","k"],"duration_ms":18446744073709551615}"#,
+        "\n",
+    );
+
+    let error = validate(input).expect_err("sequence duration must fit within session time");
+    assert_eq!(error.line, 2);
+    assert_eq!(
+        error.kind,
+        ValidationErrorKind::SequenceDurationExceedsElapsed
+    );
+
+    let boundary = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"boundary","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"boundary","elapsed_ms":10,"mode":"normal","keys":["j","k"],"duration_ms":10}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"boundary","elapsed_ms":10}"#,
+        "\n",
+    );
+    validate(boundary).expect("duration equal to elapsed session time is valid");
+}
+
+#[test]
 fn rejects_unsupported_versions_and_unclosed_sessions() {
     let unsupported = concat!(
         r#"{"schema_version":2,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,

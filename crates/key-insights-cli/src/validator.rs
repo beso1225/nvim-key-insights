@@ -37,6 +37,7 @@ pub enum ValidationErrorKind {
     SessionAlreadyActive,
     SessionMismatch,
     ElapsedTimeWentBackward,
+    SequenceDurationExceedsElapsed,
     ReusedSessionId,
     TooManySessions,
     UnclosedSession,
@@ -74,6 +75,9 @@ impl fmt::Display for ValidationErrorKind {
             Self::SessionAlreadyActive => formatter.write_str("a session is already active"),
             Self::SessionMismatch => formatter.write_str("session ID does not match"),
             Self::ElapsedTimeWentBackward => formatter.write_str("elapsed time moved backwards"),
+            Self::SequenceDurationExceedsElapsed => {
+                formatter.write_str("key sequence duration exceeds elapsed session time")
+            }
             Self::ReusedSessionId => formatter.write_str("session ID was reused"),
             Self::TooManySessions => formatter.write_str("session count exceeds the limit"),
             Self::UnclosedSession => formatter.write_str("session was not closed"),
@@ -260,6 +264,19 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
         Event::MappingUse { mapping_id, .. } if mapping_id.is_empty()
     ) {
         return Err(error(line, ValidationErrorKind::EmptyMappingId));
+    }
+    if matches!(
+        event,
+        Event::KeySequence {
+            elapsed_ms,
+            duration_ms,
+            ..
+        } if duration_ms > elapsed_ms
+    ) {
+        return Err(error(
+            line,
+            ValidationErrorKind::SequenceDurationExceedsElapsed,
+        ));
     }
     Ok(())
 }

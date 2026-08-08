@@ -135,12 +135,12 @@ fn ergonomic_histograms_use_fixed_boundary_buckets() {
     );
     for duration_ms in [0_u64, 49, 50, 99, 100, 249, 250, 499, 500, 1_000] {
         input.push_str(&format!(
-            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":[\"j\",\"k\"],\"duration_ms\":{duration_ms}}}\n"
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":1000,\"mode\":\"normal\",\"keys\":[\"j\",\"k\"],\"duration_ms\":{duration_ms}}}\n"
         ));
     }
     for duration_ms in [199_u64, 200] {
         input.push_str(&format!(
-            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":[\"j\",\"k\",\"l\"],\"duration_ms\":{duration_ms}}}\n"
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":1000,\"mode\":\"normal\",\"keys\":[\"j\",\"k\",\"l\"],\"duration_ms\":{duration_ms}}}\n"
         ));
     }
     input.push_str(
@@ -165,17 +165,17 @@ fn ergonomic_operations_and_mode_transitions_are_canonical_and_deterministic() {
     let input = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"operations","elapsed_ms":0}"#,
         "\n",
-        r##"{"schema_version":1,"event_type":"key_sequence","session_id":"operations","elapsed_ms":1,"mode":"normal","keys":["u","<C-R>",".","/","?","n","N","*","#","x"],"duration_ms":9}"##,
+        r##"{"schema_version":1,"event_type":"key_sequence","session_id":"operations","elapsed_ms":9,"mode":"normal","keys":["u","<C-R>",".","/","?","n","N","*","#","x"],"duration_ms":9}"##,
         "\n",
-        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"operations","elapsed_ms":2,"mode":"normal","mapping_id":"mapped-u","typed_keys":["u"]}"#,
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"operations","elapsed_ms":10,"mode":"normal","mapping_id":"mapped-u","typed_keys":["u"]}"#,
         "\n",
-        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":3,"from":"normal","to":"visual"}"#,
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":11,"from":"normal","to":"visual"}"#,
         "\n",
-        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":4,"from":"insert","to":"normal"}"#,
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":12,"from":"insert","to":"normal"}"#,
         "\n",
-        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":5,"from":"other","to":"command"}"#,
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":13,"from":"other","to":"command"}"#,
         "\n",
-        r#"{"schema_version":1,"event_type":"session_end","session_id":"operations","elapsed_ms":5}"#,
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"operations","elapsed_ms":13}"#,
         "\n",
     );
 
@@ -250,22 +250,22 @@ fn repeated_motion_candidates_require_complete_sample_guards() {
             "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":0}}\n"
         ));
         input.push_str(&format!(
-            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":1,\"mode\":\"normal\",\"keys\":[\"j\",\"j\",\"j\"],\"duration_ms\":2}}\n"
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":2,\"mode\":\"normal\",\"keys\":[\"j\",\"j\",\"j\"],\"duration_ms\":2}}\n"
         ));
         if session == 0 {
             let padding = vec!["x"; 91];
             input.push_str(&format!(
-                "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":2,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
+                "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":3,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
                 serde_json::to_string(&padding).unwrap()
             ));
             input.push_str(
-                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":3,\"mode\":\"normal\",\"keys\":[\"k\",\"k\"],\"duration_ms\":1}\n",
+                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":4,\"mode\":\"normal\",\"keys\":[\"k\",\"k\"],\"duration_ms\":1}\n",
             );
             input.push_str(
-                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":4,\"mode\":\"normal\",\"keys\":[\"k\"],\"duration_ms\":0}\n",
+                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":5,\"mode\":\"normal\",\"keys\":[\"k\"],\"duration_ms\":0}\n",
             );
         }
-        let elapsed_ms = if session == 0 { 4 } else { 1 };
+        let elapsed_ms = if session == 0 { 5 } else { 2 };
         input.push_str(&format!(
             "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":{elapsed_ms}}}\n"
         ));
