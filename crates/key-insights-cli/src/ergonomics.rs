@@ -12,6 +12,8 @@ pub const MIN_CANDIDATE_OBSERVATIONS: u64 = 3;
 pub const HISTOGRAM_VERSION: u32 = 1;
 pub const OPERATION_TOKEN_SET_VERSION: u32 = 1;
 pub const COUNTABLE_TOKEN_SET_VERSION: u32 = 1;
+pub const DIRECTIONAL_MOTION_TOKEN_SET_VERSION: u32 = 1;
+pub const CANDIDATE_KIND_VERSION: u32 = 1;
 
 const SESSION_DURATION_BUCKETS: [&str; 5] = ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
 const SEQUENCE_LENGTH_BUCKETS: [&str; 7] = ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
@@ -26,6 +28,7 @@ pub struct ErgonomicSummary {
     pub operations: OperationEvidence,
     pub count_prefixes: CountPrefixEvidence,
     pub mode_transitions: Vec<ModeTransitionCount>,
+    pub repeated_motions: RepeatedMotionSummary,
     pub candidates: Vec<ErgonomicCandidate>,
 }
 
@@ -39,6 +42,7 @@ impl Default for ErgonomicSummary {
             operations: OperationEvidence::default(),
             count_prefixes: CountPrefixEvidence::default(),
             mode_transitions: Vec::new(),
+            repeated_motions: RepeatedMotionSummary::default(),
             candidates: Vec::new(),
         }
     }
@@ -116,6 +120,28 @@ pub struct CountPrefixEvidence {
     pub digit_presses: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RepeatedMotionEvidence {
+    pub motion: &'static str,
+    pub runs: u64,
+    pub presses: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RepeatedMotionSummary {
+    pub token_set_version: u32,
+    pub items: Vec<RepeatedMotionEvidence>,
+}
+
+impl Default for RepeatedMotionSummary {
+    fn default() -> Self {
+        Self {
+            token_set_version: DIRECTIONAL_MOTION_TOKEN_SET_VERSION,
+            items: Vec::new(),
+        }
+    }
+}
+
 impl Default for CountPrefixEvidence {
     fn default() -> Self {
         Self {
@@ -134,21 +160,32 @@ pub(crate) struct ErgonomicAccumulator {
     operations: OperationEvidence,
     count_prefixes: CountPrefixEvidence,
     mode_transitions: BTreeMap<(&'static str, &'static str), u64>,
+    repeated_motions: BTreeMap<&'static str, (u64, u64)>,
+    overflowed: bool,
 }
 
 impl ErgonomicAccumulator {
     pub(crate) fn observe_session_duration(&mut self, elapsed_ms: u64) {
-        let count = &mut self.session_duration[session_duration_bucket(elapsed_ms)];
-        *count = count.saturating_add(1);
+        checked_accumulate(
+            &mut self.session_duration[session_duration_bucket(elapsed_ms)],
+            1,
+            &mut self.overflowed,
+        );
     }
 
     pub(crate) fn observe_sequence(&mut self, key_count: usize, duration_ms: u64) {
-        let count = &mut self.sequence_length[sequence_length_bucket(key_count)];
-        *count = count.saturating_add(1);
+        checked_accumulate(
+            &mut self.sequence_length[sequence_length_bucket(key_count)],
+            1,
+            &mut self.overflowed,
+        );
         if key_count >= 2 {
             let average_ms = duration_ms / (key_count as u64 - 1);
-            let count = &mut self.latency[latency_bucket(average_ms)];
-            *count = count.saturating_add(1);
+            checked_accumulate(
+                &mut self.latency[latency_bucket(average_ms)],
+                1,
+                &mut self.overflowed,
+            );
         }
     }
 
@@ -162,7 +199,7 @@ impl ErgonomicAccumulator {
                 "n" | "N" | "*" | "#" => &mut self.operations.search_navigation,
                 _ => continue,
             };
-            *count = count.saturating_add(1);
+            checked_accumulate(count, 1, &mut self.overflowed);
         }
     }
 
@@ -175,12 +212,16 @@ impl ErgonomicAccumulator {
                     operation += 1;
                 }
                 if operation < keys.len() && is_countable_operation(&keys[operation]) {
-                    self.count_prefixes.occurrences =
-                        self.count_prefixes.occurrences.saturating_add(1);
-                    self.count_prefixes.digit_presses = self
-                        .count_prefixes
-                        .digit_presses
-                        .saturating_add((operation - index) as u64);
+                    checked_accumulate(
+                        &mut self.count_prefixes.occurrences,
+                        1,
+                        &mut self.overflowed,
+                    );
+                    checked_accumulate(
+                        &mut self.count_prefixes.digit_presses,
+                        (operation - index) as u64,
+                        &mut self.overflowed,
+                    );
                     index = operation + 1;
                     continue;
                 }
@@ -189,15 +230,84 @@ impl ErgonomicAccumulator {
         }
     }
 
+    pub(crate) fn observe_repeated_motions(&mut self, keys: &[String]) {
+        let mut index = 0;
+        while index < keys.len() {
+            let mut end = index + 1;
+            while end < keys.len() && keys[end] == keys[index] {
+                end += 1;
+            }
+            let presses = (end - index) as u64;
+            if presses >= 3
+                && let Some(motion) = directional_motion(&keys[index])
+            {
+                let stats = self.repeated_motions.entry(motion).or_default();
+                checked_accumulate(&mut stats.0, 1, &mut self.overflowed);
+                checked_accumulate(&mut stats.1, presses, &mut self.overflowed);
+            }
+            index = end;
+        }
+    }
+
     pub(crate) fn observe_mode_transition(&mut self, from: &Mode, to: &Mode) {
         let count = self
             .mode_transitions
             .entry((mode_name(from), mode_name(to)))
             .or_default();
-        *count = count.saturating_add(1);
+        checked_accumulate(count, 1, &mut self.overflowed);
     }
 
-    pub(crate) fn finish(self) -> ErgonomicSummary {
+    pub(crate) fn has_overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    pub(crate) fn finish(self, sessions: u64, sequence_keys: u64) -> ErgonomicSummary {
+        let mut repeated_motions: Vec<_> = self
+            .repeated_motions
+            .into_iter()
+            .map(|(motion, (runs, presses))| RepeatedMotionEvidence {
+                motion,
+                runs,
+                presses,
+            })
+            .collect();
+        repeated_motions.sort_by(|left, right| {
+            right
+                .runs
+                .cmp(&left.runs)
+                .then_with(|| right.presses.cmp(&left.presses))
+                .then_with(|| left.motion.cmp(right.motion))
+        });
+        repeated_motions.truncate(MAX_ERGONOMIC_CANDIDATES);
+
+        let candidates =
+            if sessions >= MIN_CANDIDATE_SESSIONS && sequence_keys >= MIN_CANDIDATE_SEQUENCE_KEYS {
+                repeated_motions
+                    .iter()
+                    .filter(|motion| motion.runs >= MIN_CANDIDATE_OBSERVATIONS)
+                    .map(|motion| ErgonomicCandidate {
+                        candidate_id: format!("repeated-motion-{}", motion.motion),
+                        kind: "repeated_motion".to_owned(),
+                        kind_version: CANDIDATE_KIND_VERSION,
+                        observations: motion.runs,
+                        measurements: BTreeMap::from([
+                            ("presses".to_owned(), motion.presses),
+                            ("runs".to_owned(), motion.runs),
+                        ]),
+                        guard: CandidateGuard {
+                            observed_sessions: sessions,
+                            observed_sequence_keys: sequence_keys,
+                            required_sessions: MIN_CANDIDATE_SESSIONS,
+                            required_sequence_keys: MIN_CANDIDATE_SEQUENCE_KEYS,
+                            required_observations: MIN_CANDIDATE_OBSERVATIONS,
+                        },
+                    })
+                    .take(MAX_ERGONOMIC_CANDIDATES)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         ErgonomicSummary {
             distributions: ErgonomicDistributions::from_counts(
                 self.session_duration,
@@ -211,8 +321,33 @@ impl ErgonomicAccumulator {
                 .into_iter()
                 .map(|((from, to), count)| ModeTransitionCount { from, to, count })
                 .collect(),
+            repeated_motions: RepeatedMotionSummary {
+                token_set_version: DIRECTIONAL_MOTION_TOKEN_SET_VERSION,
+                items: repeated_motions,
+            },
+            candidates,
             ..ErgonomicSummary::default()
         }
+    }
+}
+
+fn checked_accumulate(target: &mut u64, amount: u64, overflowed: &mut bool) {
+    match target.checked_add(amount) {
+        Some(total) => *target = total,
+        None => *overflowed = true,
+    }
+}
+
+fn directional_motion(token: &str) -> Option<&'static str> {
+    match token {
+        "h" => Some("h"),
+        "j" => Some("j"),
+        "k" => Some("k"),
+        "l" => Some("l"),
+        "w" => Some("w"),
+        "b" => Some("b"),
+        "e" => Some("e"),
+        _ => None,
     }
 }
 
@@ -342,7 +477,9 @@ impl Default for ErgonomicThresholds {
 pub struct ErgonomicCandidate {
     pub candidate_id: String,
     pub kind: String,
+    pub kind_version: u32,
     pub observations: u64,
+    pub measurements: BTreeMap<String, u64>,
     pub guard: CandidateGuard,
 }
 
@@ -435,7 +572,70 @@ pub(crate) fn render_markdown(output: &mut String, summary: &ErgonomicSummary) {
         }
         output.push('\n');
     }
+    writeln!(output, "### Repeated motions\n").unwrap();
+    if summary.repeated_motions.items.is_empty() {
+        writeln!(output, "_No repeated motion runs observed._\n").unwrap();
+    } else {
+        writeln!(output, "| Motion | Runs | Presses |").unwrap();
+        writeln!(output, "| --- | ---: | ---: |").unwrap();
+        for motion in &summary.repeated_motions.items {
+            writeln!(
+                output,
+                "| {} | {} | {} |",
+                motion.motion, motion.runs, motion.presses
+            )
+            .unwrap();
+        }
+        output.push('\n');
+    }
     if summary.candidates.is_empty() {
         writeln!(output, "_No ergonomic candidates met the sample guard._").unwrap();
+    } else {
+        writeln!(output, "### Candidates\n").unwrap();
+        writeln!(
+            output,
+            "| Candidate | Kind | Observations | Measurements | Guard |"
+        )
+        .unwrap();
+        writeln!(output, "| --- | --- | ---: | --- | --- |").unwrap();
+        for candidate in &summary.candidates {
+            let measurements = candidate
+                .measurements
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                output,
+                "| {} | {} v{} | {} | {} | {}/{} sessions; {}/{} keys; {}/{} observations |",
+                candidate.candidate_id,
+                candidate.kind,
+                candidate.kind_version,
+                candidate.observations,
+                measurements,
+                candidate.guard.observed_sessions,
+                candidate.guard.required_sessions,
+                candidate.guard.observed_sequence_keys,
+                candidate.guard.required_sequence_keys,
+                candidate.observations,
+                candidate.guard.required_observations
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ErgonomicAccumulator;
+
+    #[test]
+    fn records_counter_overflow_instead_of_saturating_silently() {
+        let mut accumulator = ErgonomicAccumulator::default();
+        accumulator.count_prefixes.occurrences = u64::MAX;
+        accumulator.observe_count_prefixes(&["2".to_owned(), "j".to_owned()]);
+
+        assert!(accumulator.has_overflowed());
+        assert_eq!(accumulator.count_prefixes.occurrences, u64::MAX);
     }
 }

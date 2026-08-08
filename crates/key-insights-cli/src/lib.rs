@@ -14,11 +14,12 @@ pub use analyzer::{
     analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
 };
 pub use ergonomics::{
-    COUNTABLE_TOKEN_SET_VERSION, CandidateGuard, CountPrefixEvidence, ERGONOMICS_CONTRACT_VERSION,
-    ErgonomicCandidate, ErgonomicDistributions, ErgonomicSummary, ErgonomicThresholds,
-    HISTOGRAM_VERSION, HistogramBucket, MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS,
+    CANDIDATE_KIND_VERSION, COUNTABLE_TOKEN_SET_VERSION, CandidateGuard, CountPrefixEvidence,
+    DIRECTIONAL_MOTION_TOKEN_SET_VERSION, ERGONOMICS_CONTRACT_VERSION, ErgonomicCandidate,
+    ErgonomicDistributions, ErgonomicSummary, ErgonomicThresholds, HISTOGRAM_VERSION,
+    HistogramBucket, MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS,
     MIN_CANDIDATE_SEQUENCE_KEYS, MIN_CANDIDATE_SESSIONS, ModeTransitionCount,
-    OPERATION_TOKEN_SET_VERSION, OperationEvidence,
+    OPERATION_TOKEN_SET_VERSION, OperationEvidence, RepeatedMotionEvidence, RepeatedMotionSummary,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use keymap_snapshot::{

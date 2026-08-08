@@ -95,4 +95,8 @@ _Ranked tables show at most 100 items._
 | --- | --- | ---: |
 | normal | insert | 1 |
 
+### Repeated motions
+
+_No repeated motion runs observed._
+
 _No ergonomic candidates met the sample guard._

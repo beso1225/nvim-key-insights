@@ -177,6 +177,10 @@
         "count": 1
       }
     ],
+    "repeated_motions": {
+      "token_set_version": 1,
+      "items": []
+    },
     "candidates": []
   }
 }

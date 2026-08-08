@@ -24,6 +24,7 @@ pub enum AnalysisError {
     TooManyDistinctRepeatedKeys,
     RetainedTokenBytesExceeded,
     SessionDurationOverflow,
+    ErgonomicMetricsOverflow,
     SnapshotEventMismatch,
 }
 
@@ -50,6 +51,9 @@ impl std::fmt::Display for AnalysisError {
             ),
             Self::SessionDurationOverflow => {
                 formatter.write_str("total session duration exceeds u64::MAX milliseconds")
+            }
+            Self::ErgonomicMetricsOverflow => {
+                formatter.write_str("ergonomic metric count exceeds u64::MAX")
             }
             Self::SnapshotEventMismatch => formatter
                 .write_str("mapping event mode or typed keys conflict with the keymap snapshot"),
@@ -313,8 +317,12 @@ impl Accumulator {
                 self.ergonomics.observe_sequence(keys.len(), *duration_ms);
                 self.ergonomics.observe_operations(keys);
                 self.ergonomics.observe_count_prefixes(keys);
+                self.ergonomics.observe_repeated_motions(keys);
                 self.key_sequences = self.key_sequences.saturating_add(1);
-                self.sequence_keys = self.sequence_keys.saturating_add(keys.len() as u64);
+                match self.sequence_keys.checked_add(keys.len() as u64) {
+                    Some(total) => self.sequence_keys = total,
+                    None => self.record_error(AnalysisError::ErgonomicMetricsOverflow),
+                }
                 let mode = sequence_mode_name(mode).to_owned();
                 let stats = self.modes.entry(mode).or_default();
                 stats.sequences = stats.sequences.saturating_add(1);
@@ -374,6 +382,9 @@ impl Accumulator {
                 }
             }
             Event::SessionStart { .. } => {}
+        }
+        if self.ergonomics.has_overflowed() {
+            self.record_error(AnalysisError::ErgonomicMetricsOverflow);
         }
     }
 
@@ -476,7 +487,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
-            ergonomics: self.ergonomics.finish(),
+            ergonomics: self.ergonomics.finish(sessions, self.sequence_keys),
             mapping_attribution,
         }
     }
