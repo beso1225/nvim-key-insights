@@ -141,6 +141,13 @@ API failures, malformed results, prefix ambiguity, and mapping mutation all
 produce no mapping event. The post-mapping callback value is reduced to a
 content-free evidence enum and never reaches the resolver.
 
+If an exact lookup detects that its baseline became stale, the collector marks
+attribution unavailable immediately and schedules at most one baseline refresh
+outside `vim.on_key`. Input remains fail-closed until that refresh succeeds. A
+transient refresh failure is retried only after later eligible input, without
+performing Neovim API calls or storage I/O inside the input callback. Excluded
+buffers do not trigger refresh attempts.
+
 Start and resume establish fresh baselines outside the input callback. Explicit
 flush establishes a fresh baseline after the pending event write; pause, stop,
 and failed start discard it. A mapping added or changed after the last baseline

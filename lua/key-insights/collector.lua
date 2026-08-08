@@ -105,6 +105,8 @@ function M.new(spec)
     _in_callback = false,
     _keytrans = dependencies.keytrans or default_keytrans,
     _last_mode = nil,
+    _mapping_reprime_needed = false,
+    _mapping_reprime_scheduled = false,
     _mapping_resolver = resolver,
     _mapping_ready = false,
     _new_session_id = dependencies.new_session_id or default_session_id,
@@ -312,6 +314,29 @@ function Collector:_schedule_pending_write()
   end
 end
 
+function Collector:_schedule_mapping_reprime()
+  if not self._mapping_reprime_needed or self._mapping_reprime_scheduled then
+    return
+  end
+  self._mapping_reprime_scheduled = true
+  local epoch = self._flush_epoch
+  local scheduled = pcall(self._schedule, function()
+    if epoch ~= self._flush_epoch then
+      return
+    end
+    self._mapping_reprime_scheduled = false
+    if self._state ~= "recording" or self._last_error ~= nil or not self._mapping_reprime_needed then
+      return
+    end
+    if not self:_prime_mapping_resolver() then
+      self._mapping_reprime_needed = true
+    end
+  end)
+  if not scheduled then
+    self._mapping_reprime_scheduled = false
+  end
+end
+
 function Collector:_queue_many(events)
   if self._in_callback and self._last_error ~= nil then
     return false
@@ -395,6 +420,9 @@ function Collector:_prime_mapping_resolver()
   end
   local ok, primed = pcall(self._mapping_resolver.prime, self._mapping_resolver, buffer.id)
   self._mapping_ready = ok and primed == true
+  if self._mapping_ready then
+    self._mapping_reprime_needed = false
+  end
   return self._mapping_ready
 end
 
@@ -408,6 +436,15 @@ function Collector:_record_mapping_use(mapped, typed, mode, typed_tokens, elapse
   end
   local ok, candidate = pcall(self._mapping_resolver.resolve, self._mapping_resolver, mode, typed_tokens)
   if not ok or type(candidate) ~= "table" then
+    local is_dirty = self._mapping_resolver.is_dirty
+    if type(is_dirty) == "function" then
+      local dirty_ok, dirty = pcall(is_dirty, self._mapping_resolver)
+      if dirty_ok and dirty == true then
+        self._mapping_ready = false
+        self._mapping_reprime_needed = true
+        self:_schedule_mapping_reprime()
+      end
+    end
     return
   end
   local mapping_id = rawget(candidate, "mapping_id")
@@ -436,6 +473,9 @@ function Collector:_handle_key(mapped, typed)
     self:_mapping_boundary()
     self:_flush_input(elapsed_ms)
     return
+  end
+  if self._mapping_reprime_needed then
+    self:_schedule_mapping_reprime()
   end
 
   local mode = normalize_mode(self._current_mode(), self._current_cmdtype())
@@ -499,6 +539,8 @@ function Collector:_reset_session()
   self._pending = {}
   self._pending_bytes = 0
   self._last_mode = nil
+  self._mapping_reprime_needed = false
+  self._mapping_reprime_scheduled = false
   self._mapping_ready = false
   if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
     pcall(self._mapping_resolver.reset, self._mapping_resolver)
@@ -568,6 +610,7 @@ function Collector:pause()
   end
   self:_detach()
   self._state = "paused"
+  self._mapping_reprime_needed = false
   self._mapping_ready = false
   if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
     pcall(self._mapping_resolver.reset, self._mapping_resolver)

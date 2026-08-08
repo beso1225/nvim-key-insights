@@ -174,6 +174,61 @@ lifecycle_controls.callback("l", "zq")
 assert(resets > resets_after_pause, "mode transitions must not retain attribution state")
 lifecycle:stop()
 
+local scheduled = {}
+local refreshed, refreshed_events, refreshed_resolver, refreshed_controls = fixture({
+  schedule = function(callback)
+    table.insert(scheduled, callback)
+  end,
+})
+local dirty = false
+local refresh_primes = 0
+local refresh_resolves = 0
+refreshed_resolver.prime = function()
+  refresh_primes = refresh_primes + 1
+  if refresh_primes == 2 then
+    return false
+  end
+  dirty = false
+  return true
+end
+refreshed_resolver.is_dirty = function()
+  return dirty
+end
+refreshed_resolver.resolve = function(_, mode, typed_keys)
+  refresh_resolves = refresh_resolves + 1
+  if refresh_resolves == 1 then
+    dirty = true
+    return nil
+  end
+  if mode == "normal" and vim.deep_equal(typed_keys, { "z", "q" }) then
+    return {
+      mapping_id = "mapping-v1:" .. string.rep("c", 64),
+      mode = "normal",
+      scope = "global",
+    }
+  end
+end
+
+refreshed:start()
+assert(refresh_primes == 1)
+refreshed_controls.callback("private-stale-mapping", "zq")
+assert(refresh_primes == 1, "dirty resolution must not re-prime inside vim.on_key")
+assert(#scheduled == 1, "dirty resolution must schedule one callback-local-free re-prime")
+refreshed_controls.callback("private-before-refresh", "x")
+assert(#scheduled == 1, "input before refresh must not enqueue duplicate re-primes")
+assert(refresh_resolves == 1, "a dirty resolver must remain fail-closed until refresh")
+table.remove(scheduled, 1)()
+assert(refresh_primes == 2, "the scheduled callback must attempt a fresh baseline")
+refreshed_controls.callback("private-after-failed-refresh", "x")
+assert(#scheduled == 1, "a failed refresh must schedule one bounded retry on later eligible input")
+assert(refresh_resolves == 1, "a failed refresh must remain fail-closed")
+table.remove(scheduled, 1)()
+assert(refresh_primes == 3, "the scheduled retry must establish a fresh baseline")
+refreshed_controls.callback("private-refreshed-mapping", "zq")
+refreshed:flush()
+assert(count(refreshed_events, "mapping_use") == 1, "attribution must recover after a dirty baseline refresh")
+refreshed:stop()
+
 local resilient, resilient_events, resilient_resolver, resilient_controls = fixture()
 local attempts = 0
 resilient_resolver.resolve = function()
