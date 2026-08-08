@@ -1,6 +1,6 @@
 # Milestone 3 deterministic ergonomic metrics plan
 
-Status: in progress
+Status: complete
 
 Roadmap milestone: [Deterministic ergonomic metrics](implementation-roadmap.md#milestone-3-deterministic-ergonomic-metrics)
 

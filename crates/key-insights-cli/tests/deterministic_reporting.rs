@@ -356,6 +356,23 @@ fn repeated_motion_candidates_require_complete_sample_guards() {
 }
 
 #[test]
+fn nonempty_candidates_do_not_reintroduce_local_session_or_project_identity() {
+    let secret = "private-project-/Users/example/.env";
+    let input = repeated_motion_guard_sample(3, 100, 3).replacen(
+        "\"elapsed_ms\":0}",
+        &format!("\"elapsed_ms\":0,\"project_id\":\"{secret}\"}}"),
+        1,
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid guarded sample");
+    assert!(!summary.ergonomics.candidates.is_empty());
+
+    for artifact in [render_summary_json(&summary), render_markdown(&summary)] {
+        assert!(!artifact.contains(secret));
+        assert!(!artifact.contains("guard-3-100-3"));
+    }
+}
+
+#[test]
 fn aggregates_multiple_input_readers_with_global_validation_state() {
     let first = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,

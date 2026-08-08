@@ -135,7 +135,7 @@ keymap collisions using an API-derived sanitized snapshot.
 
 ## Milestone 3: deterministic ergonomic metrics
 
-Status: in progress. See the
+Status: complete. See the
 [detailed implementation plan](milestone-3-deterministic-ergonomic-metrics-plan.md).
 
 Add metrics only when they support an explainable recommendation and remain
@@ -149,11 +149,11 @@ stable for identical inputs.
 - undo, redo, repeat, and search invocation counts without search contents;
 - mode-transition patterns;
 - mapping coverage and cautious underuse candidates;
-- session length and optional coarse filetype distribution.
+- session length distributions.
 
-Latency outputs should be aggregate distributions or bounded histograms, not raw
-per-keystroke timelines. Filetype collection requires an explicit privacy review
-and must remain free of paths and buffer names. Project identity remains optional,
+Latency outputs are bounded histograms, not raw per-keystroke timelines.
+Filetype collection remains deferred pending an explicit privacy review and
+must remain free of paths and buffer names. Project identity remains optional,
 local, and anonymous.
 
 ### Analysis rules
