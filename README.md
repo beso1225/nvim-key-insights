@@ -120,11 +120,13 @@ Normal, Visual, and Operator-pending input becomes bounded typed-key sequences;
 Insert and Select input becomes text-run counts and timing. Command/search
 contents and mapping expansions are discarded. Confirmed Normal, Visual, and
 Operator-pending mappings emit only opaque IDs and canonical typed keys; mapping
-implementations remain callback-local. Richer ergonomic metrics and Codex
-integration remain incremental TDD work.
+implementations remain callback-local. Deterministic ergonomic distributions,
+operation evidence, guarded repeated-motion candidates, and cautious mapping
+coverage are implemented; optional Codex integration remains future work.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the
-[Milestone 2 implementation plan](docs/milestone-2-mapping-attribution-plan.md)
-and [mapping attribution contract](docs/mapping-attribution.md) for the current
-mapping-attribution work.
+[Milestone 3 implementation plan](docs/milestone-3-deterministic-ergonomic-metrics-plan.md)
+for the current deterministic ergonomic evidence contract, and the
+[mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
+mapping evidence.

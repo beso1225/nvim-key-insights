@@ -45,14 +45,25 @@ be selected explicitly.
 - sequence counts and keys by Normal, Visual, and Operator-pending mode;
 - mode-transition and opaque mapping-use counts;
 - deterministic key and mapping frequency rankings, capped at 100 rows each;
-- consecutive repeated-key runs within each collected sequence.
+- consecutive repeated-key runs within each collected sequence;
+- versioned fixed histograms for session duration, sequence length, and average
+  sequence inter-key latency;
+- versioned undo, redo, repeat, search, count-prefix, repeated-motion, and
+  mode-transition evidence;
+- cautious, sample-guarded repeated-motion and current-mapping coverage
+  candidates, capped at 100 total rows.
 
-With a snapshot, schema-v2 output additionally joins every observed and
-snapshotted mapping as `observed`, `observed_not_in_snapshot`, or
+Every analysis emits summary schema v3. Collector events remain schema v1 and
+the optional snapshot document remains version 1; these are independent
+contracts. With a snapshot, the summary joins every observed and snapshotted
+mapping as `observed`, `observed_not_in_snapshot`, or
 `unobserved_in_sample`. It reports only potential global/buffer shadowing for an
 exact mode and canonical LHS match; it does not claim that a buffer-local entry
-was active in every context. Omitting the snapshot preserves the schema-v1 JSON
-and Markdown bytes. Snapshot JSON is limited to 1 MiB and 4,096 canonical,
+was active in every context. Current mappings that were unobserved may become
+candidates only after three complete sessions and 100 sequence keys; this does
+not claim that the current snapshot existed throughout the sample. Omitting the
+snapshot emits the same schema-v3 structure with unavailable mapping coverage.
+Snapshot JSON is limited to 1 MiB and 4,096 canonical,
 strictly ordered mappings. Unknown fields, unsupported versions, malformed or
 inconsistent IDs, invalid tokens, duplicates, and noncanonical ordering fail
 before output publication. `-` reads the automatic Neovim payload from stdin;
@@ -62,7 +73,13 @@ Snapshot-derived outputs remain bounded by the validated snapshot and event
 cardinality budgets; the Neovim workflow reads each generated artifact up to
 16 MiB before accepting it.
 
-Rankings use descending count with lexical identifiers as the tie-break. The summary retains total unique-token cardinalities when ranked rows are truncated. Mode rows use lexical mode order. JSON object layout and Markdown sections are stable for identical validated input.
+Histogram buckets, token sets, candidate kinds, thresholds, and caps are
+versioned in the summary. Repeated-motion rankings use descending run count,
+descending presses, then lexical motion. Other rankings use descending count
+with lexical identifiers as the tie-break. The summary retains total
+unique-token cardinalities when ranked rows are truncated. Mode rows use
+lexical mode order. JSON object layout and Markdown sections are stable for
+identical validated input.
 
 The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers across the complete input set and retains at most 1 MiB of unique token data across those categories. Individual schema-v1 tokens remain valid up to the existing 64 KiB event-line boundary. The analyzer rejects inputs outside the aggregate bounds instead of retaining unbounded state.
 
@@ -72,6 +89,11 @@ Publication acquires persistent, private sidecar lock files for both destination
 
 ## Privacy boundary
 
-The outputs exclude session IDs, anonymized project IDs, file paths, raw sequences, mapping right-hand sides, Insert text, and command/search contents. Key rankings contain individual sanitized Normal/Visual/Operator-pending key tokens, and mapping rankings contain only collector-generated opaque IDs. Markdown treats these tokens as untrusted content and escapes them before rendering.
+The outputs exclude session IDs, anonymized project IDs, file paths, raw
+sequences, raw timing samples, mapping right-hand sides, Insert text, and
+command/search contents. Key rankings contain individual sanitized
+Normal/Visual/Operator-pending key tokens, and mapping rankings and candidates
+contain only collector-generated opaque IDs. Markdown treats event-derived
+tokens as untrusted content and escapes them before rendering.
 
 Only `summary.json`, after user preview, is intended to cross the optional Codex boundary. JSONL collector logs and `report.md` remain local by default.

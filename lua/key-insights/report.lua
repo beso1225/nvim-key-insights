@@ -79,7 +79,7 @@ local function validate_outputs(fs, summary_path, report_path, previous)
   local decoded_ok, summary = pcall(vim.json.decode, contents)
   if not decoded_ok
     or type(summary) ~= "table"
-    or (summary.schema_version ~= 1 and summary.schema_version ~= 2)
+    or (summary.schema_version ~= 1 and summary.schema_version ~= 2 and summary.schema_version ~= 3)
     or type(summary.sessions) ~= "number"
     or type(summary.events) ~= "number"
   then

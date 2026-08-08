@@ -4,12 +4,12 @@ use serde::Serialize;
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
-    Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode, ValidationError,
-    keymap_snapshot::mapping_order, validator::JsonlValidator,
+    ErgonomicSummary, Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode,
+    ValidationError, ergonomics, ergonomics::ErgonomicAccumulator, keymap_snapshot::mapping_order,
+    validator::JsonlValidator,
 };
 
-const SUMMARY_SCHEMA_VERSION: u32 = 1;
-const SNAPSHOT_SUMMARY_SCHEMA_VERSION: u32 = 2;
+const SUMMARY_SCHEMA_VERSION: u32 = 3;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -24,6 +24,7 @@ pub enum AnalysisError {
     TooManyDistinctRepeatedKeys,
     RetainedTokenBytesExceeded,
     SessionDurationOverflow,
+    ErgonomicMetricsOverflow,
     SnapshotEventMismatch,
 }
 
@@ -50,6 +51,9 @@ impl std::fmt::Display for AnalysisError {
             ),
             Self::SessionDurationOverflow => {
                 formatter.write_str("total session duration exceeds u64::MAX milliseconds")
+            }
+            Self::ErgonomicMetricsOverflow => {
+                formatter.write_str("ergonomic metric count exceeds u64::MAX")
             }
             Self::SnapshotEventMismatch => formatter
                 .write_str("mapping event mode or typed keys conflict with the keymap snapshot"),
@@ -113,6 +117,7 @@ pub struct AnalysisSummary {
     pub keys: Vec<KeyCount>,
     pub mappings: Vec<MappingCount>,
     pub repeated_keys: Vec<RepeatedKeyStats>,
+    pub ergonomics: ErgonomicSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapping_attribution: Option<MappingAttribution>,
 }
@@ -211,6 +216,7 @@ struct Accumulator {
     keys: BTreeMap<String, u64>,
     mappings: BTreeMap<String, u64>,
     repeated_keys: BTreeMap<String, RepeatedAccumulator>,
+    ergonomics: ErgonomicAccumulator,
 }
 
 pub fn analyze_jsonl<R: BufRead>(reader: R) -> Result<AnalysisSummary, AnalysisError> {
@@ -296,14 +302,27 @@ impl Accumulator {
     fn observe(&mut self, event: &Event, snapshot: Option<&KeymapSnapshot>) {
         match event {
             Event::SessionEnd { elapsed_ms, .. } => {
+                self.ergonomics.observe_session_duration(*elapsed_ms);
                 match self.total_session_duration_ms.checked_add(*elapsed_ms) {
                     Some(total) => self.total_session_duration_ms = total,
                     None => self.record_error(AnalysisError::SessionDurationOverflow),
                 }
             }
-            Event::KeySequence { mode, keys, .. } => {
+            Event::KeySequence {
+                mode,
+                keys,
+                duration_ms,
+                ..
+            } => {
+                self.ergonomics.observe_sequence(keys.len(), *duration_ms);
+                self.ergonomics.observe_operations(keys);
+                self.ergonomics.observe_count_prefixes(keys);
+                self.ergonomics.observe_repeated_motions(keys);
                 self.key_sequences = self.key_sequences.saturating_add(1);
-                self.sequence_keys = self.sequence_keys.saturating_add(keys.len() as u64);
+                match self.sequence_keys.checked_add(keys.len() as u64) {
+                    Some(total) => self.sequence_keys = total,
+                    None => self.record_error(AnalysisError::ErgonomicMetricsOverflow),
+                }
                 let mode = sequence_mode_name(mode).to_owned();
                 let stats = self.modes.entry(mode).or_default();
                 stats.sequences = stats.sequences.saturating_add(1);
@@ -326,7 +345,8 @@ impl Accumulator {
                 self.text_runs = self.text_runs.saturating_add(1);
                 self.text_keys = self.text_keys.saturating_add(u64::from(*key_count));
             }
-            Event::ModeTransition { .. } => {
+            Event::ModeTransition { from, to, .. } => {
+                self.ergonomics.observe_mode_transition(from, to);
                 self.mode_transitions = self.mode_transitions.saturating_add(1);
             }
             Event::MappingUse {
@@ -362,6 +382,9 @@ impl Accumulator {
                 }
             }
             Event::SessionStart { .. } => {}
+        }
+        if self.ergonomics.has_overflowed() {
+            self.record_error(AnalysisError::ErgonomicMetricsOverflow);
         }
     }
 
@@ -427,6 +450,9 @@ impl Accumulator {
             .collect();
         let mapping_attribution =
             snapshot.map(|value| build_mapping_attribution(value, &self.mappings));
+        let ergonomics =
+            self.ergonomics
+                .finish(sessions, self.sequence_keys, snapshot, &self.mappings);
         let mappings = ranked(self.mappings)
             .into_iter()
             .map(|(mapping_id, count)| MappingCount { mapping_id, count })
@@ -444,11 +470,7 @@ impl Accumulator {
         repeated_keys.truncate(MAX_RANKED_ITEMS);
 
         AnalysisSummary {
-            schema_version: if snapshot.is_some() {
-                SNAPSHOT_SUMMARY_SCHEMA_VERSION
-            } else {
-                SUMMARY_SCHEMA_VERSION
-            },
+            schema_version: SUMMARY_SCHEMA_VERSION,
             ranking_limit: MAX_RANKED_ITEMS,
             sessions,
             events,
@@ -468,6 +490,7 @@ impl Accumulator {
             keys,
             mappings,
             repeated_keys,
+            ergonomics,
             mapping_attribution,
         }
     }
@@ -674,6 +697,8 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
     render_mappings(&mut output, summary);
     render_mapping_attribution(&mut output, summary);
     render_repeated_keys(&mut output, summary);
+    output.push('\n');
+    ergonomics::render_markdown(&mut output, &summary.ergonomics);
     output
 }
 

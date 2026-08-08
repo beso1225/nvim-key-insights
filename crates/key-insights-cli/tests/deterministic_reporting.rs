@@ -16,6 +16,36 @@ const INPUT: &str = include_str!("fixtures/reporting.jsonl");
 const EXPECTED_SUMMARY: &str = include_str!("fixtures/summary.json");
 const EXPECTED_REPORT: &str = include_str!("fixtures/report.md");
 
+fn repeated_motion_guard_sample(sessions: usize, sequence_keys: usize, runs: usize) -> String {
+    assert!(sequence_keys >= runs * 3);
+    let mut input = String::new();
+    for session in 0..sessions {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"guard-{sessions}-{sequence_keys}-{runs}-{session}\",\"elapsed_ms\":0}}\n"
+        ));
+        if session == 0 {
+            for elapsed_ms in 1..=runs {
+                input.push_str(&format!(
+                    "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"guard-{sessions}-{sequence_keys}-{runs}-0\",\"elapsed_ms\":{elapsed_ms},\"mode\":\"normal\",\"keys\":[\"j\",\"j\",\"j\"],\"duration_ms\":1}}\n"
+                ));
+            }
+            let padding = vec!["x"; sequence_keys - runs * 3];
+            if !padding.is_empty() {
+                input.push_str(&format!(
+                    "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"guard-{sessions}-{sequence_keys}-{runs}-0\",\"elapsed_ms\":{},\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
+                    runs + 1,
+                    serde_json::to_string(&padding).unwrap()
+                ));
+            }
+        }
+        let elapsed_ms = if session == 0 { runs + 1 } else { 0 };
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"guard-{sessions}-{sequence_keys}-{runs}-{session}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+    input
+}
+
 #[test]
 fn aggregates_validated_sessions_into_stable_outputs() {
     let summary = analyze_jsonl(Cursor::new(INPUT)).expect("valid analysis input");
@@ -24,6 +54,322 @@ fn aggregates_validated_sessions_into_stable_outputs() {
     assert_eq!(render_markdown(&summary), EXPECTED_REPORT);
     assert!(!render_summary_json(&summary).contains("session_id"));
     assert!(!render_summary_json(&summary).contains("project-a"));
+}
+
+#[test]
+fn summary_v3_exposes_the_versioned_ergonomic_contract() {
+    let summary = analyze_jsonl(Cursor::new(INPUT)).expect("valid analysis input");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+
+    assert_eq!(value["schema_version"], 3);
+    assert_eq!(value["ergonomics"]["contract_version"], 1);
+    assert_eq!(value["ergonomics"]["candidate_limit"], 100);
+    assert_eq!(
+        value["ergonomics"]["thresholds"],
+        serde_json::json!({
+            "minimum_candidate_sessions": 3,
+            "minimum_candidate_sequence_keys": 100,
+            "minimum_candidate_observations": 3
+        })
+    );
+    assert_eq!(value["ergonomics"]["candidates"], serde_json::json!([]));
+}
+
+#[test]
+fn ergonomic_histograms_use_fixed_boundary_buckets() {
+    let mut input = String::new();
+    for (index, elapsed_ms) in [
+        0_u64, 999, 1_000, 9_999, 10_000, 59_999, 60_000, 299_999, 300_000, 600_000,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"duration-{index}\",\"elapsed_ms\":0}}\n{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"duration-{index}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid duration boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(value["ergonomics"]["distributions"]["histogram_version"], 1);
+    assert_eq!(
+        value["ergonomics"]["distributions"]["session_duration_ms"],
+        serde_json::json!([
+            {"bucket": "0-1s", "count": 2},
+            {"bucket": "1-10s", "count": 2},
+            {"bucket": "10-60s", "count": 2},
+            {"bucket": "1-5m", "count": 2},
+            {"bucket": "over-5m", "count": 2}
+        ])
+    );
+
+    let mut input = String::from(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"lengths\",\"elapsed_ms\":0}\n",
+    );
+    for length in [1_usize, 2, 3, 4, 5, 8, 9, 16, 17, 32, 33] {
+        let keys = vec!["j"; length];
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"lengths\",\"elapsed_ms\":0,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":0}}\n",
+            serde_json::to_string(&keys).unwrap()
+        ));
+    }
+    input.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"lengths\",\"elapsed_ms\":0}\n",
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid length boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["distributions"]["sequence_length_keys"],
+        serde_json::json!([
+            {"bucket": "1", "count": 1},
+            {"bucket": "2", "count": 1},
+            {"bucket": "3-4", "count": 2},
+            {"bucket": "5-8", "count": 2},
+            {"bucket": "9-16", "count": 2},
+            {"bucket": "17-32", "count": 2},
+            {"bucket": "33-plus", "count": 1}
+        ])
+    );
+
+    let mut input = String::from(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"latency\",\"elapsed_ms\":0}\n",
+    );
+    for duration_ms in [0_u64, 49, 50, 99, 100, 249, 250, 499, 500, 1_000] {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":1000,\"mode\":\"normal\",\"keys\":[\"j\",\"k\"],\"duration_ms\":{duration_ms}}}\n"
+        ));
+    }
+    for duration_ms in [199_u64, 200] {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"latency\",\"elapsed_ms\":1000,\"mode\":\"normal\",\"keys\":[\"j\",\"k\",\"l\"],\"duration_ms\":{duration_ms}}}\n"
+        ));
+    }
+    input.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"latency\",\"elapsed_ms\":1000}\n",
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid latency boundaries");
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["distributions"]["average_inter_key_latency_ms"],
+        serde_json::json!([
+            {"bucket": "0-50ms", "count": 2},
+            {"bucket": "50-100ms", "count": 3},
+            {"bucket": "100-250ms", "count": 3},
+            {"bucket": "250-500ms", "count": 2},
+            {"bucket": "over-500ms", "count": 2}
+        ])
+    );
+}
+
+#[test]
+fn ergonomic_operations_and_mode_transitions_are_canonical_and_deterministic() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"operations","elapsed_ms":0}"#,
+        "\n",
+        r##"{"schema_version":1,"event_type":"key_sequence","session_id":"operations","elapsed_ms":9,"mode":"normal","keys":["u","<C-R>",".","/","?","n","N","*","#","x"],"duration_ms":9}"##,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"operations","elapsed_ms":10,"mode":"normal","mapping_id":"mapped-u","typed_keys":["u"]}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":11,"from":"normal","to":"visual"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":12,"from":"insert","to":"normal"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":13,"from":"other","to":"command"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"operations","elapsed_ms":13}"#,
+        "\n",
+    );
+
+    let value = serde_json::to_value(analyze_jsonl(Cursor::new(input)).expect("valid analysis"))
+        .expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["operations"],
+        serde_json::json!({
+            "token_set_version": 1,
+            "undo": 1,
+            "redo": 1,
+            "repeat": 1,
+            "search_start": 2,
+            "search_navigation": 4
+        }),
+        "mapping_use typed keys must not double-count operation evidence"
+    );
+    assert_eq!(
+        value["ergonomics"]["mode_transitions"],
+        serde_json::json!([
+            {"from": "insert", "to": "normal", "count": 1},
+            {"from": "normal", "to": "visual", "count": 1},
+            {"from": "other", "to": "command", "count": 1}
+        ])
+    );
+}
+
+#[test]
+fn count_prefixes_stay_within_sequences_and_preserve_zero_as_a_motion() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"counts","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":1,"mode":"normal","keys":["0","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":2,"mode":"normal","keys":["2","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":3,"mode":"visual","keys":["1","2","w"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":4,"mode":"operator_pending","keys":["9","0","d"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":5,"mode":"normal","keys":["3","q"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":6,"mode":"normal","keys":["4"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":7,"mode":"normal","keys":["j"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"counts","elapsed_ms":8,"mode":"normal","keys":["２","j"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"counts","elapsed_ms":9,"mode":"normal","mapping_id":"mapped-count","typed_keys":["7","j"]}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"counts","elapsed_ms":9}"#,
+        "\n",
+    );
+
+    let value = serde_json::to_value(analyze_jsonl(Cursor::new(input)).expect("valid analysis"))
+        .expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["count_prefixes"],
+        serde_json::json!({
+            "token_set_version": 1,
+            "occurrences": 3,
+            "digit_presses": 5
+        })
+    );
+}
+
+#[test]
+fn repeated_motion_candidates_require_complete_sample_guards() {
+    let mut input = String::new();
+    for session in 0..3 {
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":0}}\n"
+        ));
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":2,\"mode\":\"normal\",\"keys\":[\"j\",\"j\",\"j\"],\"duration_ms\":2}}\n"
+        ));
+        if session == 0 {
+            let padding = vec!["x"; 91];
+            input.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":3,\"mode\":\"normal\",\"keys\":{},\"duration_ms\":1}}\n",
+                serde_json::to_string(&padding).unwrap()
+            ));
+            input.push_str(
+                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":4,\"mode\":\"normal\",\"keys\":[\"k\",\"k\"],\"duration_ms\":1}\n",
+            );
+            input.push_str(
+                "{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"motion-0\",\"elapsed_ms\":5,\"mode\":\"normal\",\"keys\":[\"k\"],\"duration_ms\":0}\n",
+            );
+        }
+        let elapsed_ms = if session == 0 { 5 } else { 2 };
+        input.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"motion-{session}\",\"elapsed_ms\":{elapsed_ms}}}\n"
+        ));
+    }
+
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid analysis");
+    let markdown = render_markdown(&summary);
+    let value = serde_json::to_value(summary).expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["repeated_motions"],
+        serde_json::json!({
+            "token_set_version": 1,
+            "items": [{"motion": "j", "runs": 3, "presses": 9}]
+        }),
+        "two plus one presses in adjacent sequences must not become a run"
+    );
+    assert_eq!(
+        value["ergonomics"]["candidates"],
+        serde_json::json!([{
+            "candidate_id": "repeated-motion-j",
+            "kind": "repeated_motion",
+            "kind_version": 1,
+            "observations": 3,
+            "measurements": {"presses": 9, "runs": 3},
+            "guard": {
+                "observed_sessions": 3,
+                "observed_sequence_keys": 103,
+                "required_sessions": 3,
+                "required_sequence_keys": 100,
+                "required_observations": 3
+            }
+        }])
+    );
+    assert!(markdown.contains(
+        "| repeated-motion-j | repeated_motion v1 | 3 | presses=9, runs=3 | 3/3 sessions; 103/100 keys; 3/3 observations |"
+    ));
+
+    let short = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"short","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"short","elapsed_ms":1,"mode":"normal","keys":["j","j","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"short","elapsed_ms":1}"#,
+        "\n",
+    );
+    let short = serde_json::to_value(analyze_jsonl(Cursor::new(short)).expect("valid analysis"))
+        .expect("summary is serializable");
+    assert_eq!(short["ergonomics"]["candidates"], serde_json::json!([]));
+
+    let ranking = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"ranking","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"ranking","elapsed_ms":1,"mode":"normal","keys":["j","j","j"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"ranking","elapsed_ms":2,"mode":"normal","keys":["k","k","k"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"ranking","elapsed_ms":3,"mode":"normal","keys":["h","h","h","h"],"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"ranking","elapsed_ms":3}"#,
+        "\n",
+    );
+    let ranking = analyze_jsonl(Cursor::new(ranking)).expect("valid ranking sample");
+    assert_eq!(
+        ranking
+            .ergonomics
+            .repeated_motions
+            .items
+            .iter()
+            .map(|motion| (motion.motion, motion.runs, motion.presses))
+            .collect::<Vec<_>>(),
+        [("h", 1, 4), ("j", 1, 3), ("k", 1, 3)]
+    );
+
+    for (sessions, sequence_keys, runs, expected_candidates) in [
+        (2, 100, 3, 0),
+        (3, 99, 3, 0),
+        (3, 100, 2, 0),
+        (3, 100, 3, 1),
+    ] {
+        let summary = analyze_jsonl(Cursor::new(repeated_motion_guard_sample(
+            sessions,
+            sequence_keys,
+            runs,
+        )))
+        .expect("valid guard boundary sample");
+        assert_eq!(summary.ergonomics.candidates.len(), expected_candidates);
+    }
+}
+
+#[test]
+fn nonempty_candidates_do_not_reintroduce_local_session_or_project_identity() {
+    let secret = "private-project-/Users/example/.env";
+    let input = repeated_motion_guard_sample(3, 100, 3).replacen(
+        "\"elapsed_ms\":0}",
+        &format!("\"elapsed_ms\":0,\"project_id\":\"{secret}\"}}"),
+        1,
+    );
+    let summary = analyze_jsonl(Cursor::new(input)).expect("valid guarded sample");
+    assert!(!summary.ergonomics.candidates.is_empty());
+
+    for artifact in [render_summary_json(&summary), render_markdown(&summary)] {
+        assert!(!artifact.contains(secret));
+        assert!(!artifact.contains("guard-3-100-3"));
+    }
 }
 
 #[test]
@@ -60,6 +406,14 @@ fn aggregates_multiple_input_readers_with_global_validation_state() {
             .collect::<Vec<_>>(),
         [("j", 1), ("k", 1)]
     );
+
+    let combined =
+        analyze_jsonl(Cursor::new(format!("{first}{second}"))).expect("valid combined analysis");
+    assert_eq!(
+        render_summary_json(&summary),
+        render_summary_json(&combined)
+    );
+    assert_eq!(render_markdown(&summary), render_markdown(&combined));
 }
 
 #[test]
@@ -273,7 +627,7 @@ fn cli_accepts_a_snapshot_file_and_snapshot_stdin() {
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&summary).expect("read summary"))
             .expect("summary JSON");
-    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["schema_version"], 3);
     assert_eq!(
         value["mapping_attribution"]["mappings"][0]["status"],
         "observed_not_in_snapshot"
