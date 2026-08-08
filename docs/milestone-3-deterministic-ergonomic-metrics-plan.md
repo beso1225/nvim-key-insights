@@ -157,7 +157,8 @@ not three invented absence events.
 
 ### M3-S6: mapping coverage evidence
 
-- Derive cautious observed/unobserved coverage from schema-v2 snapshot joins.
+- Derive cautious observed/unobserved coverage from snapshot-backed mapping
+  attribution.
 - Apply the same sample guards and keep collision reporting unchanged.
 - Prove that no short sample produces an underuse candidate.
 

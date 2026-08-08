@@ -170,9 +170,11 @@ notification. The CLI reads the complete bounded payload into memory before
 strict parsing, so later editor state cannot mutate the analysis input. Manual
 CLI use may instead provide an owner-only, single-linked regular file path.
 
-Snapshot-aware summaries use schema version 2 and contain all joined mapping
-bindings plus conservative `potential_buffer_shadowing` collision groups.
-Event-only analysis remains byte-for-byte schema-v1 compatible.
+All current summaries use schema version 3. Snapshot-aware summaries contain
+all joined mapping bindings plus conservative `potential_buffer_shadowing`
+collision groups and guarded mapping-coverage evidence. Event-only analysis
+continues to accept schema-v1 logs and emits the same schema-v3 shape without
+snapshot-derived attribution.
 
 ## Callback performance budget
 

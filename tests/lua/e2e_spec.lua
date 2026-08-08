@@ -31,7 +31,7 @@ local root = vim.fn.tempname()
 local session_directory = vim.fs.joinpath(root, "sessions")
 local report_directory = vim.fs.joinpath(root, "reports")
 local store = storage.new({ directory = session_directory })
-local session_ids = { "SESSION_BOUNDARY_ONE", "SESSION_BOUNDARY_TWO" }
+local session_ids = { "SESSION_BOUNDARY_ONE", "SESSION_BOUNDARY_TWO", "SESSION_BOUNDARY_THREE" }
 local session_index = 0
 local callback = nil
 local mode = "n"
@@ -90,7 +90,7 @@ local instance = collector.new({
 })
 
 assert(instance:start())
-assert(callback("MAPPING_EXPANSION_SECRET", "j") == nil)
+assert(callback("MAPPING_EXPANSION_SECRET", "jjj") == nil)
 now_ms = 2
 assert(callback("GLOBAL_MAPPING_RHS_SECRET", "z1") == nil)
 now_ms = 4
@@ -117,7 +117,7 @@ now_ms = 50
 assert(instance:pause())
 assert(instance:start())
 now_ms = 60
-assert(callback("MAPPING_EXPANSION_SECRET", "j") == nil)
+assert(callback("MAPPING_EXPANSION_SECRET", "jjj") == nil)
 now_ms = 70
 assert(instance:stop())
 
@@ -125,13 +125,19 @@ vim.keymap.del("n", "z2")
 
 now_ms = 100
 assert(instance:start())
-assert(callback("MAPPING_EXPANSION_SECRET", "xx") == nil)
+assert(callback("MAPPING_EXPANSION_SECRET", "jjj") == nil)
 now_ms = 130
+assert(instance:stop())
+
+now_ms = 200
+assert(instance:start())
+assert(callback("MAPPING_EXPANSION_SECRET", string.rep("q", 100)) == nil)
+now_ms = 230
 assert(instance:stop())
 
 local logs = vim.fn.glob(session_directory .. "/*.jsonl", false, true)
 table.sort(logs)
-assert(#logs == 2, "the collector must finalize one log per session")
+assert(#logs == 3, "the collector must finalize one log per session")
 local jsonl = {}
 for _, log_path in ipairs(logs) do
   local stat = vim.uv.fs_lstat(log_path)
@@ -182,7 +188,7 @@ local report_markdown = table.concat(vim.fn.readfile(report_path, "b"), "\n")
 local summary = vim.json.decode(summary_json)
 assert(summary.schema_version == 3)
 assert(summary.mapping_attribution.snapshot_version == 1)
-assert(summary.sessions == 2)
+assert(summary.sessions == 3)
 assert(summary.text_runs == 1)
 local j_count = nil
 for _, key in ipairs(summary.keys) do
@@ -190,7 +196,19 @@ for _, key in ipairs(summary.keys) do
     j_count = key.count
   end
 end
-assert(j_count == 2)
+assert(j_count == 9)
+assert(#summary.ergonomics.candidates > 0, "the privacy E2E must exercise nonempty candidates")
+local repeated_motion_candidate = false
+local mapping_coverage_candidate = false
+for _, candidate in ipairs(summary.ergonomics.candidates) do
+  if candidate.kind == "repeated_motion" then
+    repeated_motion_candidate = true
+  elseif candidate.kind == "current_mapping_unobserved_in_sample" then
+    mapping_coverage_candidate = true
+  end
+end
+assert(repeated_motion_candidate, "the privacy E2E must exercise repeated-motion candidate fields")
+assert(mapping_coverage_candidate, "the privacy E2E must exercise mapping-coverage candidate fields")
 local attribution_by_id = {}
 for _, mapping in ipairs(summary.mapping_attribution.mappings) do
   attribution_by_id[mapping.mapping_id] = mapping

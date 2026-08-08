@@ -214,12 +214,25 @@ impl ErgonomicAccumulator {
     }
 
     pub(crate) fn observe_count_prefixes(&mut self, keys: &[String]) {
+        let _ = self.observe_count_prefixes_counted(keys);
+    }
+
+    fn observe_count_prefixes_counted(&mut self, keys: &[String]) -> usize {
+        let mut inspected_tokens = 0;
         let mut index = 0;
         while index < keys.len() {
+            inspected_tokens += 1;
             if is_nonzero_digit(&keys[index]) {
                 let mut operation = index + 1;
-                while operation < keys.len() && is_digit(&keys[operation]) {
+                while operation < keys.len() {
+                    inspected_tokens += 1;
+                    if !is_digit(&keys[operation]) {
+                        break;
+                    }
                     operation += 1;
+                }
+                if operation < keys.len() {
+                    inspected_tokens += 1;
                 }
                 if operation < keys.len() && is_countable_operation(&keys[operation]) {
                     checked_accumulate(
@@ -233,11 +246,14 @@ impl ErgonomicAccumulator {
                         &mut self.overflowed,
                     );
                     index = operation + 1;
-                    continue;
+                } else {
+                    index = operation;
                 }
+                continue;
             }
             index += 1;
         }
+        inspected_tokens
     }
 
     pub(crate) fn observe_repeated_motions(&mut self, keys: &[String]) {
@@ -730,5 +746,18 @@ mod tests {
 
         assert!(accumulator.has_overflowed());
         assert_eq!(accumulator.count_prefixes.occurrences, u64::MAX);
+    }
+
+    #[test]
+    fn rejects_a_long_non_operation_digit_run_in_one_pass() {
+        let mut keys = vec!["1".to_owned(); 16_000];
+        keys.push("q".to_owned());
+        let mut accumulator = ErgonomicAccumulator::default();
+
+        let inspected_tokens = accumulator.observe_count_prefixes_counted(&keys);
+
+        assert_eq!(accumulator.count_prefixes.occurrences, 0);
+        assert_eq!(accumulator.count_prefixes.digit_presses, 0);
+        assert!(inspected_tokens <= keys.len() * 3);
     }
 }
