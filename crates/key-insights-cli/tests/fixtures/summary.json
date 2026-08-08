@@ -157,6 +157,21 @@
         }
       ]
     },
+    "operations": {
+      "token_set_version": 1,
+      "undo": 0,
+      "redo": 0,
+      "repeat": 0,
+      "search_start": 0,
+      "search_navigation": 0
+    },
+    "mode_transitions": [
+      {
+        "from": "normal",
+        "to": "insert",
+        "count": 1
+      }
+    ],
     "candidates": []
   }
 }

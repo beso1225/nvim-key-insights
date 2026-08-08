@@ -1,6 +1,8 @@
-use std::fmt::Write;
+use std::{collections::BTreeMap, fmt::Write};
 
 use serde::Serialize;
+
+use crate::Mode;
 
 pub const ERGONOMICS_CONTRACT_VERSION: u32 = 1;
 pub const MAX_ERGONOMIC_CANDIDATES: usize = 100;
@@ -8,6 +10,7 @@ pub const MIN_CANDIDATE_SESSIONS: u64 = 3;
 pub const MIN_CANDIDATE_SEQUENCE_KEYS: u64 = 100;
 pub const MIN_CANDIDATE_OBSERVATIONS: u64 = 3;
 pub const HISTOGRAM_VERSION: u32 = 1;
+pub const OPERATION_TOKEN_SET_VERSION: u32 = 1;
 
 const SESSION_DURATION_BUCKETS: [&str; 5] = ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
 const SEQUENCE_LENGTH_BUCKETS: [&str; 7] = ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
@@ -19,6 +22,8 @@ pub struct ErgonomicSummary {
     pub candidate_limit: usize,
     pub thresholds: ErgonomicThresholds,
     pub distributions: ErgonomicDistributions,
+    pub operations: OperationEvidence,
+    pub mode_transitions: Vec<ModeTransitionCount>,
     pub candidates: Vec<ErgonomicCandidate>,
 }
 
@@ -29,6 +34,8 @@ impl Default for ErgonomicSummary {
             candidate_limit: MAX_ERGONOMIC_CANDIDATES,
             thresholds: ErgonomicThresholds::default(),
             distributions: ErgonomicDistributions::default(),
+            operations: OperationEvidence::default(),
+            mode_transitions: Vec::new(),
             candidates: Vec::new(),
         }
     }
@@ -69,11 +76,43 @@ pub struct HistogramBucket {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OperationEvidence {
+    pub token_set_version: u32,
+    pub undo: u64,
+    pub redo: u64,
+    pub repeat: u64,
+    pub search_start: u64,
+    pub search_navigation: u64,
+}
+
+impl Default for OperationEvidence {
+    fn default() -> Self {
+        Self {
+            token_set_version: OPERATION_TOKEN_SET_VERSION,
+            undo: 0,
+            redo: 0,
+            repeat: 0,
+            search_start: 0,
+            search_navigation: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ModeTransitionCount {
+    pub from: &'static str,
+    pub to: &'static str,
+    pub count: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct ErgonomicAccumulator {
     session_duration: [u64; 5],
     sequence_length: [u64; 7],
     latency: [u64; 5],
+    operations: OperationEvidence,
+    mode_transitions: BTreeMap<(&'static str, &'static str), u64>,
 }
 
 impl ErgonomicAccumulator {
@@ -92,6 +131,28 @@ impl ErgonomicAccumulator {
         }
     }
 
+    pub(crate) fn observe_operations(&mut self, keys: &[String]) {
+        for key in keys {
+            let count = match key.as_str() {
+                "u" => &mut self.operations.undo,
+                "<C-R>" => &mut self.operations.redo,
+                "." => &mut self.operations.repeat,
+                "/" | "?" => &mut self.operations.search_start,
+                "n" | "N" | "*" | "#" => &mut self.operations.search_navigation,
+                _ => continue,
+            };
+            *count = count.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn observe_mode_transition(&mut self, from: &Mode, to: &Mode) {
+        let count = self
+            .mode_transitions
+            .entry((mode_name(from), mode_name(to)))
+            .or_default();
+        *count = count.saturating_add(1);
+    }
+
     pub(crate) fn finish(self) -> ErgonomicSummary {
         ErgonomicSummary {
             distributions: ErgonomicDistributions::from_counts(
@@ -99,8 +160,26 @@ impl ErgonomicAccumulator {
                 self.sequence_length,
                 self.latency,
             ),
+            operations: self.operations,
+            mode_transitions: self
+                .mode_transitions
+                .into_iter()
+                .map(|((from, to), count)| ModeTransitionCount { from, to, count })
+                .collect(),
             ..ErgonomicSummary::default()
         }
+    }
+}
+
+fn mode_name(mode: &Mode) -> &'static str {
+    match mode {
+        Mode::Normal => "normal",
+        Mode::Visual => "visual",
+        Mode::OperatorPending => "operator_pending",
+        Mode::Insert => "insert",
+        Mode::Command => "command",
+        Mode::Search => "search",
+        Mode::Other => "other",
     }
 }
 
@@ -218,6 +297,34 @@ pub(crate) fn render_markdown(output: &mut String, summary: &ErgonomicSummary) {
         }
     }
     output.push('\n');
+    writeln!(output, "### Operations\n").unwrap();
+    writeln!(output, "| Operation | Count |").unwrap();
+    writeln!(output, "| --- | ---: |").unwrap();
+    for (operation, count) in [
+        ("Undo", summary.operations.undo),
+        ("Redo", summary.operations.redo),
+        ("Repeat", summary.operations.repeat),
+        ("Search start", summary.operations.search_start),
+        ("Search navigation", summary.operations.search_navigation),
+    ] {
+        writeln!(output, "| {operation} | {count} |").unwrap();
+    }
+    writeln!(output, "\n### Mode transitions\n").unwrap();
+    if summary.mode_transitions.is_empty() {
+        writeln!(output, "_No mode transitions observed._\n").unwrap();
+    } else {
+        writeln!(output, "| From | To | Count |").unwrap();
+        writeln!(output, "| --- | --- | ---: |").unwrap();
+        for transition in &summary.mode_transitions {
+            writeln!(
+                output,
+                "| {} | {} | {} |",
+                transition.from, transition.to, transition.count
+            )
+            .unwrap();
+        }
+        output.push('\n');
+    }
     if summary.candidates.is_empty() {
         writeln!(output, "_No ergonomic candidates met the sample guard._").unwrap();
     }

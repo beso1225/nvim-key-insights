@@ -74,4 +74,20 @@ _Ranked tables show at most 100 items._
 | Average inter-key latency | 250-500ms | 0 |
 | Average inter-key latency | over-500ms | 0 |
 
+### Operations
+
+| Operation | Count |
+| --- | ---: |
+| Undo | 0 |
+| Redo | 0 |
+| Repeat | 0 |
+| Search start | 0 |
+| Search navigation | 0 |
+
+### Mode transitions
+
+| From | To | Count |
+| --- | --- | ---: |
+| normal | insert | 1 |
+
 _No ergonomic candidates met the sample guard._

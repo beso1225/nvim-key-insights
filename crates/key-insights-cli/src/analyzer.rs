@@ -311,6 +311,7 @@ impl Accumulator {
                 ..
             } => {
                 self.ergonomics.observe_sequence(keys.len(), *duration_ms);
+                self.ergonomics.observe_operations(keys);
                 self.key_sequences = self.key_sequences.saturating_add(1);
                 self.sequence_keys = self.sequence_keys.saturating_add(keys.len() as u64);
                 let mode = sequence_mode_name(mode).to_owned();
@@ -335,7 +336,8 @@ impl Accumulator {
                 self.text_runs = self.text_runs.saturating_add(1);
                 self.text_keys = self.text_keys.saturating_add(u64::from(*key_count));
             }
-            Event::ModeTransition { .. } => {
+            Event::ModeTransition { from, to, .. } => {
+                self.ergonomics.observe_mode_transition(from, to);
                 self.mode_transitions = self.mode_transitions.saturating_add(1);
             }
             Event::MappingUse {

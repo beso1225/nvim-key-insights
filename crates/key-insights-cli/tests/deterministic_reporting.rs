@@ -131,6 +131,49 @@ fn ergonomic_histograms_use_fixed_boundary_buckets() {
 }
 
 #[test]
+fn ergonomic_operations_and_mode_transitions_are_canonical_and_deterministic() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"operations","elapsed_ms":0}"#,
+        "\n",
+        r##"{"schema_version":1,"event_type":"key_sequence","session_id":"operations","elapsed_ms":1,"mode":"normal","keys":["u","<C-R>",".","/","?","n","N","*","#","x"],"duration_ms":9}"##,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mapping_use","session_id":"operations","elapsed_ms":2,"mode":"normal","mapping_id":"mapped-u","typed_keys":["u"]}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":3,"from":"normal","to":"visual"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":4,"from":"insert","to":"normal"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"mode_transition","session_id":"operations","elapsed_ms":5,"from":"other","to":"command"}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"operations","elapsed_ms":5}"#,
+        "\n",
+    );
+
+    let value = serde_json::to_value(analyze_jsonl(Cursor::new(input)).expect("valid analysis"))
+        .expect("summary is serializable");
+    assert_eq!(
+        value["ergonomics"]["operations"],
+        serde_json::json!({
+            "token_set_version": 1,
+            "undo": 1,
+            "redo": 1,
+            "repeat": 1,
+            "search_start": 2,
+            "search_navigation": 4
+        }),
+        "mapping_use typed keys must not double-count operation evidence"
+    );
+    assert_eq!(
+        value["ergonomics"]["mode_transitions"],
+        serde_json::json!([
+            {"from": "insert", "to": "normal", "count": 1},
+            {"from": "normal", "to": "visual", "count": 1},
+            {"from": "other", "to": "command", "count": 1}
+        ])
+    );
+}
+
+#[test]
 fn aggregates_multiple_input_readers_with_global_validation_state() {
     let first = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,

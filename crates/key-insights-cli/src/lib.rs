@@ -17,7 +17,7 @@ pub use ergonomics::{
     CandidateGuard, ERGONOMICS_CONTRACT_VERSION, ErgonomicCandidate, ErgonomicDistributions,
     ErgonomicSummary, ErgonomicThresholds, HISTOGRAM_VERSION, HistogramBucket,
     MAX_ERGONOMIC_CANDIDATES, MIN_CANDIDATE_OBSERVATIONS, MIN_CANDIDATE_SEQUENCE_KEYS,
-    MIN_CANDIDATE_SESSIONS,
+    MIN_CANDIDATE_SESSIONS, ModeTransitionCount, OPERATION_TOKEN_SET_VERSION, OperationEvidence,
 };
 pub use event::{Event, Mode, SequenceMode};
 pub use keymap_snapshot::{
