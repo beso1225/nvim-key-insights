@@ -1,6 +1,7 @@
 //! Deterministic analysis primitives shared by the CLI and its tests.
 
 mod analyzer;
+mod codex_payload;
 mod ergonomics;
 mod event;
 mod keymap_snapshot;
@@ -12,6 +13,10 @@ pub use analyzer::{
     MappingAttributionStatus, MappingCollision, MappingCount, ModeStats, RepeatedKeyStats,
     analyze_jsonl, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
     analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
+};
+pub use codex_payload::{
+    CODEX_PAYLOAD_SCHEMA_VERSION, CodexPayloadError, MAX_CODEX_PAYLOAD_BYTES,
+    render_codex_payload_json,
 };
 pub use ergonomics::{
     CANDIDATE_KIND_VERSION, COUNTABLE_TOKEN_SET_VERSION, CandidateGuard, CountPrefixEvidence,

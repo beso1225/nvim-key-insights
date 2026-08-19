@@ -163,6 +163,36 @@ fn validate_mapping(mapping: &SnapshotMapping) -> Result<(), SnapshotError> {
     Ok(())
 }
 
+pub(crate) fn validate_snapshot(snapshot: &KeymapSnapshot) -> Result<(), SnapshotError> {
+    if snapshot.snapshot_version != SNAPSHOT_VERSION {
+        return Err(SnapshotError("unsupported keymap snapshot version"));
+    }
+    if snapshot.mappings.len() > MAX_SNAPSHOT_MAPPINGS {
+        return Err(SnapshotError("keymap snapshot exceeds the mapping limit"));
+    }
+    let mut tuples = BTreeSet::new();
+    let mut mapping_ids = BTreeSet::new();
+    let mut previous: Option<&SnapshotMapping> = None;
+    for mapping in &snapshot.mappings {
+        validate_mapping(mapping)?;
+        if previous.is_some_and(|prior| mapping_order(prior, mapping).is_ge()) {
+            return Err(SnapshotError("keymap snapshot mappings are not canonical"));
+        }
+        previous = Some(mapping);
+        if !mapping_ids.insert(mapping.mapping_id.clone()) {
+            return Err(SnapshotError(
+                "keymap snapshot contains a duplicate mapping ID",
+            ));
+        }
+        if !tuples.insert((mapping.mode, mapping.scope, mapping.lhs.clone())) {
+            return Err(SnapshotError(
+                "keymap snapshot contains a duplicate mapping tuple",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn tokenize_canonical(canonical: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -186,6 +216,15 @@ fn tokenize_canonical(canonical: &str) -> Vec<String> {
         index = end;
     }
     tokens
+}
+
+pub(crate) fn is_canonical_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= MAX_TOKEN_BYTES
+        && !token
+            .chars()
+            .any(|character| character <= '\u{1f}' || character == '\u{7f}')
+        && tokenize_canonical(token) == [token.to_owned()]
 }
 
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {

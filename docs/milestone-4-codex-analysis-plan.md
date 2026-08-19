@@ -59,6 +59,8 @@ form model output.
 
 ### M4-S1: sanitized payload and canonical preview
 
+Status: complete on `codex/codex-analysis-contract`.
+
 - add Red tests for the exact payload shape, deterministic serialization, size
   limits, and omission of forbidden fields;
 - introduce a dedicated Rust payload module with a versioned public structure;

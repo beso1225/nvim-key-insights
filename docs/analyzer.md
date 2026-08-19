@@ -97,3 +97,16 @@ contain only collector-generated opaque IDs. Markdown treats event-derived
 tokens as untrusted content and escapes them before rendering.
 
 Only `summary.json`, after user preview, is intended to cross the optional Codex boundary. JSONL collector logs and `report.md` remain local by default.
+
+## Optional Codex payload preview
+
+The Rust library exposes the M4-S1 payload renderer used by future preview and
+subprocess commands. It accepts only an in-memory schema-v3 `AnalysisSummary`
+and an optional parsed keymap snapshot, emits compact deterministic JSON, and
+rejects unsupported summary versions or payloads larger than 256 KiB. The
+payload contains a fixed purpose, evidence and collision-check instructions,
+the summary, and—when supplied—the snapshot's version, mode, scope, canonical
+LHS, and opaque mapping IDs. It does not accept paths, JSONL, report Markdown,
+or mapping implementations, and it omits those fields from the serialized
+boundary by construction. No Codex process is launched by this renderer;
+preview and explicit approval remain later workflow stages.

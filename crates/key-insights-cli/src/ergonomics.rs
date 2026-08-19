@@ -15,9 +15,12 @@ pub const COUNTABLE_TOKEN_SET_VERSION: u32 = 1;
 pub const DIRECTIONAL_MOTION_TOKEN_SET_VERSION: u32 = 1;
 pub const CANDIDATE_KIND_VERSION: u32 = 1;
 
-const SESSION_DURATION_BUCKETS: [&str; 5] = ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
-const SEQUENCE_LENGTH_BUCKETS: [&str; 7] = ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
-const LATENCY_BUCKETS: [&str; 5] = ["0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms"];
+pub(crate) const SESSION_DURATION_BUCKETS: [&str; 5] =
+    ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
+pub(crate) const SEQUENCE_LENGTH_BUCKETS: [&str; 7] =
+    ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
+pub(crate) const LATENCY_BUCKETS: [&str; 5] =
+    ["0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ErgonomicSummary {

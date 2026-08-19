@@ -129,4 +129,6 @@ remaining milestones and the
 [Milestone 3 implementation plan](docs/milestone-3-deterministic-ergonomic-metrics-plan.md)
 for the current deterministic ergonomic evidence contract, and the
 [mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
-mapping evidence.
+mapping evidence. The optional Codex payload contract is being implemented in
+the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md); no Codex
+process is launched by the current release.
