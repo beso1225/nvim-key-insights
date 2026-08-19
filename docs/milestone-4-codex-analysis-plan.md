@@ -93,9 +93,13 @@ Status: complete on `codex/codex-analysis-contract`.
 
 ### M4-S4: structured suggestion validation
 
+Status: complete on `codex/codex-analysis-contract`.
+
 - define a bounded suggestion schema and reject unknown fields, unsupported
   action kinds, missing evidence, and collision-blind mapping proposals;
 - render Markdown only from validated structured output;
+- bind evidence values and collision IDs to the exact deterministic summary and
+  keymap snapshot used for the request;
 - keep deterministic summary and report artifacts unchanged.
 
 ### M4-S5: Neovim analyze workflow

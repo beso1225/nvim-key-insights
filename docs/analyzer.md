@@ -132,3 +132,10 @@ payload only to stdin. Input and output are bounded to 256 KiB, stderr is not
 returned as a publishable result, and timeout/overflow termination kills the
 dedicated process group on Unix. The runner is not wired into the default
 Neovim command or ordinary CI.
+
+Codex responses are accepted only through the structured suggestion validator.
+The validator bounds the document, rejects duplicate JSON keys and unknown
+fields, requires measured evidence and a completed collision check, and binds
+every metric value and reported mapping ID to the exact summary and keymap
+snapshot used for the request. Markdown is rendered only from that validated
+boundary; raw response text is never published as a report.

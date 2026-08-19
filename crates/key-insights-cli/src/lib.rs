@@ -3,6 +3,7 @@
 mod analyzer;
 mod codex_exec;
 mod codex_payload;
+mod codex_suggestions;
 mod ergonomics;
 mod event;
 mod keymap_snapshot;
@@ -22,6 +23,13 @@ pub use codex_exec::{
 pub use codex_payload::{
     CODEX_PAYLOAD_SCHEMA_VERSION, CodexPayloadError, MAX_CODEX_PAYLOAD_BYTES,
     render_codex_payload_json,
+};
+pub use codex_suggestions::{
+    CODEX_SUGGESTIONS_SCHEMA_VERSION, CodexSuggestion, CodexSuggestionDocument,
+    CodexSuggestionError, CollisionCheck, MAX_CODEX_SUGGESTIONS, MAX_SUGGESTION_CONFLICTS,
+    MAX_SUGGESTION_EVIDENCE, SuggestionAction, SuggestionEvidence, ValidatedCodexSuggestions,
+    render_codex_suggestions_markdown, validate_codex_suggestions_json,
+    validate_codex_suggestions_json_for_summary,
 };
 pub use ergonomics::{
     CANDIDATE_KIND_VERSION, COUNTABLE_TOKEN_SET_VERSION, CandidateGuard, CountPrefixEvidence,
