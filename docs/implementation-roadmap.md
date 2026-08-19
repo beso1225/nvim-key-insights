@@ -181,8 +181,9 @@ mapping, or making no change.
 
 ## Milestone 4: optional Codex analysis
 
-Status: in progress. The sanitized payload contract, CLI preview, and
-`:KeyInsightsAnalyze` scratch-buffer preview are complete; see the
+Status: in progress. The sanitized payload contract, CLI preview, explicit
+confirmation-gated `:KeyInsightsAnalyze` workflow, and structured suggestion
+validation are complete; see the
 [detailed implementation plan](milestone-4-codex-analysis-plan.md).
 
 Add the AI boundary only after the sanitized summary contract and deterministic
@@ -198,8 +199,8 @@ evidence are stable.
   treated as an inherently better outcome.
 - Produce structured JSON conforming to a checked schema and a Markdown
   explanation derived from that structure.
-- Keep `:KeyInsightsAnalyze` as the local preview gate; add subprocess
-  invocation only after explicit confirmation in a later slice.
+- Keep `:KeyInsightsAnalyze` as the local preview gate and launch the
+  subprocess only after explicit confirmation.
 
 ### CLI automation
 

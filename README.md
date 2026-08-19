@@ -76,7 +76,7 @@ The current implementation provides these commands:
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
 - `:KeyInsightsStatus` displays collection state and whether a report job is running;
 - `:KeyInsightsReport` asynchronously analyzes finalized sessions and opens the new report;
-- `:KeyInsightsAnalyze` renders the bounded sanitized Codex payload in a scratch buffer without launching Codex;
+- `:KeyInsightsAnalyze` renders the bounded sanitized Codex payload, then asks for explicit confirmation before launching Codex;
 - `:KeyInsightsOpenReport` opens the existing report without running analysis;
 - `:KeyInsightsPurge` previews collector-owned session artifacts and asks before deletion;
 - `:KeyInsightsPurge!` skips that prompt but retains every ownership and race check.
@@ -123,8 +123,8 @@ contents and mapping expansions are discarded. Confirmed Normal, Visual, and
 Operator-pending mappings emit only opaque IDs and canonical typed keys; mapping
 implementations remain callback-local. Deterministic ergonomic distributions,
 operation evidence, guarded repeated-motion candidates, and cautious mapping
-coverage are implemented. The bounded Codex payload preview is available from
-the CLI and `:KeyInsightsAnalyze`; launching Codex remains a later opt-in step.
+coverage are implemented. The bounded Codex payload preview and explicit
+confirmation-gated Codex workflow are available from `:KeyInsightsAnalyze`.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the
@@ -132,5 +132,6 @@ remaining milestones and the
 for the current deterministic ergonomic evidence contract, and the
 [mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
 mapping evidence. The optional Codex payload contract is being implemented in
-the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md); no Codex
-process is launched by the current release.
+the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md). Codex is
+launched only after confirmation, with saved authentication and a read-only
+sandbox; cancelling leaves the workflow local-only.

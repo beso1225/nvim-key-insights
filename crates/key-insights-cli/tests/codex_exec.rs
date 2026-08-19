@@ -96,7 +96,7 @@ fn rejects_a_nonzero_codex_exit_without_echoing_stderr() {
 
 #[test]
 fn terminates_a_timed_out_codex_process() {
-    let (directory, script) = temp_script("timeout", "read line");
+    let (directory, script) = temp_script("timeout", "sleep 5");
     let mut options = config(&script);
     options.timeout = Duration::from_millis(50);
     let error = run_codex_exec(&options, b"payload").expect_err("Codex must time out");

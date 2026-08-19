@@ -38,6 +38,10 @@ local DEFAULTS = {
   report = {
     analyzer = "key-insights",
     directory = nil,
+    codex = {
+      binary = "codex",
+      output_schema = nil,
+    },
   },
 }
 
@@ -88,6 +92,15 @@ function M.resolve(options)
     resolved.report.directory == nil
       or (type(resolved.report.directory) == "string" and resolved.report.directory ~= ""),
     "report.directory must be nil or a non-empty string"
+  )
+  assert(
+    type(resolved.report.codex.binary) == "string" and resolved.report.codex.binary ~= "",
+    "report.codex.binary must be a non-empty string"
+  )
+  assert(
+    resolved.report.codex.output_schema == nil
+      or (type(resolved.report.codex.output_schema) == "string" and resolved.report.codex.output_schema ~= ""),
+    "report.codex.output_schema must be nil or a non-empty string"
   )
   return resolved
 end

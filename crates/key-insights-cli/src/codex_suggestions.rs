@@ -31,6 +31,9 @@ const MEASUREMENT_KEYS: &[&str] = &[
     "total_snapshot_mappings",
     "count_prefix_occurrences",
     "count_prefix_digit_presses",
+    "session_duration_ms",
+    "sequence_length_keys",
+    "average_inter_key_latency_ms",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -342,6 +345,11 @@ fn measurement_value(
     summary: &AnalysisSummary,
     _snapshot: Option<&KeymapSnapshot>,
 ) -> Option<u64> {
+    let histogram_count = |buckets: &[crate::ergonomics::HistogramBucket]| {
+        buckets
+            .iter()
+            .try_fold(0_u64, |total, bucket| total.checked_add(bucket.count))
+    };
     match metric {
         "sessions" => Some(summary.sessions),
         "events" => Some(summary.events),
@@ -364,6 +372,18 @@ fn measurement_value(
         }
         "count_prefix_occurrences" => Some(summary.ergonomics.count_prefixes.occurrences),
         "count_prefix_digit_presses" => Some(summary.ergonomics.count_prefixes.digit_presses),
+        "session_duration_ms" => {
+            histogram_count(&summary.ergonomics.distributions.session_duration_ms)
+        }
+        "sequence_length_keys" => {
+            histogram_count(&summary.ergonomics.distributions.sequence_length_keys)
+        }
+        "average_inter_key_latency_ms" => histogram_count(
+            &summary
+                .ergonomics
+                .distributions
+                .average_inter_key_latency_ms,
+        ),
         _ => None,
     }
 }

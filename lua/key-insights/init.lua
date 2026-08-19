@@ -37,6 +37,7 @@ local function get_report_instance()
     local output_directory = options.report.directory or report.default_directory()
     report_instance = report.new({
       analyzer = options.report.analyzer,
+      codex = options.report.codex,
       collector_options = options,
       output_directory = output_directory,
       session_directory = get_writer().directory,
@@ -110,7 +111,7 @@ function M.report()
 end
 
 function M.analyze()
-  return get_report_instance():preview()
+  return get_report_instance():analyze()
 end
 
 function M.open_report()

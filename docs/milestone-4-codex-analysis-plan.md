@@ -104,6 +104,8 @@ Status: complete on `codex/codex-analysis-contract`.
 
 ### M4-S5: Neovim analyze workflow
 
+Status: complete on `codex/codex-analysis-contract`.
+
 - add `:KeyInsightsAnalyze` as an explicit preview-then-confirm workflow;
 - make cancellation, running-process state, and stale output handling explicit;
 - display the exact sanitized payload before subprocess launch;

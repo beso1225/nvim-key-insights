@@ -35,7 +35,7 @@ function M.register(api)
 
   vim.api.nvim_create_user_command("KeyInsightsAnalyze", function()
     api.analyze()
-  end, { desc = "Preview the sanitized Codex analysis payload", force = true })
+  end, { desc = "Preview and optionally run Codex on the sanitized payload", force = true })
 
   vim.api.nvim_create_user_command("KeyInsightsOpenReport", function()
     api.open_report()

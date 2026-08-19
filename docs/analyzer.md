@@ -117,11 +117,11 @@ payload contains a fixed purpose, evidence and collision-check instructions,
 the summary, and—when supplied—the snapshot's version, mode, scope, canonical
 LHS, and opaque mapping IDs. It does not accept paths, JSONL, report Markdown,
 or mapping implementations, and it omits those fields from the serialized
-boundary by construction. No Codex process is launched by this renderer;
-preview and explicit approval remain later workflow stages. The Neovim
-`:KeyInsightsAnalyze` command runs this local preview path and opens the bounded
-JSON in a scratch buffer; it never launches Codex or sends raw JSONL/report
-artifacts.
+boundary by construction. No Codex process is launched by this renderer. The
+Neovim `:KeyInsightsAnalyze` command opens the bounded JSON in a scratch buffer
+and requests explicit confirmation; only confirmation launches the non-shell
+`codex exec` runner. Cancelling leaves the workflow local-only, and raw
+JSONL/report artifacts are never sent.
 
 ## Optional Codex exec runner
 
@@ -130,8 +130,9 @@ approval step. It inherits saved Codex authentication, supplies `--ephemeral`,
 `--sandbox read-only`, and `--output-schema`, and writes the already previewed
 payload only to stdin. Input and output are bounded to 256 KiB, stderr is not
 returned as a publishable result, and timeout/overflow termination kills the
-dedicated process group on Unix. The runner is not wired into the default
-Neovim command or ordinary CI.
+dedicated process group on Unix. The runner is wired into
+`:KeyInsightsAnalyze`; real Codex invocations remain opt-in and are not run by
+ordinary CI.
 
 Codex responses are accepted only through the structured suggestion validator.
 The validator bounds the document, rejects duplicate JSON keys and unknown
