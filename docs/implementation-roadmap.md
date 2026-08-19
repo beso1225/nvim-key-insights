@@ -181,6 +181,8 @@ mapping, or making no change.
 
 ## Milestone 4: optional Codex analysis
 
+Status: planned. See the [detailed implementation plan](milestone-4-codex-analysis-plan.md).
+
 Add the AI boundary only after the sanitized summary contract and deterministic
 evidence are stable.
 
