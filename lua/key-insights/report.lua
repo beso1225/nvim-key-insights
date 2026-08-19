@@ -9,7 +9,120 @@ Report.__index = Report
 local OWNER_DIRECTORY = 448 -- 0700
 local MAX_SUMMARY_BYTES = 16 * 1024 * 1024
 local MAX_REPORT_BYTES = 16 * 1024 * 1024
+local MAX_PREVIEW_BYTES = 256 * 1024
 local REPORT_HEADER = "# Neovim Key Insights"
+local PREVIEW_PURPOSE = "analyze-neovim-usage"
+local PREVIEW_PRIVACY_BOUNDARY = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."
+local PREVIEW_ACTION_KINDS = { "learn_existing", "add_mapping", "change_mapping", "no_change" }
+
+local FORBIDDEN_PREVIEW_KEYS = {
+  command = true,
+  file_path = true,
+  implementation = true,
+  path = true,
+  project_id = true,
+  raw_log = true,
+  report = true,
+  rhs = true,
+  search = true,
+  secret = true,
+  session_id = true,
+}
+
+local KNOWN_PREVIEW_KEYS = {
+  action_kinds = true,
+  average_inter_key_latency_ms = true,
+  buffer_mapping_id = true,
+  bucket = true,
+  candidate_id = true,
+  candidate_limit = true,
+  candidates = true,
+  collision_mapping_ids = true,
+  collision_check_required = true,
+  collisions = true,
+  contract_version = true,
+  count = true,
+  count_prefixes = true,
+  digit_presses = true,
+  distributions = true,
+  ergonomics = true,
+  events = true,
+  evidence_required = true,
+  from = true,
+  global_mapping_id = true,
+  guard = true,
+  histogram_version = true,
+  instructions = true,
+  items = true,
+  key = true,
+  keymap_snapshot = true,
+  key_sequences = true,
+  keys = true,
+  kind = true,
+  kind_version = true,
+  lhs = true,
+  mapping_attribution = true,
+  mapping_coverage = true,
+  mapping_id = true,
+  mapping_uses = true,
+  mappings = true,
+  measurements = true,
+  minimum_candidate_observations = true,
+  minimum_candidate_sequence_keys = true,
+  minimum_candidate_sessions = true,
+  mode = true,
+  mode_transitions = true,
+  modes = true,
+  motion = true,
+  observed_mappings = true,
+  observed_sessions = true,
+  observed_sequence_keys = true,
+  observed_uses = true,
+  observations = true,
+  occurrences = true,
+  operations = true,
+  payload_schema_version = true,
+  presses = true,
+  privacy_boundary = true,
+  project_id = true,
+  purpose = true,
+  ranking_limit = true,
+  redo = true,
+  ["repeat"] = true,
+  repeated_key_presses = true,
+  repeated_key_runs = true,
+  repeated_keys = true,
+  repeated_motions = true,
+  required_observations = true,
+  required_sequence_keys = true,
+  required_sessions = true,
+  runs = true,
+  sampled_sessions = true,
+  schema_version = true,
+  search_navigation = true,
+  search_start = true,
+  sequences = true,
+  session_duration_ms = true,
+  sequence_keys = true,
+  sequence_length_keys = true,
+  sessions = true,
+  scope = true,
+  snapshot_version = true,
+  summary = true,
+  status = true,
+  text_keys = true,
+  text_runs = true,
+  thresholds = true,
+  to = true,
+  token_set_version = true,
+  total_session_duration_ms = true,
+  total_snapshot_mappings = true,
+  undo = true,
+  unique_keys = true,
+  unique_mappings = true,
+  unique_repeated_keys = true,
+  unobserved_mappings = true,
+}
 
 local function default_notify(message, level)
   vim.notify("key-insights: " .. message, level)
@@ -17,6 +130,146 @@ end
 
 local function default_open_file(path)
   vim.api.nvim_cmd({ cmd = "edit", args = { path } }, {})
+end
+
+local function default_open_preview(contents)
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, vim.split(contents, "\n", { plain = true }))
+  vim.bo[buffer].buftype = "nofile"
+  vim.bo[buffer].bufhidden = "wipe"
+  vim.bo[buffer].swapfile = false
+  vim.bo[buffer].filetype = "json"
+  vim.bo[buffer].modifiable = false
+  vim.api.nvim_set_current_buf(buffer)
+end
+
+local function validate_preview(contents)
+  if type(contents) ~= "string" or #contents > MAX_PREVIEW_BYTES then
+    return false, "preview output exceeds the size limit"
+  end
+  local decoded_ok, decoded = pcall(vim.json.decode, contents)
+  if not decoded_ok or type(decoded) ~= "table" then
+    return false, "preview output has an unexpected format"
+  end
+  local top_level = {
+    instructions = true,
+    keymap_snapshot = true,
+    payload_schema_version = true,
+    purpose = true,
+    summary = true,
+  }
+  for key in pairs(decoded) do
+    if type(key) ~= "string" or not top_level[key] then
+      return false, "preview output has an unexpected field"
+    end
+  end
+  if decoded.payload_schema_version ~= 1
+    or decoded.purpose ~= PREVIEW_PURPOSE
+    or type(decoded.summary) ~= "table"
+    or decoded.summary.schema_version ~= 3
+  then
+    return false, "preview output has an unexpected format"
+  end
+  local summary_fields = {
+    ergonomics = true,
+    events = true,
+    key_sequences = true,
+    keys = true,
+    mapping_attribution = true,
+    mapping_uses = true,
+    mappings = true,
+    mode_transitions = true,
+    modes = true,
+    ranking_limit = true,
+    repeated_key_presses = true,
+    repeated_key_runs = true,
+    repeated_keys = true,
+    schema_version = true,
+    sequence_keys = true,
+    sessions = true,
+    text_keys = true,
+    text_runs = true,
+    total_session_duration_ms = true,
+    unique_keys = true,
+    unique_mappings = true,
+    unique_repeated_keys = true,
+  }
+  for key in pairs(decoded.summary) do
+    if type(key) ~= "string" or not summary_fields[key] then
+      return false, "preview output contains a forbidden field"
+    end
+  end
+  local instructions = decoded.instructions
+  if type(instructions) ~= "table"
+    or instructions.evidence_required ~= true
+    or instructions.collision_check_required ~= true
+    or instructions.privacy_boundary ~= PREVIEW_PRIVACY_BOUNDARY
+    or type(instructions.action_kinds) ~= "table"
+  then
+    return false, "preview output has invalid analysis instructions"
+  end
+  if #instructions.action_kinds ~= #PREVIEW_ACTION_KINDS then
+    return false, "preview output has invalid analysis instructions"
+  end
+  for index, action_kind in ipairs(PREVIEW_ACTION_KINDS) do
+    if instructions.action_kinds[index] ~= action_kind then
+      return false, "preview output has invalid analysis instructions"
+    end
+  end
+  for key in pairs(instructions) do
+    if key ~= "action_kinds"
+      and key ~= "collision_check_required"
+      and key ~= "evidence_required"
+      and key ~= "privacy_boundary"
+    then
+      return false, "preview output has an unexpected instruction field"
+    end
+  end
+
+  local function reject_forbidden(value)
+    if type(value) == "string" then
+      local lower = string.lower(value)
+      local safe_bracket_token = value == "<C-/>"
+        or value == "<A-/>"
+        or value == "<M-/>"
+        or value == "<S-/>"
+      if (string.sub(value, 1, 1) == "/" and value ~= "/")
+        or string.match(value, "^%a:[/\\]")
+        or (string.find(value, "/", 1, true) ~= nil
+          and not safe_bracket_token)
+        or string.find(lower, "/users/", 1, true) ~= nil
+        or string.find(lower, ".env", 1, true) ~= nil
+        or string.find(lower, "secret", 1, true) ~= nil
+        or string.find(lower, "credential", 1, true) ~= nil
+      then
+        return false
+      end
+      return true
+    end
+    if type(value) ~= "table" then
+      return true
+    end
+    for key, nested in pairs(value) do
+      if type(key) == "number" then
+        if key < 1 or key ~= math.floor(key) then
+          return false
+        end
+      elseif type(key) ~= "string" or not KNOWN_PREVIEW_KEYS[key] then
+        return false
+      end
+      if type(key) == "string" and FORBIDDEN_PREVIEW_KEYS[key] then
+        return false
+      end
+      if not reject_forbidden(nested) then
+        return false
+      end
+    end
+    return true
+  end
+  if not reject_forbidden(decoded) then
+    return false, "preview output contains a forbidden field"
+  end
+  return true
 end
 
 local function protect_directory(fs, path, mode)
@@ -144,6 +397,7 @@ function M.new(options, dependencies)
     _mkdir = deps.mkdir or vim.fn.mkdir,
     _notify_fn = deps.notify or default_notify,
     _open_file = deps.open_file or default_open_file,
+    _open_preview = deps.open_preview or default_open_preview,
     _output_directory = config.output_directory,
     _previous_outputs = nil,
     _protect_directory = deps.protect_directory or function(path, mode)
@@ -216,6 +470,32 @@ function Report:_complete(result, generation)
   self:_open()
 end
 
+function Report:_complete_preview(result, generation)
+  if generation ~= self._generation then
+    return
+  end
+  self._job = nil
+  if type(result) ~= "table" or type(result.code) ~= "number" then
+    self:_notify("preview returned an invalid process result", vim.log.levels.ERROR)
+    return
+  end
+  if result.code ~= 0 or (type(result.signal) == "number" and result.signal ~= 0) then
+    self:_notify("preview failed: " .. process_error(result), vim.log.levels.ERROR)
+    return
+  end
+  local valid, validation_error = validate_preview(result.stdout)
+  if not valid then
+    self:_notify(tostring(validation_error or "preview output is invalid"), vim.log.levels.ERROR)
+    return
+  end
+  local open_ok, open_error = pcall(self._open_preview, result.stdout)
+  if not open_ok then
+    self:_notify("failed to open preview: " .. tostring(open_error), vim.log.levels.ERROR)
+    return
+  end
+  self:_notify("sanitized Codex preview is ready", vim.log.levels.INFO)
+end
+
 function Report:start()
   if self._job ~= nil then
     self:_notify("a report is already running", vim.log.levels.WARN)
@@ -267,6 +547,44 @@ function Report:start()
     self._job = nil
     self._previous_outputs = nil
     self:_notify("failed to start the analyzer: " .. tostring(job), vim.log.levels.ERROR)
+    return false
+  end
+  if not completed then
+    self._job = job
+  end
+  return true
+end
+
+function Report:preview()
+  if self._job ~= nil then
+    self:_notify("a report or preview is already running", vim.log.levels.WARN)
+    return false
+  end
+  local collect_ok, snapshot = pcall(self._collect_snapshot_payload)
+  if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
+    self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
+    return false
+  end
+  local argv = {
+    self._analyzer,
+    "preview",
+    self._summary_path,
+    "--keymap-snapshot",
+    "-",
+    "--output",
+    "-",
+  }
+  self._generation = self._generation + 1
+  local generation = self._generation
+  self._job = true
+  local completed = false
+  local run_ok, job = pcall(self._run, argv, function(result)
+    completed = true
+    self:_complete_preview(result, generation)
+  end, snapshot)
+  if not run_ok or (not job and not completed) then
+    self._job = nil
+    self:_notify("failed to start the preview: " .. tostring(job), vim.log.levels.ERROR)
     return false
   end
   if not completed then

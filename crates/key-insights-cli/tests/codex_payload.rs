@@ -96,6 +96,16 @@ fn rejects_mutated_sanitized_fields_and_nested_contract_versions() {
         render_codex_payload_json(&secret_summary, None),
         Err(CodexPayloadError::InvalidSummaryContract { .. })
     ));
+    secret_summary.keys[0].key = "<file:///home/alice/project>".to_owned();
+    assert!(matches!(
+        render_codex_payload_json(&secret_summary, None),
+        Err(CodexPayloadError::InvalidSummaryContract { .. })
+    ));
+    secret_summary.keys[0].key = "src/.env".to_owned();
+    assert!(matches!(
+        render_codex_payload_json(&secret_summary, None),
+        Err(CodexPayloadError::InvalidSummaryContract { .. })
+    ));
 
     let mut versioned_summary = summary();
     versioned_summary.ergonomics.contract_version = 2;

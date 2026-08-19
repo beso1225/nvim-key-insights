@@ -1,6 +1,6 @@
 # Milestone 4 optional Codex analysis plan
 
-Status: planned
+Status: in progress
 
 Roadmap milestone: [Optional Codex analysis](implementation-roadmap.md#milestone-4-optional-codex-analysis)
 
@@ -70,6 +70,8 @@ Status: complete on `codex/codex-analysis-contract`.
 - document the boundary and update the roadmap.
 
 ### M4-S2: preview command and explicit approval boundary
+
+Status: complete on `codex/codex-analysis-contract`.
 
 - add a CLI command that reads only existing sanitized artifacts and prints the
   exact payload to a caller-selected destination or stdout;

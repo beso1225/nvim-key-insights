@@ -20,7 +20,27 @@ end)
 vim.system = original_system
 assert(vim.deep_equal(system_argv, { "tool with spaces", "arg;$" }))
 assert(system_options.text == true)
+assert(type(system_options.stdout) == "function")
+assert(type(system_options.stderr) == "function")
 assert(system_result.code == 0)
+
+local bounded_result = nil
+local bounded_system = vim.system
+vim.system = function(_, options, callback)
+  options.stdout(nil, string.rep("o", 1024 * 1024))
+  options.stderr(nil, string.rep("e", 1024 * 1024))
+  callback({ code = 0 })
+  return { pid = 9 }
+end
+process.run({ "bounded" }, function(result)
+  bounded_result = result
+end)
+vim.wait(1000, function()
+  return bounded_result ~= nil
+end)
+vim.system = bounded_system
+assert(#bounded_result.stdout == 256 * 1024 + 1, "stdout capture must be bounded")
+assert(#bounded_result.stderr == 8 * 1024, "stderr capture must be bounded")
 
 local notifications = {}
 local invocations = {}
@@ -211,6 +231,126 @@ assert(shutdown_report:status().running == false)
 assert(shutdown_kills == 1)
 shutdown_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
 assert(shutdown_report:status().running == false, "a late process callback must stay ignored")
+
+local preview_notifications = {}
+local preview_invocation = nil
+local preview_stdin = nil
+local preview_callback = nil
+local shown_preview = nil
+local preview = report.new({
+  analyzer = "/tools/key insights;$analyzer",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function(payload)
+    shown_preview = payload
+  end,
+  run = function(argv, callback, stdin)
+    preview_invocation = vim.deepcopy(argv)
+    preview_callback = callback
+    preview_stdin = stdin
+    return { pid = 43 }
+  end,
+})
+assert(preview:preview() == true)
+assert(vim.deep_equal(preview_invocation, {
+  "/tools/key insights;$analyzer",
+  "preview",
+  "/state/preview-reports/summary.json",
+  "--keymap-snapshot",
+  "-",
+  "--output",
+  "-",
+}))
+assert(preview_stdin == '{"snapshot_version":1,"mappings":[]}')
+assert(shown_preview == nil, "preview must wait for analyzer output")
+preview_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."},"summary":{"schema_version":3,"ergonomics":{"thresholds":{"minimum_candidate_sessions":3,"minimum_candidate_sequence_keys":100,"minimum_candidate_observations":3}}}}',
+  stderr = "",
+})
+assert(shown_preview == '{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."},"summary":{"schema_version":3,"ergonomics":{"thresholds":{"minimum_candidate_sessions":3,"minimum_candidate_sequence_keys":100,"minimum_candidate_observations":3}}}}')
+assert(preview:status().running == false)
+
+local forged_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function()
+    error("forged preview must not be opened")
+  end,
+  run = function(_, callback)
+    callback({
+      code = 0,
+      signal = 0,
+      stdout = '{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."},"summary":{"schema_version":3,"path":"/Users/secret"}}',
+      stderr = "",
+    })
+    return { pid = 45 }
+  end,
+})
+assert(forged_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "forbidden field", 1, true) ~= nil)
+
+local nested_forged_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function()
+    error("nested forged preview must not be opened")
+  end,
+  run = function(_, callback)
+    callback({
+      code = 0,
+      signal = 0,
+      stdout = '{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."},"summary":{"schema_version":3,"keys":[{"key":"<file:///home/alice/project>","count":1}]}}',
+      stderr = "",
+    })
+    return { pid = 46 }
+  end,
+})
+assert(nested_forged_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "forbidden field", 1, true) ~= nil)
+
+local oversized_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  run = function(_, callback)
+    callback({ code = 0, signal = 0, stdout = string.rep("x", 262145), stderr = "" })
+    return { pid = 44 }
+  end,
+})
+assert(oversized_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "preview", 1, true) ~= nil)
 
 assert(instance:open() == true)
 assert(#opened == 2)

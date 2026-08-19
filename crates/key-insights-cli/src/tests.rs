@@ -1,9 +1,12 @@
 use std::{
+    ffi::OsString,
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use key_insights::{analyze_jsonl, render_summary_json};
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
@@ -1556,4 +1559,128 @@ fn publication_lock_names_remain_within_common_filesystem_limits() {
             .len()
             <= 128
     );
+}
+
+#[test]
+fn preview_reads_a_private_summary_and_publishes_the_exact_payload() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-preview-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary_path = directory.join("summary.json");
+    let output_path = directory.join("payload.json");
+    let source = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"key_sequence","session_id":"one","elapsed_ms":1,"mode":"normal","keys":["j"],"duration_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":2}"#,
+        "\n",
+    );
+    let summary = analyze_jsonl(std::io::Cursor::new(source)).expect("valid summary");
+    fs::write(&summary_path, render_summary_json(&summary)).expect("write summary");
+    fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
+
+    super::run(vec![
+        OsString::from("preview"),
+        summary_path.clone().into_os_string(),
+        OsString::from("--output"),
+        output_path.clone().into_os_string(),
+    ])
+    .expect("preview succeeds");
+
+    let expected =
+        key_insights::render_codex_payload_json(&summary, None).expect("payload renders");
+    assert_eq!(
+        fs::read_to_string(output_path).expect("read payload"),
+        expected
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn preview_rejects_invalid_summary_without_replacing_existing_output() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-preview-invalid-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary_path = directory.join("summary.json");
+    let output_path = directory.join("payload.json");
+    fs::write(&summary_path, br#"{"schema_version":3,"path":"/secret"}"#)
+        .expect("write invalid summary");
+    fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
+    fs::write(&output_path, "previous\n").expect("write previous output");
+    fs::set_permissions(&output_path, fs::Permissions::from_mode(0o600)).expect("protect output");
+
+    assert!(
+        super::run(vec![
+            OsString::from("preview"),
+            summary_path.into_os_string(),
+            OsString::from("--output"),
+            output_path.clone().into_os_string(),
+        ])
+        .is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(output_path).expect("read previous output"),
+        "previous\n"
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn preview_rejects_an_output_alias_to_the_summary() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-preview-alias-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary_path = directory.join("summary.json");
+    let summary = analyze_jsonl(std::io::Cursor::new(concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":1}"#,
+        "\n",
+    )))
+    .expect("valid summary");
+    fs::write(&summary_path, render_summary_json(&summary)).expect("write summary");
+    fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
+
+    let error = super::run(vec![
+        OsString::from("preview"),
+        summary_path.clone().into_os_string(),
+        OsString::from("--output"),
+        summary_path.into_os_string(),
+    ])
+    .expect_err("summary alias must fail");
+    assert!(error.contains("overwrite"), "{error}");
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn preview_rejects_duplicate_output_options_even_when_one_is_stdout() {
+    let error = super::run(vec![
+        OsString::from("preview"),
+        OsString::from("summary.json"),
+        OsString::from("--output"),
+        OsString::from("-"),
+        OsString::from("--output"),
+        OsString::from("payload.json"),
+    ])
+    .expect_err("duplicate output options must fail");
+    assert!(error.contains("duplicate option --output"), "{error}");
 }

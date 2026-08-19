@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -13,8 +13,9 @@ use std::{
 };
 
 use key_insights::{
-    MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
-    parse_keymap_snapshot, render_markdown, render_summary_json,
+    AnalysisSummary, MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs,
+    analyze_jsonl_inputs_with_snapshot, parse_keymap_snapshot, render_codex_payload_json,
+    render_markdown, render_summary_json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,9 @@ fn main() -> ExitCode {
 
 fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let command = arguments.first().and_then(|value| value.to_str());
+    if command == Some("preview") {
+        return run_preview(arguments);
+    }
     if command != Some("analyze") {
         return Err(usage());
     }
@@ -142,6 +146,79 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let report_output = StagedOutput::create(&paths.report, render_markdown(&summary).as_bytes())?;
     publish_pair(summary_output, report_output)?;
     Ok(())
+}
+
+fn run_preview(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    let summary_path = arguments
+        .get(1)
+        .ok_or_else(|| "usage: key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]".to_owned())?;
+    if summary_path == OsStr::new("-") || summary_path.to_str().is_none() {
+        return Err("preview requires a private summary path".to_owned());
+    }
+    let mut keymap_snapshot_path = None;
+    let mut output_path = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        let flag = arguments[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_owned())?;
+        let value = arguments
+            .get(index + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--keymap-snapshot" if keymap_snapshot_path.is_none() => {
+                keymap_snapshot_path = Some(PathBuf::from(value));
+            }
+            "--output" if output_path.is_none() => output_path = Some(value.clone()),
+            "--keymap-snapshot" | "--output" => return Err(format!("duplicate option {flag}")),
+            _ => return Err(format!("unknown option {flag}")),
+        }
+        index += 2;
+    }
+
+    let summary_input = open_snapshot_input(Path::new(summary_path))?;
+    let summary: AnalysisSummary = serde_json::from_slice(&summary_input.bytes)
+        .map_err(|_| "failed to parse sanitized summary".to_owned())?;
+    let keymap_snapshot = match keymap_snapshot_path {
+        Some(path) if path == Path::new("-") => Some(SnapshotInput {
+            bytes: read_snapshot(std::io::stdin().lock())?,
+            identity: None,
+            path: None,
+        }),
+        Some(path) => Some(open_snapshot_input(&path)?),
+        None => None,
+    };
+    let snapshot = keymap_snapshot
+        .as_ref()
+        .map(|input| parse_keymap_snapshot(input.bytes.as_slice()))
+        .transpose()
+        .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
+    let payload = render_codex_payload_json(&summary, snapshot.as_ref())
+        .map_err(|error| format!("failed to render Codex preview: {error}"))?;
+    let output_path = output_path.unwrap_or_else(|| OsString::from("-"));
+    if output_path == OsStr::new("-") {
+        std::io::stdout()
+            .lock()
+            .write_all(payload.as_bytes())
+            .map_err(|error| format!("failed to write Codex preview: {error}"))?;
+        return Ok(());
+    }
+
+    let output = resolve_output_path(Path::new(&output_path))?;
+    if summary_input
+        .path
+        .as_ref()
+        .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+        || keymap_snapshot.as_ref().is_some_and(|input| {
+            input
+                .path
+                .as_ref()
+                .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+        })
+    {
+        return Err("preview output must not overwrite an input artifact".to_owned());
+    }
+    StagedOutput::create(&output, payload.as_bytes())?.publish()
 }
 
 #[cfg(unix)]
@@ -494,7 +571,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json|->]".to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json|->]; key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]".to_owned()
 }
 
 #[cfg(all(test, unix))]

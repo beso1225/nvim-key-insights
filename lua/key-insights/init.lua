@@ -109,6 +109,10 @@ function M.report()
   return get_report_instance():start()
 end
 
+function M.analyze()
+  return get_report_instance():preview()
+end
+
 function M.open_report()
   return get_report_instance():open()
 end

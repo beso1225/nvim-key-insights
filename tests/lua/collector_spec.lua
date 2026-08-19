@@ -561,6 +561,7 @@ for _, name in ipairs({
   "KeyInsightsStop",
   "KeyInsightsStatus",
   "KeyInsightsReport",
+  "KeyInsightsAnalyze",
   "KeyInsightsOpenReport",
   "KeyInsightsPurge",
 }) do
@@ -576,6 +577,7 @@ for name, count in pairs(command_registrations) do
 end
 assert(api.status().report_running == false)
 local report_calls = 0
+local analyze_calls = 0
 local open_report_calls = 0
 local purge_forces = {}
 local original_report = api.report
@@ -584,6 +586,10 @@ local original_purge = api.purge
 api.report = function()
   report_calls = report_calls + 1
 end
+local original_analyze = api.analyze
+api.analyze = function()
+  analyze_calls = analyze_calls + 1
+end
 api.open_report = function()
   open_report_calls = open_report_calls + 1
 end
@@ -591,13 +597,16 @@ api.purge = function(force)
   table.insert(purge_forces, force)
 end
 vim.cmd.KeyInsightsReport()
+vim.cmd.KeyInsightsAnalyze()
 vim.cmd.KeyInsightsOpenReport()
 vim.cmd.KeyInsightsPurge()
 vim.cmd("KeyInsightsPurge!")
 api.report = original_report
+api.analyze = original_analyze
 api.open_report = original_open_report
 api.purge = original_purge
 assert(report_calls == 1)
+assert(analyze_calls == 1)
 assert(open_report_calls == 1)
 assert(vim.deep_equal(purge_forces, { false, true }))
 vim.cmd.KeyInsightsStart()

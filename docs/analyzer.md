@@ -100,8 +100,17 @@ Only `summary.json`, after user preview, is intended to cross the optional Codex
 
 ## Optional Codex payload preview
 
-The Rust library exposes the M4-S1 payload renderer used by future preview and
-subprocess commands. It accepts only an in-memory schema-v3 `AnalysisSummary`
+The CLI exposes the same renderer through an explicit preview command:
+
+```sh
+key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]
+```
+
+The summary must be an owner-only regular file. A snapshot may be supplied as
+an owner-only file or through stdin (`-`); stdout is also selected with
+`--output -` and receives the exact compact JSON bytes without a trailing
+newline. File outputs are staged atomically and cannot alias either input.
+The Rust library and CLI renderer accept only an in-memory schema-v3 `AnalysisSummary`
 and an optional parsed keymap snapshot, emits compact deterministic JSON, and
 rejects unsupported summary versions or payloads larger than 256 KiB. The
 payload contains a fixed purpose, evidence and collision-check instructions,
@@ -109,4 +118,7 @@ the summary, and—when supplied—the snapshot's version, mode, scope, canonica
 LHS, and opaque mapping IDs. It does not accept paths, JSONL, report Markdown,
 or mapping implementations, and it omits those fields from the serialized
 boundary by construction. No Codex process is launched by this renderer;
-preview and explicit approval remain later workflow stages.
+preview and explicit approval remain later workflow stages. The Neovim
+`:KeyInsightsAnalyze` command runs this local preview path and opens the bounded
+JSON in a scratch buffer; it never launches Codex or sends raw JSONL/report
+artifacts.

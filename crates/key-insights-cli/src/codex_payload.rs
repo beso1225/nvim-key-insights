@@ -454,7 +454,12 @@ fn valid_buckets(buckets: &[crate::HistogramBucket], expected: &[&str]) -> bool 
 }
 
 fn validate_token(token: &str, field: &'static str) -> Result<(), CodexPayloadError> {
-    if !keymap_snapshot::is_canonical_token(token) {
+    let lower = token.to_ascii_lowercase();
+    let safe_bracket_token = matches!(token, "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>");
+    let path_like = token.contains('/') && token != "/" && !safe_bracket_token;
+    let sensitive_name =
+        lower.contains(".env") || lower.contains("secret") || lower.contains("credential");
+    if !keymap_snapshot::is_canonical_token(token) || path_like || sensitive_name {
         return Err(invalid(field));
     }
     Ok(())
