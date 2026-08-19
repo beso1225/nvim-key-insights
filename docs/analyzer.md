@@ -122,3 +122,13 @@ preview and explicit approval remain later workflow stages. The Neovim
 `:KeyInsightsAnalyze` command runs this local preview path and opens the bounded
 JSON in a scratch buffer; it never launches Codex or sends raw JSONL/report
 artifacts.
+
+## Optional Codex exec runner
+
+The library also provides a non-shell `codex exec` runner for the next explicit
+approval step. It inherits saved Codex authentication, supplies `--ephemeral`,
+`--sandbox read-only`, and `--output-schema`, and writes the already previewed
+payload only to stdin. Input and output are bounded to 256 KiB, stderr is not
+returned as a publishable result, and timeout/overflow termination kills the
+dedicated process group on Unix. The runner is not wired into the default
+Neovim command or ordinary CI.

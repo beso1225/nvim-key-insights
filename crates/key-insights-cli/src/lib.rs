@@ -1,6 +1,7 @@
 //! Deterministic analysis primitives shared by the CLI and its tests.
 
 mod analyzer;
+mod codex_exec;
 mod codex_payload;
 mod ergonomics;
 mod event;
@@ -13,6 +14,10 @@ pub use analyzer::{
     MappingAttributionStatus, MappingCollision, MappingCount, ModeStats, RepeatedKeyStats,
     analyze_jsonl, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
     analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
+};
+pub use codex_exec::{
+    CodexExecConfig, CodexExecError, CodexExecResult, MAX_CODEX_OUTPUT_BYTES, MAX_CODEX_TIMEOUT,
+    build_codex_exec_argv, run_codex_exec,
 };
 pub use codex_payload::{
     CODEX_PAYLOAD_SCHEMA_VERSION, CodexPayloadError, MAX_CODEX_PAYLOAD_BYTES,

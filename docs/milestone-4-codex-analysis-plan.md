@@ -81,6 +81,8 @@ Status: complete on `codex/codex-analysis-contract`.
 
 ### M4-S3: mocked Codex exec runner
 
+Status: complete on `codex/codex-analysis-contract`.
+
 - invoke `codex exec` only after explicit user confirmation;
 - use saved ChatGPT authentication, `--ephemeral`, read-only sandbox, stdin,
   bounded timeout, and a strict output schema;
