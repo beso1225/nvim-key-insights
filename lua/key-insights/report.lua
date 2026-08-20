@@ -280,7 +280,8 @@ local function validate_preview(contents)
         or value == "<S-\\>"
       if (string.sub(value, 1, 1) == "/" and value ~= "/")
         or string.match(value, "^%a:[/\\]")
-        or (string.find(value, "/", 1, true) ~= nil
+        or (value ~= "/"
+          and string.find(value, "/", 1, true) ~= nil
           and not safe_bracket_token)
         or (string.find(value, "\\", 1, true) ~= nil and not safe_bracket_token)
         or string.find(lower, "/users/", 1, true) ~= nil

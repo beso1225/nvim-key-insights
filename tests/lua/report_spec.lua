@@ -278,11 +278,11 @@ local valid_preview = vim.json.encode({
     mapping_uses = 0,
     repeated_key_runs = 0,
     repeated_key_presses = 0,
-    unique_keys = 0,
+    unique_keys = 1,
     unique_mappings = 0,
     unique_repeated_keys = 0,
     modes = {},
-    keys = {},
+    keys = { { key = "/", count = 1 } },
     mappings = {},
     repeated_keys = {},
     ergonomics = {
