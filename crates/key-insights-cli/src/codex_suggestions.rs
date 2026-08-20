@@ -425,7 +425,7 @@ fn validate_text(
         || value.chars().any(|character| {
             matches!(character, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
         })
-        || value.contains('/')
+        || contains_non_standalone_slash(value)
         || value.contains('\\')
         || lower.contains(".env")
         || lower.contains("secret")
@@ -440,6 +440,32 @@ fn validate_text(
         return Err(invalid(field));
     }
     Ok(())
+}
+
+fn contains_non_standalone_slash(value: &str) -> bool {
+    let characters = value.chars().collect::<Vec<_>>();
+    characters.iter().enumerate().any(|(index, character)| {
+        *character == '/'
+            && (!is_left_search_key_boundary(
+                index.checked_sub(1).map(|previous| characters[previous]),
+            ) || !is_right_search_key_boundary(characters.get(index + 1).copied()))
+    })
+}
+
+fn is_left_search_key_boundary(character: Option<char>) -> bool {
+    character.is_none_or(|character| {
+        character.is_whitespace() || matches!(character, '`' | '\'' | '"' | '(' | '[' | '{' | '<')
+    })
+}
+
+fn is_right_search_key_boundary(character: Option<char>) -> bool {
+    character.is_none_or(|character| {
+        character.is_whitespace()
+            || matches!(
+                character,
+                '`' | '\'' | '"' | ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':' | '!' | '?'
+            )
+    })
 }
 
 fn has_duplicate_object_keys(bytes: &[u8]) -> Result<bool, ()> {

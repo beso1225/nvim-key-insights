@@ -435,6 +435,49 @@ validate_analysis_summary = function(summary)
   return true
 end
 
+local LEFT_SEARCH_KEY_BOUNDARIES = {
+  ["`"] = true,
+  ["'"] = true,
+  ['"'] = true,
+  ["("] = true,
+  ["["] = true,
+  ["{"] = true,
+  ["<"] = true,
+}
+local RIGHT_SEARCH_KEY_BOUNDARIES = {
+  ["`"] = true,
+  ["'"] = true,
+  ['"'] = true,
+  [")"] = true,
+  ["]"] = true,
+  ["}"] = true,
+  [">"] = true,
+  [","] = true,
+  ["."] = true,
+  [";"] = true,
+  [":"] = true,
+  ["!"] = true,
+  ["?"] = true,
+}
+
+local function contains_non_standalone_slash(value)
+  local offset = 1
+  while true do
+    local slash = string.find(value, "/", offset, true)
+    if slash == nil then
+      return false
+    end
+    local previous = slash > 1 and string.sub(value, slash - 1, slash - 1) or nil
+    local following = slash < #value and string.sub(value, slash + 1, slash + 1) or nil
+    local left_safe = previous == nil or string.match(previous, "%s") ~= nil or LEFT_SEARCH_KEY_BOUNDARIES[previous]
+    local right_safe = following == nil or string.match(following, "%s") ~= nil or RIGHT_SEARCH_KEY_BOUNDARIES[following]
+    if not left_safe or not right_safe then
+      return true
+    end
+    offset = slash + 1
+  end
+end
+
 local function safe_output_text(value, maximum)
   if type(value) ~= "string" or #value < 1 or #value > maximum then
     return false
@@ -443,7 +486,7 @@ local function safe_output_text(value, maximum)
     return false
   end
   local lower = string.lower(value)
-  return string.find(value, "/", 1, true) == nil
+  return not contains_non_standalone_slash(value)
     and string.find(value, "\\", 1, true) == nil
     and string.find(lower, ".env", 1, true) == nil
     and string.find(lower, "secret", 1, true) == nil
@@ -1022,7 +1065,9 @@ function M.new(options, dependencies)
     _open_preview = deps.open_preview or default_open_preview,
     _confirm = deps.confirm or default_confirm,
     _output_directory = config.output_directory,
+    _pending_snapshot = nil,
     _previous_outputs = nil,
+    _report_snapshot = nil,
     _protect_directory = deps.protect_directory or function(path, mode)
       return protect_directory(fs, path, mode)
     end,
@@ -1072,6 +1117,8 @@ function Report:_complete(result, generation)
     return
   end
   self._job = nil
+  local report_snapshot = self._pending_snapshot
+  self._pending_snapshot = nil
   local previous_outputs = self._previous_outputs
   self._previous_outputs = nil
   if type(result) ~= "table" or type(result.code) ~= "number" then
@@ -1092,6 +1139,7 @@ function Report:_complete(result, generation)
     self:_notify(tostring(validation_error or "analyzer outputs are invalid"), vim.log.levels.ERROR)
     return
   end
+  self._report_snapshot = report_snapshot
   self:_notify("report updated", vim.log.levels.INFO)
   self:_open()
 end
@@ -1243,6 +1291,7 @@ function Report:start()
   }
   self._generation = self._generation + 1
   local generation = self._generation
+  self._pending_snapshot = snapshot
   self._job = true
   local completed = false
   local run_ok, job = pcall(self._run, argv, function(result)
@@ -1251,6 +1300,7 @@ function Report:start()
   end, snapshot)
   if not run_ok or (not job and not completed) then
     self._job = nil
+    self._pending_snapshot = nil
     self._previous_outputs = nil
     self:_notify("failed to start the analyzer: " .. tostring(job), vim.log.levels.ERROR)
     return false
@@ -1266,10 +1316,14 @@ function Report:preview()
     self:_notify("a report or preview is already running", vim.log.levels.WARN)
     return false
   end
-  local collect_ok, snapshot = pcall(self._collect_snapshot_payload)
-  if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
-    self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
-    return false
+  local snapshot = self._report_snapshot
+  if snapshot == nil then
+    local collect_ok
+    collect_ok, snapshot = pcall(self._collect_snapshot_payload)
+    if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
+      self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
+      return false
+    end
   end
   local argv = {
     self._analyzer,
@@ -1325,6 +1379,7 @@ function Report:shutdown()
     pcall(job.kill, job, 15)
   end
   self._previous_outputs = nil
+  self._pending_snapshot = nil
   return true
 end
 

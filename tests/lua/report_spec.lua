@@ -370,6 +370,42 @@ preview_callback({
 assert(shown_preview == valid_preview)
 assert(preview:status().running == false)
 
+local reuse_snapshot_collections = 0
+local reuse_snapshot_callbacks = {}
+local reuse_snapshot_stdin = {}
+local snapshot_reuse = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/reused-snapshot-reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function()
+    return true
+  end,
+  mkdir = function()
+    return 1
+  end,
+  notify = function() end,
+  open_file = function() end,
+  collect_snapshot_payload = function()
+    reuse_snapshot_collections = reuse_snapshot_collections + 1
+    return string.format('{"snapshot_version":1,"mappings":[],"marker":%d}', reuse_snapshot_collections)
+  end,
+  run = function(_, callback, stdin)
+    table.insert(reuse_snapshot_callbacks, callback)
+    table.insert(reuse_snapshot_stdin, stdin)
+    return { pid = 49, kill = function() end }
+  end,
+  validate_outputs = function()
+    return true
+  end,
+})
+assert(snapshot_reuse:start() == true)
+reuse_snapshot_callbacks[1]({ code = 0, signal = 0, stdout = "", stderr = "" })
+assert(snapshot_reuse:preview() == true)
+assert(reuse_snapshot_collections == 1, "preview must reuse the report-time snapshot")
+assert(reuse_snapshot_stdin[2] == reuse_snapshot_stdin[1], "summary and preview snapshots must stay identical")
+assert(snapshot_reuse:shutdown() == true)
+
 local analysis_preview_callback = nil
 local analysis_codex_callback = nil
 local analysis_confirm_callback = nil
@@ -424,7 +460,12 @@ assert(vim.deep_equal(analysis_invocations[3], {
   "--output-schema",
   "/state/schema.json",
 }))
-analysis_codex_callback({ code = 0, signal = 0, stdout = '{"schema_version":1,"suggestions":[]}', stderr = "" })
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use / to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
 assert(analysis:status().running == false)
 assert(#analysis_opened == 3, "preview and Codex output must be shown")
 
@@ -446,6 +487,18 @@ analysis_codex_callback({
 })
 assert(analysis:status().running == false)
 assert(#analysis_opened == 5, "invalid Codex output must not be opened")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Review src/config.lua","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 6, "path-shaped Codex output must not be opened")
 
 local forged_preview = report.new({
   analyzer = "key-insights",

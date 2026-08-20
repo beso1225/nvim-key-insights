@@ -154,6 +154,20 @@ fn rejects_sensitive_text_and_oversized_documents() {
 }
 
 #[test]
+fn accepts_standalone_search_key_references_but_rejects_paths() {
+    let search_key = VALID.replace("Use the existing motion", "Use / to search");
+    validate_codex_suggestions_json(search_key.as_bytes()).expect("standalone search key");
+
+    let path = VALID.replace("Use the existing motion", "Review src/config.lua");
+    assert!(matches!(
+        validate_codex_suggestions_json(path.as_bytes()),
+        Err(CodexSuggestionError::InvalidContract {
+            field: "suggestion.title"
+        })
+    ));
+}
+
+#[test]
 fn escapes_html_in_validated_markdown() {
     let summary = summary();
     let json = VALID
