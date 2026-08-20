@@ -13,7 +13,7 @@ use key_insights::{
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
-    open_input_file, open_private_lock_file, open_snapshot_input, output_lock_path, publish_pair,
+    open_input_file, open_private_input, open_private_lock_file, output_lock_path, publish_pair,
     publish_pair_with_hook, publish_pair_with_hooks, resolve_paths,
 };
 
@@ -33,18 +33,28 @@ fn snapshot_input_is_read_once_and_rejects_unsafe_leaf_types() {
     fs::write(&path, b"trusted\n").expect("write trusted snapshot");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).expect("protect snapshot");
     assert_eq!(
-        open_snapshot_input(&path).expect("private snapshot").bytes,
+        open_private_input(&path, key_insights::MAX_SNAPSHOT_BYTES, "keymap snapshot")
+            .expect("private snapshot")
+            .bytes,
         b"trusted\n"
     );
 
     let link = directory.join("linked.json");
     fs::hard_link(&path, &link).expect("create hard link");
-    let error = open_snapshot_input(&path).expect_err("linked snapshot must be rejected");
+    let error = open_private_input(&path, key_insights::MAX_SNAPSHOT_BYTES, "keymap snapshot")
+        .expect_err("linked snapshot must be rejected");
     assert!(error.contains("permissions"), "{error}");
 
     let symlink_path = directory.join("symlink.json");
     symlink(&path, &symlink_path).expect("create symlink");
-    assert!(open_snapshot_input(&symlink_path).is_err());
+    assert!(
+        open_private_input(
+            &symlink_path,
+            key_insights::MAX_SNAPSHOT_BYTES,
+            "keymap snapshot"
+        )
+        .is_err()
+    );
     fs::remove_dir_all(root).expect("remove test directory");
 }
 
@@ -1631,7 +1641,9 @@ fn preview_reconstructs_the_report_snapshot_from_an_attributed_summary() {
     );
     let summary = analyze_jsonl_with_snapshot(std::io::Cursor::new(source), &snapshot)
         .expect("attributed summary");
-    fs::write(&summary_path, render_summary_json(&summary)).expect("write summary");
+    let mut summary_json = render_summary_json(&summary);
+    summary_json.push_str(&" ".repeat(1024 * 1024 + 1));
+    fs::write(&summary_path, summary_json).expect("write summary over the snapshot-size bound");
     fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
 
     super::run(vec![
@@ -1646,6 +1658,54 @@ fn preview_reconstructs_the_report_snapshot_from_an_attributed_summary() {
     assert_eq!(
         fs::read_to_string(output_path).expect("read payload"),
         expected
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn suggestions_command_validates_and_renders_deterministic_markdown() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-suggestions-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary_path = directory.join("summary.json");
+    let suggestions_path = directory.join("suggestions.json");
+    let output_path = directory.join("suggestions.md");
+    let summary = analyze_jsonl(std::io::Cursor::new(concat!(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}\n",
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":1}\n",
+    )))
+    .expect("valid summary");
+    let mut summary_json = render_summary_json(&summary);
+    summary_json.push_str(&" ".repeat(1024 * 1024 + 1));
+    fs::write(&summary_path, summary_json).expect("write summary over the snapshot-size bound");
+    fs::write(
+        &suggestions_path,
+        r#"{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}"#,
+    )
+    .expect("write suggestions");
+    fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
+    fs::set_permissions(&suggestions_path, fs::Permissions::from_mode(0o600))
+        .expect("protect suggestions");
+
+    super::run(vec![
+        OsString::from("suggestions"),
+        summary_path.into_os_string(),
+        OsString::from("--input"),
+        suggestions_path.into_os_string(),
+        OsString::from("--output"),
+        output_path.clone().into_os_string(),
+    ])
+    .expect("suggestions render succeeds");
+
+    assert_eq!(
+        fs::read_to_string(output_path).expect("read suggestions"),
+        "# Codex suggestions\n\n## 1. Keep the current setup\n\n- **Action:** `no_change`\n- **Rationale:** The measured sample does not justify a change.\n- **Evidence:**\n  - `sessions`: 1\n- **Collision check:** passed (no conflicting mappings reported)\n\n"
     );
     fs::remove_dir_all(directory).expect("remove test directory");
 }

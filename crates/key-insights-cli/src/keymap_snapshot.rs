@@ -133,7 +133,7 @@ pub fn parse_keymap_snapshot<R: Read>(reader: R) -> Result<KeymapSnapshot, Snaps
 /// Reconstruct the exact sanitized report-time snapshot retained in mapping
 /// attribution. This supports previewing an existing report after Neovim has
 /// restarted without sampling a different current keymap.
-pub(crate) fn reconstruct_keymap_snapshot(
+pub fn reconstruct_keymap_snapshot(
     summary: &AnalysisSummary,
 ) -> Result<Option<KeymapSnapshot>, SnapshotError> {
     let Some(attribution) = &summary.mapping_attribution else {

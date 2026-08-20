@@ -26,10 +26,10 @@ pub use codex_payload::{
 };
 pub use codex_suggestions::{
     CODEX_SUGGESTIONS_SCHEMA_VERSION, CodexSuggestion, CodexSuggestionDocument,
-    CodexSuggestionError, CollisionCheck, MAX_CODEX_SUGGESTIONS, MAX_SUGGESTION_CONFLICTS,
-    MAX_SUGGESTION_EVIDENCE, MappingProposal, SuggestionAction, SuggestionEvidence,
-    ValidatedCodexSuggestions, render_codex_suggestions_markdown, validate_codex_suggestions_json,
-    validate_codex_suggestions_json_for_summary,
+    CodexSuggestionError, CollisionCheck, MAX_CODEX_SUGGESTIONS, MAX_RENDERED_SUGGESTIONS_BYTES,
+    MAX_SUGGESTION_CONFLICTS, MAX_SUGGESTION_EVIDENCE, MappingProposal, SuggestionAction,
+    SuggestionEvidence, ValidatedCodexSuggestions, render_codex_suggestions_markdown,
+    validate_codex_suggestions_json, validate_codex_suggestions_json_for_summary,
 };
 pub use ergonomics::{
     CANDIDATE_KIND_VERSION, COUNTABLE_TOKEN_SET_VERSION, CandidateGuard, CountPrefixEvidence,
@@ -44,6 +44,7 @@ pub use event::{Event, Mode, SequenceMode};
 pub use keymap_snapshot::{
     KeymapSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MAPPINGS, SNAPSHOT_VERSION, SnapshotError,
     SnapshotMapping, SnapshotMode, SnapshotScope, parse_keymap_snapshot,
+    reconstruct_keymap_snapshot,
 };
 pub use validator::{
     MAX_EVENT_LINE_BYTES, MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationError,

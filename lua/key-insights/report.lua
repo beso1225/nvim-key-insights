@@ -16,6 +16,7 @@ local PREVIEW_PURPOSE = "analyze-neovim-usage"
 local PREVIEW_PRIVACY_BOUNDARY = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."
 local PREVIEW_ACTION_KINDS = { "learn_existing", "add_mapping", "change_mapping", "no_change" }
 local MAX_CODEX_BYTES = 256 * 1024
+local MAX_RENDERED_SUGGESTIONS_BYTES = 1024 * 1024
 local MAX_CODEX_SUGGESTIONS = 100
 local MAX_SUGGESTION_EVIDENCE = 32
 local MAX_SUGGESTION_CONFLICTS = 4096
@@ -138,15 +139,23 @@ local function default_open_file(path)
   vim.api.nvim_cmd({ cmd = "edit", args = { path } }, {})
 end
 
-local function default_open_preview(contents)
+local function default_open_contents(contents, filetype)
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, vim.split(contents, "\n", { plain = true }))
   vim.bo[buffer].buftype = "nofile"
   vim.bo[buffer].bufhidden = "wipe"
   vim.bo[buffer].swapfile = false
-  vim.bo[buffer].filetype = "json"
+  vim.bo[buffer].filetype = filetype
   vim.bo[buffer].modifiable = false
   vim.api.nvim_set_current_buf(buffer)
+end
+
+local function default_open_preview(contents)
+  default_open_contents(contents, "json")
+end
+
+local function default_open_suggestions(contents)
+  default_open_contents(contents, "markdown")
 end
 
 local function default_confirm(callback)
@@ -889,6 +898,16 @@ local function expected_metric(summary, metric)
   return nil
 end
 
+local function lhs_collides(existing, proposed)
+  local shared = math.min(#existing, #proposed)
+  for index = 1, shared do
+    if existing[index] ~= proposed[index] then
+      return false
+    end
+  end
+  return true
+end
+
 local function validate_codex_suggestions(contents, preview_payload)
   if type(contents) ~= "string" or #contents > MAX_CODEX_BYTES then
     return false, "Codex output exceeds the size limit"
@@ -1167,7 +1186,7 @@ local function validate_codex_suggestions(contents, preview_payload)
       local expected = {}
       for mapping_id, mapping in pairs(snapshot_by_id) do
         if mapping.mode == proposal.mode
-          and vim.deep_equal(mapping.lhs, proposal.lhs)
+          and lhs_collides(mapping.lhs, proposal.lhs)
           and mapping_id ~= proposal.target_mapping_id
         then
           expected[mapping_id] = true
@@ -1315,6 +1334,7 @@ function M.new(options, dependencies)
     _notify_fn = deps.notify or default_notify,
     _open_file = deps.open_file or default_open_file,
     _open_preview = deps.open_preview or default_open_preview,
+    _open_suggestions = deps.open_suggestions or deps.open_preview or default_open_suggestions,
     _confirm = deps.confirm or default_confirm,
     _output_directory = config.output_directory,
     _previous_outputs = nil,
@@ -1327,6 +1347,7 @@ function M.new(options, dependencies)
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
     _run_codex = deps.run_codex or process.run,
+    _run_suggestions = deps.run_suggestions or process.run,
     _supports_process_groups = deps.supports_process_groups or process.supports_process_groups,
     _codex_binary = (config.codex and config.codex.binary) or "codex",
     _codex_output_schema = (config.codex and config.codex.output_schema) or default_codex_schema(),
@@ -1489,35 +1510,90 @@ function Report:_start_codex(payload, generation, preview_payload)
       return
     end
     self._job = nil
-    self._phase = nil
     if type(codex_result) ~= "table" or type(codex_result.code) ~= "number" then
+      self._phase = nil
       self:_notify("Codex returned an invalid process result", vim.log.levels.ERROR)
       return
     end
     if codex_result.code ~= 0 or (type(codex_result.signal) == "number" and codex_result.signal ~= 0) then
+      self._phase = nil
       self:_notify("Codex analysis failed (the subprocess exited unsuccessfully)", vim.log.levels.ERROR)
       return
     end
     if type(codex_result.stdout) ~= "string" or #codex_result.stdout > MAX_CODEX_BYTES then
+      self._phase = nil
       self:_notify("Codex output exceeds the size limit", vim.log.levels.ERROR)
       return
     end
     local valid, validation_error = validate_codex_suggestions(codex_result.stdout, preview_payload)
     if not valid then
+      self._phase = nil
       self:_notify(tostring(validation_error or "Codex returned invalid structured suggestions"), vim.log.levels.ERROR)
       return
     end
-    local open_ok, open_error = pcall(self._open_preview, codex_result.stdout)
-    if not open_ok then
-      self:_notify("failed to open Codex suggestions: " .. tostring(open_error), vim.log.levels.ERROR)
-      return
-    end
-    self:_notify("Codex suggestions are ready", vim.log.levels.INFO)
+    self:_start_suggestion_render(codex_result.stdout, generation)
   end, payload)
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._phase = nil
     self:_notify("failed to start Codex: " .. tostring(job), vim.log.levels.ERROR)
+    return false
+  end
+  if not completed then
+    self._job = job
+  end
+  return true
+end
+
+function Report:_complete_suggestion_render(result, generation)
+  if generation ~= self._generation or self._phase ~= "rendering_suggestions" then
+    return
+  end
+  self._job = nil
+  self._phase = nil
+  if type(result) ~= "table" or type(result.code) ~= "number" then
+    self:_notify("suggestion renderer returned an invalid process result", vim.log.levels.ERROR)
+    return
+  end
+  if result.code ~= 0 or (type(result.signal) == "number" and result.signal ~= 0) then
+    self:_notify("suggestion rendering failed", vim.log.levels.ERROR)
+    return
+  end
+  if type(result.stdout) ~= "string"
+    or #result.stdout > MAX_RENDERED_SUGGESTIONS_BYTES
+    or vim.split(result.stdout, "\n", { plain = true })[1] ~= "# Codex suggestions"
+  then
+    self:_notify("suggestion renderer returned invalid Markdown", vim.log.levels.ERROR)
+    return
+  end
+  local open_ok, open_error = pcall(self._open_suggestions, result.stdout)
+  if not open_ok then
+    self:_notify("failed to open Codex suggestions: " .. tostring(open_error), vim.log.levels.ERROR)
+    return
+  end
+  self:_notify("Codex suggestions are ready", vim.log.levels.INFO)
+end
+
+function Report:_start_suggestion_render(contents, generation)
+  self._phase = "rendering_suggestions"
+  self._job = true
+  local completed = false
+  local run_ok, job = pcall(self._run_suggestions, {
+    self._analyzer,
+    "suggestions",
+    self._summary_path,
+    "--input",
+    "-",
+    "--output",
+    "-",
+  }, function(result)
+    completed = true
+    self:_complete_suggestion_render(result, generation)
+  end, contents, { max_stdout_bytes = MAX_RENDERED_SUGGESTIONS_BYTES + 1 })
+  if not run_ok or (not job and not completed) then
+    self._job = nil
+    self._phase = nil
+    self:_notify("failed to start the suggestion renderer", vim.log.levels.ERROR)
     return false
   end
   if not completed then

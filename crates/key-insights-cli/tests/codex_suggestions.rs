@@ -10,6 +10,8 @@ use key_insights::{
 
 const GLOBAL_GG: &str =
     "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71";
+const GLOBAL_G: &str =
+    "mapping-v1:494845698ff45708f6996ca041b292cbe37a38c30e46af662058ec44d0ba2e67";
 
 const VALID: &str = r#"{
   "schema_version": 1,
@@ -237,6 +239,64 @@ fn binds_mapping_proposals_to_actual_snapshot_collisions() {
         Some(&snapshot),
     )
     .expect("actual collision is reported");
+
+    let prefix_blind = collision_blind.replace("\"lhs\":[\"g\",\"g\"]", "\"lhs\":[\"g\"]");
+    assert!(matches!(
+        validate_codex_suggestions_json_for_summary(
+            prefix_blind.as_bytes(),
+            &summary,
+            Some(&snapshot)
+        ),
+        Err(CodexSuggestionError::InvalidContract {
+            field: "collision_check.conflicting_mapping_ids"
+        })
+    ));
+    validate_codex_suggestions_json_for_summary(
+        prefix_blind
+            .replace(
+                "\"conflicting_mapping_ids\": []",
+                &format!("\"conflicting_mapping_ids\": [\"{GLOBAL_GG}\"]"),
+            )
+            .as_bytes(),
+        &summary,
+        Some(&snapshot),
+    )
+    .expect("a proposed prefix reports the existing longer mapping");
+
+    let short_snapshot = parse_keymap_snapshot(Cursor::new(format!(
+        r#"{{"snapshot_version":1,"mappings":[{{"mapping_id":"{GLOBAL_G}","mode":"normal","scope":"global","lhs":["g"]}}]}}"#
+    )))
+    .expect("short snapshot");
+    let short_summary = analyze_jsonl_with_snapshot(
+        Cursor::new(concat!(
+            "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"s\",\"elapsed_ms\":0}\n",
+            "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"s\",\"elapsed_ms\":1}\n",
+        )),
+        &short_snapshot,
+    )
+    .expect("short summary");
+    let longer_proposal = collision_blind.replace(
+        "\"conflicting_mapping_ids\": []",
+        &format!("\"conflicting_mapping_ids\": [\"{GLOBAL_G}\"]"),
+    );
+    validate_codex_suggestions_json_for_summary(
+        longer_proposal.as_bytes(),
+        &short_summary,
+        Some(&short_snapshot),
+    )
+    .expect("a longer proposal reports the existing shorter mapping");
+
+    let change = collision_blind
+        .replace("add_mapping", "change_mapping")
+        .replace(
+            "\"lhs\":[\"g\",\"g\"]",
+            &format!("\"lhs\":[\"g\",\"g\"],\"target_mapping_id\":\"{GLOBAL_GG}\""),
+        );
+    let change =
+        validate_codex_suggestions_json_for_summary(change.as_bytes(), &summary, Some(&snapshot))
+            .expect("change target is excluded from its own collision set");
+    let markdown = render_codex_suggestions_markdown(&change).expect("change renders");
+    assert_eq!(markdown.matches(GLOBAL_GG).count(), 1);
 }
 
 #[test]
@@ -299,4 +359,31 @@ fn escapes_html_in_validated_markdown() {
         .expect("valid suggestions");
     let markdown = render_codex_suggestions_markdown(&document).expect("validated document");
     assert!(markdown.contains("\\<img alt=\"motion\"\\>"));
+}
+
+#[test]
+fn renders_expanded_markdown_within_its_separate_bound() {
+    let summary = summary();
+    let suggestions = (0..55)
+        .map(|index| {
+            serde_json::json!({
+                "action": "no_change",
+                "title": format!("Keep setup {index}"),
+                "rationale": "*".repeat(4096),
+                "evidence": [{"metric": "sessions", "value": summary.sessions}],
+                "collision_check": {"checked": true, "conflicting_mapping_ids": []},
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1,
+        "suggestions": suggestions,
+    }))
+    .expect("serialize suggestions");
+    assert!(json.len() < key_insights::MAX_CODEX_PAYLOAD_BYTES);
+    let validated =
+        validate_codex_suggestions_json_for_summary(&json, &summary, None).expect("valid input");
+    let markdown = render_codex_suggestions_markdown(&validated).expect("expanded output renders");
+    assert!(markdown.len() > key_insights::MAX_CODEX_PAYLOAD_BYTES);
+    assert!(markdown.len() <= key_insights::MAX_RENDERED_SUGGESTIONS_BYTES);
 }

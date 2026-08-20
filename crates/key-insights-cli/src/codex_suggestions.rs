@@ -9,6 +9,7 @@ pub const CODEX_SUGGESTIONS_SCHEMA_VERSION: u32 = 1;
 pub const MAX_CODEX_SUGGESTIONS: usize = 100;
 pub const MAX_SUGGESTION_EVIDENCE: usize = 32;
 pub const MAX_SUGGESTION_CONFLICTS: usize = 4096;
+pub const MAX_RENDERED_SUGGESTIONS_BYTES: usize = 1024 * 1024;
 const MAX_JSON_DEPTH: usize = 128;
 
 const MEASUREMENT_KEYS: &[&str] = &[
@@ -242,7 +243,7 @@ pub fn validate_codex_suggestions_json_for_summary(
                 .iter()
                 .filter(|mapping| {
                     mapping.mode.as_str() == proposal.mode
-                        && mapping.lhs == proposal.lhs
+                        && lhs_collides(&mapping.lhs, &proposal.lhs)
                         && Some(mapping.mapping_id.as_str()) != target
                 })
                 .map(|mapping| mapping.mapping_id.as_str())
@@ -369,6 +370,12 @@ pub fn render_codex_suggestions_markdown(
             output.push_str("\n\n");
         }
     }
+    if output.len() > MAX_RENDERED_SUGGESTIONS_BYTES {
+        return Err(CodexSuggestionError::TooLarge {
+            bytes: output.len(),
+            maximum: MAX_RENDERED_SUGGESTIONS_BYTES,
+        });
+    }
     Ok(output)
 }
 
@@ -465,6 +472,11 @@ fn validate_mapping_proposal(mapping: &MappingProposal) -> Result<(), CodexSugge
         return Err(invalid("mapping.target_mapping_id"));
     }
     Ok(())
+}
+
+fn lhs_collides(existing: &[String], proposed: &[String]) -> bool {
+    let shared = existing.len().min(proposed.len());
+    existing[..shared] == proposed[..shared]
 }
 
 fn validate_text(

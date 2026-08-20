@@ -1,5 +1,6 @@
 local M = {}
 local MAX_CAPTURED_STDOUT = 256 * 1024 + 1
+local MAX_CONFIGURED_STDOUT = 1024 * 1024 + 1
 local MAX_CAPTURED_STDERR = 8 * 1024
 local DEFAULT_TIMEOUT_MS = 120 * 1000
 local IS_WINDOWS = package.config:sub(1, 1) == "\\"
@@ -46,7 +47,9 @@ local function bounded_capture(limit)
 end
 
 function M.run(argv, callback, stdin, run_options)
-  local capture_stdout, stdout = bounded_capture(MAX_CAPTURED_STDOUT)
+  local requested_stdout = run_options and run_options.max_stdout_bytes or MAX_CAPTURED_STDOUT
+  local stdout_limit = math.min(math.max(1, requested_stdout), MAX_CONFIGURED_STDOUT)
+  local capture_stdout, stdout = bounded_capture(stdout_limit)
   local capture_stderr, stderr = bounded_capture(MAX_CAPTURED_STDERR)
   local timeout_ms = run_options and run_options.timeout_ms or DEFAULT_TIMEOUT_MS
   local finished = false

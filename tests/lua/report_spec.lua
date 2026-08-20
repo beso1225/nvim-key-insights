@@ -83,6 +83,21 @@ vim.system = bounded_system
 assert(#bounded_result.stdout == 256 * 1024 + 1, "stdout capture must be bounded")
 assert(#bounded_result.stderr == 8 * 1024, "stderr capture must be bounded")
 
+local expanded_result = nil
+vim.system = function(_, options, callback)
+  options.stdout(nil, string.rep("m", 512 * 1024))
+  callback({ code = 0 })
+  return { pid = 10 }
+end
+process.run({ "expanded" }, function(result)
+  expanded_result = result
+end, nil, { max_stdout_bytes = 1024 * 1024 + 1 })
+vim.wait(1000, function()
+  return expanded_result ~= nil
+end)
+vim.system = bounded_system
+assert(#expanded_result.stdout == 512 * 1024, "renderer capture must use its separate bounded limit")
+
 local timeout_result = nil
 local timeout_system = vim.system
 vim.system = function(_, _, callback)
@@ -370,6 +385,42 @@ local valid_preview = vim.json.encode({
     },
   },
 })
+local default_openers = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/default-openers",
+  session_directory = "/state/sessions",
+}, { notify = function() end })
+default_openers:_complete_preview({ code = 0, signal = 0, stdout = valid_preview, stderr = "" }, 0)
+assert(vim.bo.filetype == "json", "the sanitized payload must open as JSON")
+vim.api.nvim_buf_delete(0, { force = true })
+default_openers._phase = "rendering_suggestions"
+default_openers:_complete_suggestion_render({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\nNo suggestions were returned.\n",
+  stderr = "",
+}, 0)
+assert(vim.bo.filetype == "markdown", "deterministic suggestions must open as Markdown")
+vim.api.nvim_buf_delete(0, { force = true })
+local expanded_markdown_opened = false
+local expanded_openers = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/expanded-openers",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  open_suggestions = function(contents)
+    expanded_markdown_opened = #contents > 256 * 1024
+  end,
+})
+expanded_openers._phase = "rendering_suggestions"
+expanded_openers:_complete_suggestion_render({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\n" .. string.rep("*", 300 * 1024),
+  stderr = "",
+}, 0)
+assert(expanded_markdown_opened, "expanded valid Markdown must use its separate output bound")
 local unsupported_notification = nil
 local unsupported_codex = report.new({
   analyzer = "key-insights",
@@ -473,9 +524,13 @@ assert(snapshot_reconstruction:shutdown() == true)
 
 local analysis_preview_callback = nil
 local analysis_codex_callback = nil
+local analysis_render_callback = nil
+local analysis_render_stdin = nil
+local analysis_render_options = nil
 local analysis_confirm_callback = nil
 local analysis_invocations = {}
 local analysis_opened = {}
+local analysis_markdown_opened = false
 local analysis = report.new({
   analyzer = "key-insights",
   output_directory = "/state/analyze-reports",
@@ -490,6 +545,10 @@ local analysis = report.new({
     return '{"snapshot_version":1,"mappings":[]}'
   end,
   open_preview = function(payload)
+    table.insert(analysis_opened, payload)
+  end,
+  open_suggestions = function(payload)
+    analysis_markdown_opened = true
     table.insert(analysis_opened, payload)
   end,
   confirm = function(callback)
@@ -509,6 +568,21 @@ local analysis = report.new({
     assert(stdin == shown_preview)
     analysis_codex_callback = callback
     return { pid = 51, kill = function() end }
+  end,
+  run_suggestions = function(argv, callback, stdin, options)
+    assert(vim.deep_equal(argv, {
+      "key-insights",
+      "suggestions",
+      "/state/analyze-reports/summary.json",
+      "--input",
+      "-",
+      "--output",
+      "-",
+    }))
+    analysis_render_callback = callback
+    analysis_render_stdin = stdin
+    analysis_render_options = options
+    return { pid = 52, kill = function() end }
   end,
 })
 assert(analysis:analyze() == true)
@@ -553,8 +627,19 @@ analysis_codex_callback({
   stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use / to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
+assert(analysis:status().phase == "rendering_suggestions")
+assert(string.find(analysis_render_stdin, '"schema_version":1', 1, true) ~= nil)
+assert(analysis_render_options.max_stdout_bytes == 1024 * 1024 + 1)
+analysis_render_callback({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\n## 1. Use the existing motion\n",
+  stderr = "",
+})
 assert(analysis:status().running == false)
 assert(#analysis_opened == 3, "preview and Codex output must be shown")
+assert(analysis_markdown_opened == true)
+assert(string.sub(analysis_opened[3], 1, 19) == "# Codex suggestions")
 
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
@@ -598,6 +683,125 @@ analysis_codex_callback({
 })
 assert(analysis:status().running == false)
 assert(#analysis_opened == 7, "duplicate JSON keys must be rejected before opening Codex output")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().phase == "rendering_suggestions")
+analysis_render_callback({ code = 1, signal = 0, stdout = "raw model response", stderr = "/secret" })
+assert(analysis:status().running == false)
+assert(#analysis_opened == 8, "renderer failure must not open raw or partial output")
+
+local global_gg = "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71"
+local prefix_preview_table = vim.json.decode(valid_preview)
+prefix_preview_table.keymap_snapshot = {
+  snapshot_version = 1,
+  mappings = { { mapping_id = global_gg, mode = "normal", scope = "global", lhs = { "g", "g" } } },
+}
+prefix_preview_table.summary.ergonomics.mapping_coverage = {
+  snapshot_version = 1,
+  total_snapshot_mappings = 1,
+  observed_mappings = 0,
+  unobserved_mappings = 1,
+}
+prefix_preview_table.summary.mapping_attribution = {
+  snapshot_version = 1,
+  mappings = {
+    {
+      mapping_id = global_gg,
+      status = "unobserved_in_sample",
+      count = 0,
+      mode = "normal",
+      scope = "global",
+      lhs = { "g", "g" },
+    },
+  },
+  collisions = {},
+}
+local prefix_preview = vim.json.encode(prefix_preview_table)
+local function run_prefix_case(conflicting_mapping_ids, should_render, proposal_lhs, preview_payload)
+  local opened_outputs = {}
+  local rendered = false
+  local notifications = {}
+  local prefix_case = report.new({
+    analyzer = "key-insights",
+    output_directory = "/state/prefix-reports",
+    session_directory = "/state/sessions",
+  }, {
+    notify = function(message)
+      table.insert(notifications, message)
+    end,
+    open_preview = function(contents)
+      table.insert(opened_outputs, contents)
+    end,
+    confirm = function(callback)
+      callback(true)
+    end,
+    prepare_codex_directory = function()
+      return true
+    end,
+    run = function(_, callback)
+      callback({ code = 0, signal = 0, stdout = preview_payload or prefix_preview, stderr = "" })
+      return { pid = 60 }
+    end,
+    run_codex = function(_, callback)
+      callback({
+        code = 0,
+        signal = 0,
+        stdout = vim.json.encode({
+          schema_version = 1,
+          suggestions = {
+            {
+              action = "add_mapping",
+              title = "Add a shorter mapping",
+              rationale = "The measured sample supports considering the shorter prefix.",
+              mapping = { mode = "normal", scope = "global", lhs = proposal_lhs or { "g" } },
+              evidence = { { metric = "sessions", value = 1 } },
+              collision_check = { checked = true, conflicting_mapping_ids = conflicting_mapping_ids },
+            },
+          },
+        }),
+        stderr = "",
+      })
+      return { pid = 61 }
+    end,
+    run_suggestions = function(_, callback)
+      rendered = true
+      callback({ code = 0, signal = 0, stdout = "# Codex suggestions\n\n", stderr = "" })
+      return { pid = 62 }
+    end,
+  })
+  assert(prefix_case:analyze() == true)
+  assert(rendered == should_render)
+  return opened_outputs, notifications
+end
+
+local prefix_blind_outputs, prefix_blind_notifications = run_prefix_case({}, false)
+assert(#prefix_blind_outputs == 1, "a prefix-blind proposal must not be rendered")
+local prefix_omission_reported = false
+for _, message in ipairs(prefix_blind_notifications) do
+  prefix_omission_reported = prefix_omission_reported or string.find(message, "omitted", 1, true) ~= nil
+end
+assert(prefix_omission_reported)
+local prefix_checked_outputs = run_prefix_case({ global_gg }, true)
+assert(#prefix_checked_outputs == 2)
+assert(prefix_checked_outputs[2] == "# Codex suggestions\n\n")
+
+local global_g = "mapping-v1:494845698ff45708f6996ca041b292cbe37a38c30e46af662058ec44d0ba2e67"
+local shorter_preview_table = vim.deepcopy(prefix_preview_table)
+shorter_preview_table.keymap_snapshot.mappings[1].mapping_id = global_g
+shorter_preview_table.keymap_snapshot.mappings[1].lhs = { "g" }
+shorter_preview_table.summary.mapping_attribution.mappings[1].mapping_id = global_g
+shorter_preview_table.summary.mapping_attribution.mappings[1].lhs = { "g" }
+local shorter_preview = vim.json.encode(shorter_preview_table)
+local reverse_prefix_outputs = run_prefix_case({ global_g }, true, { "g", "g" }, shorter_preview)
+assert(#reverse_prefix_outputs == 2, "a longer proposal must report the existing shorter mapping")
 
 local forged_preview = report.new({
   analyzer = "key-insights",

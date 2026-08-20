@@ -146,3 +146,24 @@ fields, requires measured evidence and a completed collision check, and binds
 every metric value and reported mapping ID to the exact summary and keymap
 snapshot used for the request. Markdown is rendered only from that validated
 boundary; raw response text is never published as a report.
+
+The same validation-and-render boundary is exposed for local orchestration:
+
+```sh
+key-insights suggestions <summary.json> [--input <suggestions.json|->] [--output <report.md|->]
+```
+
+The command reconstructs the report-time snapshot from sanitized attribution,
+requires mapping proposals to report exact and prefix collisions in either
+direction, and emits deterministic Markdown only after contextual validation.
+`:KeyInsightsAnalyze` uses this command after Codex exits; it never opens the
+raw wire-format JSON as the user-facing result.
+
+Private input readers retain separate fail-closed bounds: 16 MiB for generated
+summaries, 1 MiB for keymap snapshots, and 256 KiB for Codex suggestions. This
+keeps large valid attributed summaries usable without broadening the AI input
+boundary.
+
+Rendered Markdown has a separate 1 MiB bound because escaping can expand a
+valid 256 KiB structured response; the Neovim process runner captures that
+output with the same explicit limit.
