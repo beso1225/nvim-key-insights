@@ -106,7 +106,7 @@ fn terminates_a_timed_out_codex_process() {
 
 #[test]
 fn closes_descendant_pipes_after_the_direct_codex_process_exits() {
-    let (directory, script) = temp_script("descendant", "sleep 5 & exit 0");
+    let (directory, script) = temp_script("descendant", "cat >/dev/null; sleep 5 & exit 0");
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         sender
