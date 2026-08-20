@@ -25,9 +25,19 @@ fn temp_script(name: &str, body: &str) -> (PathBuf, PathBuf) {
 }
 
 fn config(binary: &Path) -> CodexExecConfig {
+    let working_directory = binary
+        .parent()
+        .expect("binary parent")
+        .join("empty-workspace");
+    if binary.exists() {
+        fs::create_dir_all(&working_directory).expect("create empty workspace");
+        fs::set_permissions(&working_directory, fs::Permissions::from_mode(0o700))
+            .expect("protect empty workspace");
+    }
     CodexExecConfig {
         binary: binary.to_owned(),
         output_schema: PathBuf::from("/private/schema with spaces.json"),
+        working_directory,
         timeout: Duration::from_secs(2),
         max_output_bytes: MAX_CODEX_OUTPUT_BYTES,
     }
@@ -41,8 +51,22 @@ fn builds_a_non_shell_codex_exec_argv_with_privacy_flags() {
         vec![
             "exec",
             "--ephemeral",
-            "--sandbox",
-            "read-only",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--strict-config",
+            "--skip-git-repo-check",
+            "--cd",
+            "/private/empty-workspace",
+            "--config",
+            "shell_environment_policy.inherit=\"none\"",
+            "--config",
+            "approval_policy=\"never\"",
+            "--config",
+            "default_permissions=\"key-insights-payload-only\"",
+            "--config",
+            "permissions.key-insights-payload-only.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\"}",
+            "--config",
+            "permissions.key-insights-payload-only.network.enabled=false",
             "--output-schema",
             "/private/schema with spaces.json",
         ]
@@ -65,6 +89,22 @@ fn rejects_a_caller_supplied_output_limit_above_the_global_bound() {
     options.max_output_bytes = MAX_CODEX_OUTPUT_BYTES + 1;
     assert_eq!(
         run_codex_exec(&options, b"payload").expect_err("limit must be rejected"),
+        CodexExecError::InvalidConfig
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn rejects_a_nonempty_codex_working_directory() {
+    let (directory, script) = temp_script("nonempty-workspace", "cat >/dev/null");
+    let options = config(&script);
+    fs::write(
+        options.working_directory.join("ambient.txt"),
+        "must stay local",
+    )
+    .expect("seed ambient file");
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("nonempty cwd must fail closed"),
         CodexExecError::InvalidConfig
     );
     fs::remove_dir_all(directory).expect("remove test directory");

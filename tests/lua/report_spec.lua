@@ -20,9 +20,50 @@ end)
 vim.system = original_system
 assert(vim.deep_equal(system_argv, { "tool with spaces", "arg;$" }))
 assert(system_options.text == true)
+assert(system_options.detach == true, "subprocesses must run in a dedicated process group")
 assert(type(system_options.stdout) == "function")
 assert(type(system_options.stderr) == "function")
 assert(system_result.code == 0)
+
+local group_kills = {}
+local group_callback = nil
+local group_system = vim.system
+local original_uv_kill = vim.uv.kill
+vim.uv.kill = function(pid, signal)
+  table.insert(group_kills, { pid = pid, signal = signal })
+  return 0
+end
+vim.system = function(_, options, callback)
+  assert(options.detach == true)
+  group_callback = callback
+  return { pid = 73, kill = function() error("direct kill must not be used on Unix") end }
+end
+local group_job = process.run({ "grouped" }, function() end, nil, { timeout_ms = math.huge })
+group_job:kill(9)
+assert(vim.deep_equal(group_kills, { { pid = -73, signal = 9 } }), "the entire process group must be killed")
+group_callback({ code = 1, signal = 9 })
+vim.wait(1000)
+vim.system = group_system
+vim.uv.kill = original_uv_kill
+
+if process.supports_process_groups() then
+  local descendant_marker = vim.fn.tempname()
+  local descendant_result = nil
+  process.run({
+    "/bin/sh",
+    "-c",
+    "(trap '' TERM; sleep 1; printf leaked > \"$1\") </dev/null >/dev/null 2>/dev/null & exit 0",
+    "holder",
+    descendant_marker,
+  }, function(result)
+    descendant_result = result
+  end, nil, { timeout_ms = 2000 })
+  assert(vim.wait(1000, function()
+    return descendant_result ~= nil
+  end), "the direct child must complete promptly")
+  vim.wait(1250)
+  assert(vim.uv.fs_stat(descendant_marker) == nil, "successful direct exit must terminate descendants")
+end
 
 local bounded_result = nil
 local bounded_system = vim.system
@@ -57,7 +98,7 @@ end, nil, { timeout_ms = 10 })
 assert(vim.wait(1000, function()
   return timeout_result ~= nil
 end), "process watchdog must terminate a hung subprocess")
-assert(timeout_result.signal == 15)
+assert(timeout_result.signal == 9)
 vim.system = timeout_system
 
 local notifications = {}
@@ -158,7 +199,8 @@ outputs_valid = true
 assert(instance:start() == true)
 pending_callback({ code = 2, signal = 0, stdout = "", stderr = "invalid session\n" })
 assert(#opened == 1, "failed analysis must preserve the current editor view")
-assert(string.find(notifications[#notifications].message, "invalid session", 1, true) ~= nil)
+assert(string.find(notifications[#notifications].message, "invalid session", 1, true) == nil)
+assert(string.find(notifications[#notifications].message, "report failed", 1, true) ~= nil)
 
 assert(instance:start() == true)
 pending_callback({ code = 2, signal = 0, stdout = "", stderr = "\27[31munsafe\0message\n" })
@@ -237,7 +279,7 @@ local shutdown_report = report.new({
     shutdown_callback = callback
     return {
       kill = function(_, signal)
-        assert(signal == 15)
+        assert(signal == 9)
         shutdown_kills = shutdown_kills + 1
       end,
     }
@@ -328,6 +370,28 @@ local valid_preview = vim.json.encode({
     },
   },
 })
+local unsupported_notification = nil
+local unsupported_codex = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/unsupported-codex-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    unsupported_notification = message
+  end,
+  supports_process_groups = function()
+    return false
+  end,
+  prepare_codex_directory = function()
+    error("unsupported platforms must fail before preparing Codex")
+  end,
+  run_codex = function()
+    error("unsupported platforms must never launch Codex")
+  end,
+})
+assert(unsupported_codex:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+assert(string.find(unsupported_notification, "requires Unix process-group isolation", 1, true) ~= nil)
+
 local preview = report.new({
   analyzer = "/tools/key insights;$analyzer",
   output_directory = "/state/preview-reports",
@@ -337,7 +401,7 @@ local preview = report.new({
     table.insert(preview_notifications, message)
   end,
   collect_snapshot_payload = function()
-    return '{"snapshot_version":1,"mappings":[]}'
+    error("a fresh preview must reconstruct an attributed report snapshot from summary.json")
   end,
   open_preview = function(payload)
     shown_preview = payload
@@ -354,12 +418,10 @@ assert(vim.deep_equal(preview_invocation, {
   "/tools/key insights;$analyzer",
   "preview",
   "/state/preview-reports/summary.json",
-  "--keymap-snapshot",
-  "-",
   "--output",
   "-",
 }))
-assert(preview_stdin == '{"snapshot_version":1,"mappings":[]}')
+assert(preview_stdin == nil)
 assert(shown_preview == nil, "preview must wait for analyzer output")
 preview_callback({
   code = 0,
@@ -371,9 +433,10 @@ assert(shown_preview == valid_preview)
 assert(preview:status().running == false)
 
 local reuse_snapshot_collections = 0
-local reuse_snapshot_callbacks = {}
-local reuse_snapshot_stdin = {}
-local snapshot_reuse = report.new({
+local reconstruction_callbacks = {}
+local reconstruction_stdin = {}
+local reconstruction_argv = {}
+local snapshot_reconstruction = report.new({
   analyzer = "key-insights",
   output_directory = "/state/reused-snapshot-reports",
   session_directory = "/state/sessions",
@@ -390,21 +453,23 @@ local snapshot_reuse = report.new({
     reuse_snapshot_collections = reuse_snapshot_collections + 1
     return string.format('{"snapshot_version":1,"mappings":[],"marker":%d}', reuse_snapshot_collections)
   end,
-  run = function(_, callback, stdin)
-    table.insert(reuse_snapshot_callbacks, callback)
-    table.insert(reuse_snapshot_stdin, stdin)
+  run = function(argv, callback, stdin)
+    table.insert(reconstruction_argv, vim.deepcopy(argv))
+    table.insert(reconstruction_callbacks, callback)
+    table.insert(reconstruction_stdin, stdin)
     return { pid = 49, kill = function() end }
   end,
   validate_outputs = function()
     return true
   end,
 })
-assert(snapshot_reuse:start() == true)
-reuse_snapshot_callbacks[1]({ code = 0, signal = 0, stdout = "", stderr = "" })
-assert(snapshot_reuse:preview() == true)
-assert(reuse_snapshot_collections == 1, "preview must reuse the report-time snapshot")
-assert(reuse_snapshot_stdin[2] == reuse_snapshot_stdin[1], "summary and preview snapshots must stay identical")
-assert(snapshot_reuse:shutdown() == true)
+assert(snapshot_reconstruction:start() == true)
+reconstruction_callbacks[1]({ code = 0, signal = 0, stdout = "", stderr = "" })
+assert(snapshot_reconstruction:preview() == true)
+assert(reuse_snapshot_collections == 1, "preview must not resample the current keymap")
+assert(reconstruction_stdin[1] ~= nil and reconstruction_stdin[2] == nil)
+assert(vim.tbl_contains(reconstruction_argv[2], "--keymap-snapshot") == false)
+assert(snapshot_reconstruction:shutdown() == true)
 
 local analysis_preview_callback = nil
 local analysis_codex_callback = nil
@@ -415,7 +480,11 @@ local analysis = report.new({
   analyzer = "key-insights",
   output_directory = "/state/analyze-reports",
   session_directory = "/state/sessions",
-  codex = { binary = "/tools/codex;$", output_schema = "/state/schema.json" },
+  codex = {
+    binary = "/tools/codex;$",
+    output_schema = "/state/schema.json",
+    working_directory = "/state/empty-codex-workspace",
+  },
 }, {
   collect_snapshot_payload = function()
     return '{"snapshot_version":1,"mappings":[]}'
@@ -425,6 +494,10 @@ local analysis = report.new({
   end,
   confirm = function(callback)
     analysis_confirm_callback = callback
+  end,
+  prepare_codex_directory = function(path)
+    assert(path == "/state/empty-codex-workspace")
+    return true
   end,
   run = function(argv, callback)
     table.insert(analysis_invocations, vim.deepcopy(argv))
@@ -455,8 +528,22 @@ assert(vim.deep_equal(analysis_invocations[3], {
   "/tools/codex;$",
   "exec",
   "--ephemeral",
-  "--sandbox",
-  "read-only",
+  "--ignore-user-config",
+  "--ignore-rules",
+  "--strict-config",
+  "--skip-git-repo-check",
+  "--cd",
+  "/state/empty-codex-workspace",
+  "--config",
+  'shell_environment_policy.inherit="none"',
+  "--config",
+  'approval_policy="never"',
+  "--config",
+  'default_permissions="key-insights-payload-only"',
+  "--config",
+  'permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}',
+  "--config",
+  "permissions.key-insights-payload-only.network.enabled=false",
   "--output-schema",
   "/state/schema.json",
 }))
@@ -500,6 +587,18 @@ analysis_codex_callback({
 assert(analysis:status().running == false)
 assert(#analysis_opened == 6, "path-shaped Codex output must not be opened")
 
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"schema_\\u0076ersion":1,"suggestions":[]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 7, "duplicate JSON keys must be rejected before opening Codex output")
+
 local forged_preview = report.new({
   analyzer = "key-insights",
   output_directory = "/state/preview-reports",
@@ -529,6 +628,8 @@ local forged_preview = report.new({
 assert(forged_preview:preview() == true)
 assert(string.find(preview_notifications[#preview_notifications], "forbidden field", 1, true) ~= nil)
 
+local nested_forged_key = "<file:///home/alice/project>"
+local nested_extra_field = false
 local nested_forged_preview = report.new({
   analyzer = "key-insights",
   output_directory = "/state/preview-reports",
@@ -545,7 +646,10 @@ local nested_forged_preview = report.new({
   end,
   run = function(_, callback)
     local forged = vim.json.decode(valid_preview)
-    forged.summary.keys = { { key = "<file:///home/alice/project>", count = 1 } }
+    forged.summary.keys = { { key = nested_forged_key, count = 1 } }
+    if nested_extra_field then
+      forged.summary.keys[1].mode = "normal"
+    end
     callback({
       code = 0,
       signal = 0,
@@ -556,7 +660,41 @@ local nested_forged_preview = report.new({
   end,
 })
 assert(nested_forged_preview:preview() == true)
-assert(string.find(preview_notifications[#preview_notifications], "forbidden field", 1, true) ~= nil)
+assert(string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil)
+nested_forged_key = "hunter2"
+assert(nested_forged_preview:preview() == true)
+assert(
+  string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil,
+  "non-canonical summary tokens must be rejected before Codex"
+)
+nested_forged_key = "/"
+nested_extra_field = true
+assert(nested_forged_preview:preview() == true)
+assert(
+  string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil,
+  "known fields in the wrong nested object must be rejected"
+)
+nested_extra_field = false
+local inexact_counter_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  open_preview = function()
+    error("inexact JSON counters must not be opened")
+  end,
+  run = function(_, callback)
+    local forged = vim.json.decode(valid_preview)
+    forged.summary.sessions = 9007199254740992
+    callback({ code = 0, signal = 0, stdout = vim.json.encode(forged), stderr = "" })
+    return { pid = 46 }
+  end,
+})
+assert(inexact_counter_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil)
 
 local malformed_attribution = report.new({
   analyzer = "key-insights",

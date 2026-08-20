@@ -6,7 +6,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use key_insights::{analyze_jsonl, render_summary_json};
+use key_insights::{
+    analyze_jsonl, analyze_jsonl_with_snapshot, parse_keymap_snapshot, render_codex_payload_json,
+    render_summary_json,
+};
 
 use super::{
     OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
@@ -1596,6 +1599,50 @@ fn preview_reads_a_private_summary_and_publishes_the_exact_payload() {
 
     let expected =
         key_insights::render_codex_payload_json(&summary, None).expect("payload renders");
+    assert_eq!(
+        fs::read_to_string(output_path).expect("read payload"),
+        expected
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn preview_reconstructs_the_report_snapshot_from_an_attributed_summary() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-preview-attribution-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let summary_path = directory.join("summary.json");
+    let output_path = directory.join("payload.json");
+    let snapshot = parse_keymap_snapshot(std::io::Cursor::new(
+        r#"{"snapshot_version":1,"mappings":[{"mapping_id":"mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71","mode":"normal","scope":"global","lhs":["g","g"]}]}"#,
+    ))
+    .expect("valid snapshot");
+    let source = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"session_end","session_id":"one","elapsed_ms":1}"#,
+        "\n",
+    );
+    let summary = analyze_jsonl_with_snapshot(std::io::Cursor::new(source), &snapshot)
+        .expect("attributed summary");
+    fs::write(&summary_path, render_summary_json(&summary)).expect("write summary");
+    fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");
+
+    super::run(vec![
+        OsString::from("preview"),
+        summary_path.into_os_string(),
+        OsString::from("--output"),
+        output_path.clone().into_os_string(),
+    ])
+    .expect("preview reconstructs the report snapshot");
+
+    let expected = render_codex_payload_json(&summary, Some(&snapshot)).expect("payload renders");
     assert_eq!(
         fs::read_to_string(output_path).expect("read payload"),
         expected

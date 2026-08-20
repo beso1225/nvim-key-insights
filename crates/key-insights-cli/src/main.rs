@@ -15,7 +15,7 @@ use std::{
 use key_insights::{
     AnalysisSummary, MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs,
     analyze_jsonl_inputs_with_snapshot, parse_keymap_snapshot, render_codex_payload_json,
-    render_markdown, render_summary_json,
+    render_codex_payload_json_from_summary, render_markdown, render_summary_json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -188,13 +188,15 @@ fn run_preview(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         Some(path) => Some(open_snapshot_input(&path)?),
         None => None,
     };
-    let snapshot = keymap_snapshot
-        .as_ref()
-        .map(|input| parse_keymap_snapshot(input.bytes.as_slice()))
-        .transpose()
-        .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
-    let payload = render_codex_payload_json(&summary, snapshot.as_ref())
-        .map_err(|error| format!("failed to render Codex preview: {error}"))?;
+    let payload = match keymap_snapshot.as_ref() {
+        Some(input) => {
+            let snapshot = parse_keymap_snapshot(input.bytes.as_slice())
+                .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
+            render_codex_payload_json(&summary, Some(&snapshot))
+        }
+        None => render_codex_payload_json_from_summary(&summary),
+    }
+    .map_err(|error| format!("failed to render Codex preview: {error}"))?;
     let output_path = output_path.unwrap_or_else(|| OsString::from("-"));
     if output_path == OsStr::new("-") {
         std::io::stdout()

@@ -1,9 +1,15 @@
 use std::io::Cursor;
 
+use serde_json::Value;
+
 use key_insights::{
-    CodexSuggestionError, SuggestionAction, analyze_jsonl, render_codex_suggestions_markdown,
-    validate_codex_suggestions_json, validate_codex_suggestions_json_for_summary,
+    CodexSuggestionError, SuggestionAction, analyze_jsonl, analyze_jsonl_with_snapshot,
+    parse_keymap_snapshot, render_codex_suggestions_markdown, validate_codex_suggestions_json,
+    validate_codex_suggestions_json_for_summary,
 };
+
+const GLOBAL_GG: &str =
+    "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71";
 
 const VALID: &str = r#"{
   "schema_version": 1,
@@ -23,6 +29,64 @@ fn summary() -> key_insights::AnalysisSummary {
         "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"s\",\"elapsed_ms\":2}\n",
     )))
     .expect("summary")
+}
+
+#[test]
+fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../codex/suggestions.schema.json"))
+            .expect("suggestion schema is valid JSON");
+    let suggestion = &schema["properties"]["suggestions"]["items"];
+    let metrics = suggestion["properties"]["evidence"]["items"]["properties"]["metric"]["enum"]
+        .as_array()
+        .expect("metric enum");
+    let expected_metrics = [
+        "sessions",
+        "events",
+        "total_session_duration_ms",
+        "key_sequences",
+        "sequence_keys",
+        "text_runs",
+        "text_keys",
+        "mode_transitions",
+        "mapping_uses",
+        "repeated_key_runs",
+        "repeated_key_presses",
+        "unique_keys",
+        "unique_mappings",
+        "unique_repeated_keys",
+        "observed_mappings",
+        "unobserved_mappings",
+        "total_snapshot_mappings",
+        "count_prefix_occurrences",
+        "count_prefix_digit_presses",
+        "session_duration_ms",
+        "sequence_length_keys",
+        "average_inter_key_latency_ms",
+    ];
+    assert_eq!(
+        metrics,
+        &expected_metrics
+            .into_iter()
+            .map(|metric| Value::String(metric.to_owned()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        suggestion["properties"]["collision_check"]["properties"]["conflicting_mapping_ids"]["items"]
+            ["pattern"],
+        "^mapping-v1:[0-9a-f]{64}$"
+    );
+    assert_eq!(
+        suggestion["properties"]["mapping"]["properties"]["target_mapping_id"]["pattern"],
+        "^mapping-v1:[0-9a-f]{64}$"
+    );
+    assert_eq!(suggestion["properties"]["title"]["maxLength"], 256);
+    assert_eq!(suggestion["properties"]["rationale"]["maxLength"], 4096);
+    assert_eq!(
+        suggestion["properties"]["mapping"]["properties"]["lhs"]["items"]["maxLength"],
+        64
+    );
+    assert_eq!(suggestion["allOf"].as_array().map(Vec::len), Some(3));
 }
 
 #[test]
@@ -59,6 +123,10 @@ fn rejects_unknown_fields_and_missing_evidence() {
 fn rejects_collision_blind_mapping_actions() {
     let mapping = VALID
         .replace("learn_existing", "add_mapping")
+        .replace(
+            "\"evidence\"",
+            "\"mapping\":{\"mode\":\"normal\",\"scope\":\"global\",\"lhs\":[\"g\",\"g\"]},\"evidence\"",
+        )
         .replace("\"checked\": true", "\"checked\": false");
     assert!(matches!(
         validate_codex_suggestions_json(mapping.as_bytes()),
@@ -108,16 +176,67 @@ fn binds_evidence_and_mapping_actions_to_the_summary_boundary() {
             field: "evidence.value"
         })
     ));
-    let mapping = VALID.replace("learn_existing", "add_mapping").replace(
-        "value\": 8",
-        &format!("value\": {}", summary.repeated_key_runs),
-    );
+    let mapping = VALID
+        .replace("learn_existing", "add_mapping")
+        .replace(
+            "\"evidence\"",
+            "\"mapping\":{\"mode\":\"normal\",\"scope\":\"global\",\"lhs\":[\"g\",\"g\"]},\"evidence\"",
+        )
+        .replace(
+            "value\": 8",
+            &format!("value\": {}", summary.repeated_key_runs),
+        );
     assert!(matches!(
         validate_codex_suggestions_json_for_summary(mapping.as_bytes(), &summary, None),
         Err(CodexSuggestionError::InvalidContract {
             field: "collision_check.snapshot"
         })
     ));
+}
+
+#[test]
+fn binds_mapping_proposals_to_actual_snapshot_collisions() {
+    let snapshot = parse_keymap_snapshot(Cursor::new(format!(
+        r#"{{"snapshot_version":1,"mappings":[{{"mapping_id":"{GLOBAL_GG}","mode":"normal","scope":"global","lhs":["g","g"]}}]}}"#
+    )))
+    .expect("snapshot");
+    let summary = analyze_jsonl_with_snapshot(
+        Cursor::new(concat!(
+            "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"s\",\"elapsed_ms\":0}\n",
+            "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"s\",\"elapsed_ms\":1}\n",
+        )),
+        &snapshot,
+    )
+    .expect("summary");
+    let value = summary.repeated_key_runs;
+    let collision_blind = VALID
+        .replace("learn_existing", "add_mapping")
+        .replace(
+            "\"evidence\"",
+            "\"mapping\":{\"mode\":\"normal\",\"scope\":\"global\",\"lhs\":[\"g\",\"g\"]},\"evidence\"",
+        )
+        .replace("value\": 8", &format!("value\": {value}"));
+    assert!(matches!(
+        validate_codex_suggestions_json_for_summary(
+            collision_blind.as_bytes(),
+            &summary,
+            Some(&snapshot)
+        ),
+        Err(CodexSuggestionError::InvalidContract {
+            field: "collision_check.conflicting_mapping_ids"
+        })
+    ));
+
+    let collision_checked = collision_blind.replace(
+        "\"conflicting_mapping_ids\": []",
+        &format!("\"conflicting_mapping_ids\": [\"{GLOBAL_GG}\"]"),
+    );
+    validate_codex_suggestions_json_for_summary(
+        collision_checked.as_bytes(),
+        &summary,
+        Some(&snapshot),
+    )
+    .expect("actual collision is reported");
 }
 
 #[test]

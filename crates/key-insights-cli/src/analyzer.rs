@@ -165,7 +165,7 @@ pub struct MappingAttributionEntry {
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lhs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collision_mapping_ids: Vec<String>,
 }
 

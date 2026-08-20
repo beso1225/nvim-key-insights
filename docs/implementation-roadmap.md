@@ -181,9 +181,10 @@ mapping, or making no change.
 
 ## Milestone 4: optional Codex analysis
 
-Status: in progress. The sanitized payload contract, CLI preview, explicit
-confirmation-gated `:KeyInsightsAnalyze` workflow, and structured suggestion
-validation are complete; see the
+Status: complete on `codex/codex-analysis-contract`. The sanitized payload
+contract, CLI preview, explicit confirmation-gated `:KeyInsightsAnalyze`
+workflow, structured suggestion validation, and adversarial privacy review are
+complete; see the
 [detailed implementation plan](milestone-4-codex-analysis-plan.md).
 
 Add the AI boundary only after the sanitized summary contract and deterministic
@@ -206,7 +207,8 @@ evidence are stable.
 
 - Invoke `codex exec` with saved ChatGPT authentication; do not request an API
   key.
-- Use ephemeral execution and a read-only sandbox.
+- Use ephemeral execution, an empty working directory, and a payload-only
+  permission profile that denies ambient filesystem and tool-network access.
 - Send only the previewed sanitized summary through standard input.
 - Use an output schema, bounded execution time, explicit binary discovery, and
   atomic local result publication.

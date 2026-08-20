@@ -41,6 +41,7 @@ local DEFAULTS = {
     codex = {
       binary = "codex",
       output_schema = nil,
+      working_directory = nil,
     },
   },
 }
@@ -101,6 +102,13 @@ function M.resolve(options)
     resolved.report.codex.output_schema == nil
       or (type(resolved.report.codex.output_schema) == "string" and resolved.report.codex.output_schema ~= ""),
     "report.codex.output_schema must be nil or a non-empty string"
+  )
+  assert(
+    resolved.report.codex.working_directory == nil
+      or (type(resolved.report.codex.working_directory) == "string"
+        and resolved.report.codex.working_directory ~= ""
+        and vim.fs.isabs(resolved.report.codex.working_directory)),
+    "report.codex.working_directory must be nil or an absolute path"
   )
   return resolved
 end

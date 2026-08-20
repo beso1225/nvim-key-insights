@@ -64,6 +64,10 @@ The collector can be loaded with lazy.nvim without starting collection automatic
     report = {
       analyzer = "/path/to/key-insights",
       directory = "/path/to/private/reports",
+      codex = {
+        -- Optional; defaults to an owner-only empty cache directory.
+        working_directory = "/path/to/empty/private/directory",
+      },
     },
   },
 }
@@ -131,7 +135,10 @@ remaining milestones and the
 [Milestone 3 implementation plan](docs/milestone-3-deterministic-ergonomic-metrics-plan.md)
 for the current deterministic ergonomic evidence contract, and the
 [mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
-mapping evidence. The optional Codex payload contract is being implemented in
+mapping evidence. The optional Codex payload contract is implemented in
 the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md). Codex is
-launched only after confirmation, with saved authentication and a read-only
-sandbox; cancelling leaves the workflow local-only.
+launched only after confirmation, with saved authentication, ignored user
+configuration/rules, an empty working directory, and a payload-only permission
+profile. The Codex workflow currently fails closed outside Unix because its
+timeout and shutdown guarantees require process-group termination. Cancelling
+leaves the workflow local-only.

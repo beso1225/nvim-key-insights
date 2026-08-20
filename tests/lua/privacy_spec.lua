@@ -21,6 +21,7 @@ assert(pcall(config.resolve, { collection = { sequence_timeout_ms = -1 } }) == f
 assert(pcall(config.resolve, { collection = { sequence_timeout_ms = math.huge } }) == false)
 assert(pcall(config.resolve, { report = { analyzer = "" } }) == false)
 assert(pcall(config.resolve, { report = { directory = "" } }) == false)
+assert(pcall(config.resolve, { report = { codex = { working_directory = "relative" } } }) == false)
 
 assert(config.is_excluded_buffer({ buftype = "terminal", filetype = "" }, defaults))
 assert(config.is_excluded_buffer({ buftype = "prompt", filetype = "" }, defaults))

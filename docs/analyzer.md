@@ -127,10 +127,16 @@ JSONL/report artifacts are never sent.
 
 The library also provides a non-shell `codex exec` runner for the next explicit
 approval step. It inherits saved Codex authentication, supplies `--ephemeral`,
-`--sandbox read-only`, and `--output-schema`, and writes the already previewed
-payload only to stdin. Input and output are bounded to 256 KiB, stderr is not
-returned as a publishable result, and timeout/overflow termination kills the
-dedicated process group on Unix. The runner is wired into
+ignores user configuration and rules, clears the shell environment inheritance,
+starts in an owner-only empty directory, and selects a permission profile that
+denies filesystem-root and tool-network access while retaining only Codex's
+minimal runtime reads. Approval prompts are disabled for this bounded
+non-interactive run. `--output-schema` constrains the response, and the exact
+previewed payload is written only to stdin. Input and output are bounded to
+256 KiB, stderr is not returned as a publishable result, and timeout/overflow
+termination kills the dedicated process group. The runner fails closed on
+non-Unix platforms until equivalent process-tree termination is available. It
+is wired into
 `:KeyInsightsAnalyze`; real Codex invocations remain opt-in and are not run by
 ordinary CI.
 

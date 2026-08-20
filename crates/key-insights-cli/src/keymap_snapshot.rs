@@ -7,6 +7,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::analyzer::{AnalysisSummary, MappingAttributionStatus};
+
 pub const SNAPSHOT_VERSION: u32 = 1;
 pub const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
 pub const MAX_SNAPSHOT_MAPPINGS: usize = 4096;
@@ -126,6 +128,56 @@ pub fn parse_keymap_snapshot<R: Read>(reader: R) -> Result<KeymapSnapshot, Snaps
         mappings: document.mappings,
         by_id,
     })
+}
+
+/// Reconstruct the exact sanitized report-time snapshot retained in mapping
+/// attribution. This supports previewing an existing report after Neovim has
+/// restarted without sampling a different current keymap.
+pub(crate) fn reconstruct_keymap_snapshot(
+    summary: &AnalysisSummary,
+) -> Result<Option<KeymapSnapshot>, SnapshotError> {
+    let Some(attribution) = &summary.mapping_attribution else {
+        return Ok(None);
+    };
+    let mut mappings = Vec::new();
+    for entry in &attribution.mappings {
+        if entry.status == MappingAttributionStatus::ObservedNotInSnapshot {
+            continue;
+        }
+        let mode = match entry.mode.as_deref() {
+            Some("normal") => SnapshotMode::Normal,
+            Some("operator_pending") => SnapshotMode::OperatorPending,
+            Some("visual") => SnapshotMode::Visual,
+            _ => return Err(SnapshotError("mapping attribution has an invalid mode")),
+        };
+        let scope = match entry.scope.as_deref() {
+            Some("buffer") => SnapshotScope::Buffer,
+            Some("global") => SnapshotScope::Global,
+            _ => return Err(SnapshotError("mapping attribution has an invalid scope")),
+        };
+        let Some(lhs) = &entry.lhs else {
+            return Err(SnapshotError("mapping attribution has no mapping LHS"));
+        };
+        mappings.push(SnapshotMapping {
+            mapping_id: entry.mapping_id.clone(),
+            mode,
+            scope,
+            lhs: lhs.clone(),
+        });
+    }
+    mappings.sort_by(mapping_order);
+    let by_id = mappings
+        .iter()
+        .enumerate()
+        .map(|(index, mapping)| (mapping.mapping_id.clone(), index))
+        .collect();
+    let snapshot = KeymapSnapshot {
+        snapshot_version: attribution.snapshot_version,
+        mappings,
+        by_id,
+    };
+    validate_snapshot(&snapshot)?;
+    Ok(Some(snapshot))
 }
 
 fn validate_mapping(mapping: &SnapshotMapping) -> Result<(), SnapshotError> {

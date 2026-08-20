@@ -146,6 +146,16 @@ pub fn render_codex_payload_json(
     String::from_utf8(bytes).map_err(|_| CodexPayloadError::Serialization)
 }
 
+/// Render a preview from a persisted summary, reconstructing its exact
+/// report-time keymap snapshot from sanitized mapping attribution when present.
+pub fn render_codex_payload_json_from_summary(
+    summary: &AnalysisSummary,
+) -> Result<String, CodexPayloadError> {
+    let snapshot = keymap_snapshot::reconstruct_keymap_snapshot(summary)
+        .map_err(|_| CodexPayloadError::InvalidSnapshot)?;
+    render_codex_payload_json(summary, snapshot.as_ref())
+}
+
 struct LimitedWriter {
     bytes: Vec<u8>,
     limit: usize,
@@ -453,7 +463,7 @@ fn valid_buckets(buckets: &[crate::HistogramBucket], expected: &[&str]) -> bool 
             .all(|(bucket, expected)| bucket.bucket == *expected)
 }
 
-fn validate_token(token: &str, field: &'static str) -> Result<(), CodexPayloadError> {
+pub(crate) fn validate_token(token: &str, field: &'static str) -> Result<(), CodexPayloadError> {
     let lower = token.to_ascii_lowercase();
     let safe_bracket_token = matches!(
         token,

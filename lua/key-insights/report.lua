@@ -1,6 +1,7 @@
 local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
 local snapshot_payload = require("key-insights.snapshot_payload")
+local strict_json = require("key-insights.strict_json")
 
 local M = {}
 local Report = {}
@@ -18,6 +19,7 @@ local MAX_CODEX_BYTES = 256 * 1024
 local MAX_CODEX_SUGGESTIONS = 100
 local MAX_SUGGESTION_EVIDENCE = 32
 local MAX_SUGGESTION_CONFLICTS = 4096
+local MAX_EXACT_JSON_INTEGER = 9007199254740991
 
 local FORBIDDEN_PREVIEW_KEYS = {
   command = true,
@@ -164,14 +166,15 @@ end
 local validate_analysis_summary
 local is_array
 local expected_snapshot_mapping_id
+local safe_preview_token
 local validate_snapshot_context
 
 local function validate_preview(contents)
   if type(contents) ~= "string" or #contents > MAX_PREVIEW_BYTES then
     return false, "preview output exceeds the size limit"
   end
-  local decoded_ok, decoded = pcall(vim.json.decode, contents)
-  if not decoded_ok or type(decoded) ~= "table" then
+  local decoded = strict_json.decode(contents)
+  if type(decoded) ~= "table" then
     return false, "preview output has an unexpected format"
   end
   local top_level = {
@@ -341,7 +344,22 @@ is_array = function(value, maximum)
 end
 
 local function is_counter(value)
-  return type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value)
+  return type(value) == "number"
+    and value >= 0
+    and value <= MAX_EXACT_JSON_INTEGER
+    and value == math.floor(value)
+end
+
+local function has_only_fields(value, fields)
+  if type(value) ~= "table" then
+    return false
+  end
+  for key in pairs(value) do
+    if type(key) ~= "string" or not fields[key] then
+      return false
+    end
+  end
+  return true
 end
 
 local function validate_histogram(value, labels)
@@ -349,11 +367,24 @@ local function validate_histogram(value, labels)
     return false
   end
   for index, bucket in ipairs(value) do
-    if type(bucket) ~= "table" or bucket.bucket ~= labels[index] or not is_counter(bucket.count) then
+    if not has_only_fields(bucket, { bucket = true, count = true })
+      or bucket.bucket ~= labels[index]
+      or not is_counter(bucket.count)
+    then
       return false
     end
   end
   return true
+end
+
+local function valid_summary_mode(value)
+  return value == "normal"
+    or value == "visual"
+    or value == "operator_pending"
+    or value == "insert"
+    or value == "command"
+    or value == "search"
+    or value == "other"
 end
 
 validate_analysis_summary = function(summary)
@@ -388,9 +419,59 @@ validate_analysis_summary = function(summary)
   then
     return false
   end
+  for _, mode in ipairs(summary.modes) do
+    if not has_only_fields(mode, { mode = true, sequences = true, keys = true })
+      or not valid_summary_mode(mode.mode)
+      or not is_counter(mode.sequences)
+      or not is_counter(mode.keys)
+    then
+      return false
+    end
+  end
+  for _, key in ipairs(summary.keys) do
+    if not has_only_fields(key, { key = true, count = true })
+      or not safe_preview_token(key.key)
+      or not is_counter(key.count)
+    then
+      return false
+    end
+  end
+  for _, mapping in ipairs(summary.mappings) do
+    if not has_only_fields(mapping, { mapping_id = true, count = true })
+      or not valid_mapping_id(mapping.mapping_id)
+      or not is_counter(mapping.count)
+    then
+      return false
+    end
+  end
+  for _, key in ipairs(summary.repeated_keys) do
+    if not has_only_fields(key, { key = true, runs = true, presses = true })
+      or not safe_preview_token(key.key)
+      or not is_counter(key.runs)
+      or not is_counter(key.presses)
+    then
+      return false
+    end
+  end
   local ergonomics = summary.ergonomics
-  if ergonomics.contract_version ~= 1 or ergonomics.candidate_limit ~= 100
-    or type(ergonomics.thresholds) ~= "table"
+  if not has_only_fields(ergonomics, {
+      contract_version = true,
+      candidate_limit = true,
+      thresholds = true,
+      distributions = true,
+      operations = true,
+      count_prefixes = true,
+      mode_transitions = true,
+      repeated_motions = true,
+      mapping_coverage = true,
+      candidates = true,
+    })
+    or ergonomics.contract_version ~= 1 or ergonomics.candidate_limit ~= 100
+    or not has_only_fields(ergonomics.thresholds, {
+      minimum_candidate_sessions = true,
+      minimum_candidate_sequence_keys = true,
+      minimum_candidate_observations = true,
+    })
     or ergonomics.thresholds.minimum_candidate_sessions ~= 3
     or ergonomics.thresholds.minimum_candidate_sequence_keys ~= 100
     or ergonomics.thresholds.minimum_candidate_observations ~= 3
@@ -399,7 +480,13 @@ validate_analysis_summary = function(summary)
     return false
   end
   local distributions = ergonomics.distributions
-  if type(distributions) ~= "table" or distributions.histogram_version ~= 1
+  if not has_only_fields(distributions, {
+      histogram_version = true,
+      session_duration_ms = true,
+      sequence_length_keys = true,
+      average_inter_key_latency_ms = true,
+    })
+    or distributions.histogram_version ~= 1
     or not validate_histogram(distributions.session_duration_ms, { "0-1s", "1-10s", "10-60s", "1-5m", "over-5m" })
     or not validate_histogram(distributions.sequence_length_keys, { "1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus" })
     or not validate_histogram(distributions.average_inter_key_latency_ms, { "0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms" })
@@ -408,8 +495,19 @@ validate_analysis_summary = function(summary)
   end
   local operations = ergonomics.operations
   local count_prefixes = ergonomics.count_prefixes
-  if type(operations) ~= "table" or operations.token_set_version ~= 1
-    or type(count_prefixes) ~= "table" or count_prefixes.token_set_version ~= 1
+  if not has_only_fields(operations, {
+      token_set_version = true,
+      undo = true,
+      redo = true,
+      ["repeat"] = true,
+      search_start = true,
+      search_navigation = true,
+    }) or operations.token_set_version ~= 1
+    or not has_only_fields(count_prefixes, {
+      token_set_version = true,
+      occurrences = true,
+      digit_presses = true,
+    }) or count_prefixes.token_set_version ~= 1
   then
     return false
   end
@@ -427,10 +525,92 @@ validate_analysis_summary = function(summary)
   then
     return false
   end
+  for _, transition in ipairs(ergonomics.mode_transitions) do
+    if not has_only_fields(transition, { from = true, to = true, count = true })
+      or not valid_summary_mode(transition.from)
+      or not valid_summary_mode(transition.to)
+      or not is_counter(transition.count)
+    then
+      return false
+    end
+  end
+  local motions = { h = true, j = true, k = true, l = true, w = true, b = true, e = true }
+  for _, motion in ipairs(ergonomics.repeated_motions.items) do
+    if not has_only_fields(motion, { motion = true, runs = true, presses = true })
+      or not motions[motion.motion]
+      or not is_counter(motion.runs)
+      or not is_counter(motion.presses)
+    then
+      return false
+    end
+  end
+  for _, candidate in ipairs(ergonomics.candidates) do
+    local guard = type(candidate) == "table" and candidate.guard or nil
+    local measurements = type(candidate) == "table" and candidate.measurements or nil
+    if not has_only_fields(candidate, {
+      candidate_id = true,
+      kind = true,
+      kind_version = true,
+      observations = true,
+      measurements = true,
+      guard = true,
+    })
+      or not has_only_fields(guard, {
+        observed_sessions = true,
+        observed_sequence_keys = true,
+        required_sessions = true,
+        required_sequence_keys = true,
+        required_observations = true,
+      })
+      or candidate.kind_version ~= 1
+      or not is_counter(candidate.observations)
+      or not is_counter(guard.observed_sessions)
+      or not is_counter(guard.observed_sequence_keys)
+      or guard.required_sessions ~= 3
+      or guard.required_sequence_keys ~= 100
+      or guard.required_observations ~= 3
+      or type(measurements) ~= "table"
+    then
+      return false
+    end
+    local allowed_measurements
+    if candidate.kind == "repeated_motion" and string.match(candidate.candidate_id or "", "^repeated%-motion%-%a$") then
+      local motion = string.sub(candidate.candidate_id, -1)
+      if not motions[motion] then
+        return false
+      end
+      allowed_measurements = { presses = true, runs = true }
+    elseif candidate.kind == "current_mapping_unobserved_in_sample" then
+      local mapping_id = string.match(candidate.candidate_id or "", "^mapping%-unobserved%-v1:(mapping%-v1:.+)$")
+      if not valid_mapping_id(mapping_id) then
+        return false
+      end
+      allowed_measurements = { observed_uses = true, sampled_sessions = true }
+    else
+      return false
+    end
+    for name, value in pairs(measurements) do
+      if type(name) ~= "string" or not allowed_measurements[name] or not is_counter(value) then
+        return false
+      end
+    end
+  end
   for _, field in ipairs({ "total_snapshot_mappings", "observed_mappings", "unobserved_mappings" }) do
     if not is_counter(ergonomics.mapping_coverage[field]) then
       return false
     end
+  end
+  if not has_only_fields(ergonomics.repeated_motions, { token_set_version = true, items = true })
+    or not has_only_fields(ergonomics.mapping_coverage, {
+      snapshot_version = true,
+      total_snapshot_mappings = true,
+      observed_mappings = true,
+      unobserved_mappings = true,
+    })
+    or (ergonomics.mapping_coverage.snapshot_version ~= nil
+      and ergonomics.mapping_coverage.snapshot_version ~= 1)
+  then
+    return false
   end
   return true
 end
@@ -479,7 +659,7 @@ local function contains_non_standalone_slash(value)
 end
 
 local function safe_output_text(value, maximum)
-  if type(value) ~= "string" or #value < 1 or #value > maximum then
+  if type(value) ~= "string" or #value < 1 or vim.str_utfindex(value) > maximum then
     return false
   end
   if string.find(value, "[%z\1-\31\127]", 1) ~= nil then
@@ -499,7 +679,16 @@ local function safe_output_text(value, maximum)
     and string.find(lower, "file://", 1, true) == nil
 end
 
-local function safe_preview_token(value)
+safe_preview_token = function(value)
+  if type(value) ~= "string" or value == "" or #value > 256 then
+    return false
+  end
+  local first_closing = string.find(value, ">", 1, true)
+  local canonical = vim.str_utfindex(value) == 1
+    or (string.sub(value, 1, 1) == "<" and first_closing == #value)
+  if not canonical then
+    return false
+  end
   return value == "<C-/>"
     or value == "<A-/>"
     or value == "<M-/>"
@@ -546,8 +735,10 @@ end
 validate_snapshot_context = function(summary, snapshot)
   if snapshot == nil then
     return summary.mapping_attribution == nil
+      and summary.ergonomics.mapping_coverage.snapshot_version == nil
   end
   if type(snapshot) ~= "table"
+    or not has_only_fields(snapshot, { snapshot_version = true, mappings = true })
     or snapshot.snapshot_version ~= 1
     or not is_array(snapshot.mappings, 4096)
     or type(summary.mapping_attribution) ~= "table"
@@ -557,7 +748,7 @@ validate_snapshot_context = function(summary, snapshot)
   local snapshot_by_id = {}
   local previous_mapping = nil
   for _, mapping in ipairs(snapshot.mappings) do
-    if type(mapping) ~= "table"
+    if not has_only_fields(mapping, { mapping_id = true, mode = true, scope = true, lhs = true })
       or not valid_mapping_id(mapping.mapping_id)
       or (mapping.mode ~= "normal" and mapping.mode ~= "visual" and mapping.mode ~= "operator_pending")
       or (mapping.scope ~= "global" and mapping.scope ~= "buffer")
@@ -575,8 +766,16 @@ validate_snapshot_context = function(summary, snapshot)
     snapshot_by_id[mapping.mapping_id] = mapping
     previous_mapping = mapping
   end
+  local coverage = summary.ergonomics.mapping_coverage
+  if coverage.snapshot_version ~= snapshot.snapshot_version
+    or coverage.total_snapshot_mappings ~= #snapshot.mappings
+    or coverage.observed_mappings + coverage.unobserved_mappings ~= coverage.total_snapshot_mappings
+  then
+    return false
+  end
   local attribution = summary.mapping_attribution
-  if attribution.snapshot_version ~= 1
+  if not has_only_fields(attribution, { snapshot_version = true, mappings = true, collisions = true })
+    or attribution.snapshot_version ~= 1
     or not is_array(attribution.mappings, 4096)
     or #attribution.mappings < #snapshot.mappings
     or not is_array(attribution.collisions, 4096)
@@ -586,7 +785,15 @@ validate_snapshot_context = function(summary, snapshot)
   local attribution_ids = {}
   for _, mapping in ipairs(attribution.mappings) do
     local collision_mapping_ids = type(mapping) == "table" and (mapping.collision_mapping_ids or {}) or nil
-    if type(mapping) ~= "table"
+    if not has_only_fields(mapping, {
+        mapping_id = true,
+        status = true,
+        count = true,
+        mode = true,
+        scope = true,
+        lhs = true,
+        collision_mapping_ids = true,
+      })
       or not valid_mapping_id(mapping.mapping_id)
       or attribution_ids[mapping.mapping_id]
       or not is_counter(mapping.count)
@@ -622,7 +829,13 @@ validate_snapshot_context = function(summary, snapshot)
   for _, collision in ipairs(attribution.collisions) do
     local global_mapping = type(collision) == "table" and snapshot_by_id[collision.global_mapping_id] or nil
     local buffer_mapping = type(collision) == "table" and snapshot_by_id[collision.buffer_mapping_id] or nil
-    if type(collision) ~= "table"
+    if not has_only_fields(collision, {
+        kind = true,
+        mode = true,
+        lhs = true,
+        global_mapping_id = true,
+        buffer_mapping_id = true,
+      })
       or collision.kind ~= "potential_buffer_shadowing"
       or type(collision.mode) ~= "string"
       or not is_array(collision.lhs, 64)
@@ -680,8 +893,8 @@ local function validate_codex_suggestions(contents, preview_payload)
   if type(contents) ~= "string" or #contents > MAX_CODEX_BYTES then
     return false, "Codex output exceeds the size limit"
   end
-  local decoded_ok, document = pcall(vim.json.decode, contents)
-  if not decoded_ok or type(document) ~= "table" or document.schema_version ~= 1 then
+  local document = strict_json.decode(contents)
+  if type(document) ~= "table" or document.schema_version ~= 1 then
     return false, "Codex returned invalid structured suggestions"
   end
   if type(preview_payload) ~= "table" or not validate_analysis_summary(preview_payload.summary) then
@@ -734,11 +947,44 @@ local function validate_codex_suggestions(contents, preview_payload)
     then
       return false, "Codex returned an invalid suggestion"
     end
-    local allowed = { action = true, title = true, rationale = true, evidence = true, collision_check = true }
+    local allowed = {
+      action = true,
+      title = true,
+      rationale = true,
+      mapping = true,
+      evidence = true,
+      collision_check = true,
+    }
     for key in pairs(suggestion) do
       if type(key) ~= "string" or not allowed[key] then
         return false, "Codex returned an unexpected suggestion field"
       end
+    end
+    local proposal = suggestion.mapping
+    local mapping_action = suggestion.action == "add_mapping" or suggestion.action == "change_mapping"
+    if mapping_action then
+      if type(proposal) ~= "table"
+        or (proposal.mode ~= "normal" and proposal.mode ~= "visual" and proposal.mode ~= "operator_pending")
+        or (proposal.scope ~= "global" and proposal.scope ~= "buffer")
+        or not is_array(proposal.lhs, 64)
+        or #proposal.lhs < 1
+        or (suggestion.action == "add_mapping" and proposal.target_mapping_id ~= nil)
+        or (suggestion.action == "change_mapping" and not valid_mapping_id(proposal.target_mapping_id))
+      then
+        return false, "Codex returned an invalid mapping proposal"
+      end
+      for key in pairs(proposal) do
+        if key ~= "mode" and key ~= "scope" and key ~= "lhs" and key ~= "target_mapping_id" then
+          return false, "Codex returned an unexpected mapping proposal field"
+        end
+      end
+      for _, token in ipairs(proposal.lhs) do
+        if not safe_preview_token(token) then
+          return false, "Codex returned an invalid mapping proposal"
+        end
+      end
+    elseif proposal ~= nil then
+      return false, "Codex returned an unexpected mapping proposal"
     end
     if not is_array(suggestion.evidence, MAX_SUGGESTION_EVIDENCE)
       or #suggestion.evidence < 1
@@ -807,7 +1053,6 @@ local function validate_codex_suggestions(contents, preview_payload)
         snapshot_by_id[mapping.mapping_id] = mapping
       end
     end
-    local collision_ids = {}
     local attribution = preview_payload.summary.mapping_attribution
     if snapshot == nil and attribution ~= nil then
       return false, "Codex collision evidence has an unexpected attribution"
@@ -903,33 +1148,43 @@ local function validate_codex_suggestions(contents, preview_payload)
         then
           return false, "Codex collision evidence has an invalid attribution"
         end
-        collision_ids[collision.global_mapping_id] = true
-        collision_ids[collision.buffer_mapping_id] = true
       end
     end
+    local reported = {}
     for _, mapping_id in ipairs(collision.conflicting_mapping_ids) do
-      if snapshot == nil or not snapshot_ids[mapping_id] or not collision_ids[mapping_id] then
-        return false, "Codex returned an unverified mapping ID"
+      if reported[mapping_id] then
+        return false, "Codex returned a duplicate mapping collision"
       end
+      reported[mapping_id] = true
     end
-    if (suggestion.action == "add_mapping" or suggestion.action == "change_mapping") then
+    if mapping_action then
       if snapshot == nil then
         return false, "mapping suggestions require a sanitized snapshot"
       end
-      local reported = {}
-      for _, mapping_id in ipairs(collision.conflicting_mapping_ids) do
-        reported[mapping_id] = true
+      if proposal.target_mapping_id ~= nil and snapshot_by_id[proposal.target_mapping_id] == nil then
+        return false, "Codex returned an unknown mapping change target"
       end
-      for mapping_id in pairs(collision_ids) do
+      local expected = {}
+      for mapping_id, mapping in pairs(snapshot_by_id) do
+        if mapping.mode == proposal.mode
+          and vim.deep_equal(mapping.lhs, proposal.lhs)
+          and mapping_id ~= proposal.target_mapping_id
+        then
+          expected[mapping_id] = true
+        end
+      end
+      for mapping_id in pairs(expected) do
         if not reported[mapping_id] then
-          return false, "Codex omitted a known mapping collision"
+          return false, "Codex omitted a proposed mapping collision"
         end
       end
       for mapping_id in pairs(reported) do
-        if not collision_ids[mapping_id] then
+        if not expected[mapping_id] then
           return false, "Codex reported an unknown mapping collision"
         end
       end
+    elseif next(reported) ~= nil then
+      return false, "Codex reported a collision without a mapping proposal"
     end
   end
   return true
@@ -963,6 +1218,19 @@ local function protect_directory(fs, path, mode)
     return false, protect_error or close_error
   end
   return true
+end
+
+local function prepare_codex_directory(fs, mkdir, path)
+  local mkdir_ok, mkdir_result = pcall(mkdir, path, "p", OWNER_DIRECTORY)
+  if not mkdir_ok or type(mkdir_result) ~= "number" or mkdir_result < 0 then
+    return false
+  end
+  local protected = protect_directory(fs, path, OWNER_DIRECTORY)
+  if not protected then
+    return false
+  end
+  local request = fs.fs_scandir(path)
+  return request ~= nil and fs.fs_scandir_next(request) == nil
 end
 
 local function file_identity(fs, path)
@@ -1009,22 +1277,6 @@ local function validate_outputs(fs, summary_path, report_path, previous)
   return validate_report(fs, report_path)
 end
 
-local function process_error(result)
-  local detail = type(result.stderr) == "string" and result.stderr or ""
-  detail = vim.trim(string.gsub(detail, "%s+", " "))
-  detail = string.gsub(detail, "[%z\1-\31\127]", "?")
-  if detail == "" then
-    if type(result.signal) == "number" and result.signal ~= 0 then
-      return "analyzer terminated by signal " .. tostring(result.signal)
-    end
-    return "analyzer exited with code " .. tostring(result.code)
-  end
-  if #detail > 512 then
-    detail = string.sub(detail, 1, 509) .. "..."
-  end
-  return detail
-end
-
 local function validate_with(validator, ...)
   local call_ok, valid, validation_error = pcall(validator, ...)
   if not call_ok then
@@ -1065,9 +1317,7 @@ function M.new(options, dependencies)
     _open_preview = deps.open_preview or default_open_preview,
     _confirm = deps.confirm or default_confirm,
     _output_directory = config.output_directory,
-    _pending_snapshot = nil,
     _previous_outputs = nil,
-    _report_snapshot = nil,
     _protect_directory = deps.protect_directory or function(path, mode)
       return protect_directory(fs, path, mode)
     end,
@@ -1077,8 +1327,14 @@ function M.new(options, dependencies)
     _report_path = vim.fs.joinpath(config.output_directory, "report.md"),
     _run = deps.run or process.run,
     _run_codex = deps.run_codex or process.run,
+    _supports_process_groups = deps.supports_process_groups or process.supports_process_groups,
     _codex_binary = (config.codex and config.codex.binary) or "codex",
     _codex_output_schema = (config.codex and config.codex.output_schema) or default_codex_schema(),
+    _codex_working_directory = (config.codex and config.codex.working_directory)
+      or vim.fs.joinpath(vim.fn.stdpath("cache"), "key-insights", "codex-empty"),
+    _prepare_codex_directory = deps.prepare_codex_directory or function(path)
+      return prepare_codex_directory(fs, deps.mkdir or vim.fn.mkdir, path)
+    end,
     _session_directory = config.session_directory,
     _summary_path = vim.fs.joinpath(config.output_directory, "summary.json"),
     _validate_outputs = deps.validate_outputs or function(summary_path, report_path, previous)
@@ -1117,8 +1373,6 @@ function Report:_complete(result, generation)
     return
   end
   self._job = nil
-  local report_snapshot = self._pending_snapshot
-  self._pending_snapshot = nil
   local previous_outputs = self._previous_outputs
   self._previous_outputs = nil
   if type(result) ~= "table" or type(result.code) ~= "number" then
@@ -1126,7 +1380,7 @@ function Report:_complete(result, generation)
     return
   end
   if result.code ~= 0 or (type(result.signal) == "number" and result.signal ~= 0) then
-    self:_notify("report failed: " .. process_error(result), vim.log.levels.ERROR)
+    self:_notify("report failed (the analyzer exited unsuccessfully)", vim.log.levels.ERROR)
     return
   end
   local valid, validation_error = validate_with(
@@ -1139,7 +1393,6 @@ function Report:_complete(result, generation)
     self:_notify(tostring(validation_error or "analyzer outputs are invalid"), vim.log.levels.ERROR)
     return
   end
-  self._report_snapshot = report_snapshot
   self:_notify("report updated", vim.log.levels.INFO)
   self:_open()
 end
@@ -1154,7 +1407,7 @@ function Report:_complete_preview(result, generation)
     return
   end
   if result.code ~= 0 or (type(result.signal) == "number" and result.signal ~= 0) then
-    self:_notify("preview failed: " .. process_error(result), vim.log.levels.ERROR)
+    self:_notify("preview failed (the analyzer exited unsuccessfully)", vim.log.levels.ERROR)
     return
   end
   local valid, validation_error, preview_payload = validate_preview(result.stdout)
@@ -1195,12 +1448,35 @@ function Report:_start_codex(payload, generation, preview_payload)
     self:_notify("Codex payload exceeds the size limit", vim.log.levels.ERROR)
     return false
   end
+  if not self._supports_process_groups() then
+    self:_notify("Codex analysis requires Unix process-group isolation", vim.log.levels.ERROR)
+    return false
+  end
+  local prepare_ok, prepared = pcall(self._prepare_codex_directory, self._codex_working_directory)
+  if not prepare_ok or not prepared then
+    self:_notify("failed to prepare the isolated Codex working directory", vim.log.levels.ERROR)
+    return false
+  end
   local argv = {
     self._codex_binary,
     "exec",
     "--ephemeral",
-    "--sandbox",
-    "read-only",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "--cd",
+    self._codex_working_directory,
+    "--config",
+    'shell_environment_policy.inherit="none"',
+    "--config",
+    'approval_policy="never"',
+    "--config",
+    'default_permissions="key-insights-payload-only"',
+    "--config",
+    'permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}',
+    "--config",
+    "permissions.key-insights-payload-only.network.enabled=false",
     "--output-schema",
     self._codex_output_schema,
   }
@@ -1291,7 +1567,6 @@ function Report:start()
   }
   self._generation = self._generation + 1
   local generation = self._generation
-  self._pending_snapshot = snapshot
   self._job = true
   local completed = false
   local run_ok, job = pcall(self._run, argv, function(result)
@@ -1300,7 +1575,6 @@ function Report:start()
   end, snapshot)
   if not run_ok or (not job and not completed) then
     self._job = nil
-    self._pending_snapshot = nil
     self._previous_outputs = nil
     self:_notify("failed to start the analyzer: " .. tostring(job), vim.log.levels.ERROR)
     return false
@@ -1316,24 +1590,12 @@ function Report:preview()
     self:_notify("a report or preview is already running", vim.log.levels.WARN)
     return false
   end
-  local snapshot = self._report_snapshot
-  if snapshot == nil then
-    local collect_ok
-    collect_ok, snapshot = pcall(self._collect_snapshot_payload)
-    if not collect_ok or type(snapshot) ~= "string" or snapshot == "" then
-      self:_notify("failed to collect keymap snapshot", vim.log.levels.ERROR)
-      return false
-    end
-  end
   local argv = {
     self._analyzer,
     "preview",
     self._summary_path,
-    "--keymap-snapshot",
-    "-",
-    "--output",
-    "-",
   }
+  vim.list_extend(argv, { "--output", "-" })
   self._generation = self._generation + 1
   local generation = self._generation
   self._job = true
@@ -1341,7 +1603,7 @@ function Report:preview()
   local run_ok, job = pcall(self._run, argv, function(result)
     completed = true
     self:_complete_preview(result, generation)
-  end, snapshot)
+  end)
   if not run_ok or (not job and not completed) then
     self._job = nil
     self:_notify("failed to start the preview: " .. tostring(job), vim.log.levels.ERROR)
@@ -1376,10 +1638,9 @@ function Report:shutdown()
   self._phase = nil
   self._await_confirmation = false
   if type(job) == "table" and type(job.kill) == "function" then
-    pcall(job.kill, job, 15)
+    pcall(job.kill, job, 9)
   end
   self._previous_outputs = nil
-  self._pending_snapshot = nil
   return true
 end
 

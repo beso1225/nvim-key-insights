@@ -1,14 +1,14 @@
+use std::{ffi::OsString, path::PathBuf, time::Duration};
+#[cfg(unix)]
 use std::{
-    ffi::OsString,
     io::{self, Read, Write},
-    path::PathBuf,
     process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use crate::MAX_CODEX_PAYLOAD_BYTES;
@@ -22,12 +22,14 @@ pub const MAX_CODEX_TIMEOUT: Duration = Duration::from_secs(300);
 pub struct CodexExecConfig {
     pub binary: PathBuf,
     pub output_schema: PathBuf,
+    pub working_directory: PathBuf,
     pub timeout: Duration,
     pub max_output_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodexExecError {
+    UnsupportedPlatform,
     InvalidConfig,
     Spawn,
     Io,
@@ -40,6 +42,9 @@ pub enum CodexExecError {
 impl std::fmt::Display for CodexExecError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedPlatform => {
+                formatter.write_str("Codex execution requires Unix process-group isolation")
+            }
             Self::InvalidConfig => formatter.write_str("invalid Codex runner configuration"),
             Self::Spawn => formatter.write_str("failed to start Codex"),
             Self::Io => formatter.write_str("Codex process I/O failed"),
@@ -67,8 +72,24 @@ pub fn build_codex_exec_argv(config: &CodexExecConfig) -> Vec<OsString> {
     vec![
         OsString::from("exec"),
         OsString::from("--ephemeral"),
-        OsString::from("--sandbox"),
-        OsString::from("read-only"),
+        OsString::from("--ignore-user-config"),
+        OsString::from("--ignore-rules"),
+        OsString::from("--strict-config"),
+        OsString::from("--skip-git-repo-check"),
+        OsString::from("--cd"),
+        config.working_directory.as_os_str().to_owned(),
+        OsString::from("--config"),
+        OsString::from(r#"shell_environment_policy.inherit="none""#),
+        OsString::from("--config"),
+        OsString::from(r#"approval_policy="never""#),
+        OsString::from("--config"),
+        OsString::from(r#"default_permissions="key-insights-payload-only""#),
+        OsString::from("--config"),
+        OsString::from(
+            r#"permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}"#,
+        ),
+        OsString::from("--config"),
+        OsString::from(r#"permissions.key-insights-payload-only.network.enabled=false"#),
         OsString::from("--output-schema"),
         config.output_schema.as_os_str().to_owned(),
     ]
@@ -79,6 +100,15 @@ pub fn build_codex_exec_argv(config: &CodexExecConfig) -> Vec<OsString> {
 /// Authentication is inherited from the user's saved Codex session. This
 /// function deliberately does not inspect or create API-key environment
 /// variables and never invokes a shell.
+#[cfg(not(unix))]
+pub fn run_codex_exec(
+    _config: &CodexExecConfig,
+    _payload: &[u8],
+) -> Result<CodexExecResult, CodexExecError> {
+    Err(CodexExecError::UnsupportedPlatform)
+}
+
+#[cfg(unix)]
 pub fn run_codex_exec(
     config: &CodexExecConfig,
     payload: &[u8],
@@ -87,6 +117,7 @@ pub fn run_codex_exec(
         || config.timeout > MAX_CODEX_TIMEOUT
         || config.max_output_bytes == 0
         || config.max_output_bytes > MAX_CODEX_OUTPUT_BYTES
+        || !valid_working_directory(&config.working_directory)
     {
         return Err(CodexExecError::InvalidConfig);
     }
@@ -98,6 +129,7 @@ pub fn run_codex_exec(
     let mut command = Command::new(&config.binary);
     command
         .args(build_codex_exec_argv(config))
+        .current_dir(&config.working_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -192,6 +224,7 @@ pub fn run_codex_exec(
     Ok(CodexExecResult { stdout })
 }
 
+#[cfg(unix)]
 fn spawn_reader<R>(
     mut reader: R,
     limit: usize,
@@ -223,6 +256,28 @@ where
 }
 
 #[cfg(unix)]
+fn valid_working_directory(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    // SAFETY: geteuid has no arguments or memory-safety preconditions.
+    let effective_uid = unsafe { libc::geteuid() };
+    if !path.is_absolute()
+        || !metadata.file_type().is_dir()
+        || metadata.uid() != effective_uid
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return false;
+    }
+    std::fs::read_dir(path)
+        .ok()
+        .and_then(|mut entries| entries.next().transpose().ok())
+        .is_some_and(|entry| entry.is_none())
+}
+
+#[cfg(unix)]
 fn configure_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;
 
@@ -238,9 +293,6 @@ fn configure_process_group(command: &mut Command) {
     }
 }
 
-#[cfg(not(unix))]
-fn configure_process_group(_command: &mut Command) {}
-
 #[cfg(unix)]
 fn terminate_child(child: &mut std::process::Child) {
     let process_group = -(child.id() as libc::pid_t);
@@ -249,9 +301,4 @@ fn terminate_child(child: &mut std::process::Child) {
     unsafe {
         libc::kill(process_group, libc::SIGKILL);
     }
-}
-
-#[cfg(not(unix))]
-fn terminate_child(child: &mut std::process::Child) {
-    let _ = child.kill();
 }

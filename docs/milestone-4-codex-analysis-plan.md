@@ -1,6 +1,6 @@
 # Milestone 4 optional Codex analysis plan
 
-Status: in progress
+Status: complete on `codex/codex-analysis-contract`
 
 Roadmap milestone: [Optional Codex analysis](implementation-roadmap.md#milestone-4-optional-codex-analysis)
 
@@ -84,8 +84,9 @@ Status: complete on `codex/codex-analysis-contract`.
 Status: complete on `codex/codex-analysis-contract`.
 
 - invoke `codex exec` only after explicit user confirmation;
-- use saved ChatGPT authentication, `--ephemeral`, read-only sandbox, stdin,
-  bounded timeout, and a strict output schema;
+- use saved ChatGPT authentication, `--ephemeral`, ignored user configuration
+  and rules, an empty working directory, a payload-only permission profile,
+  stdin, bounded timeout, and a strict output schema;
 - pass the preview bytes through stdin and never interpolate user paths into a
   shell command;
 - test success, timeout, malformed output, non-zero exit, and output
@@ -112,6 +113,8 @@ Status: complete on `codex/codex-analysis-contract`.
 - add headless privacy and lifecycle tests.
 
 ### M4-S6: integration, documentation, and adversarial review
+
+Status: complete on `codex/codex-analysis-contract`.
 
 - document installation and saved-auth assumptions without requesting API keys;
 - exercise the full mocked workflow in CI and keep real Codex invocation opt-in;

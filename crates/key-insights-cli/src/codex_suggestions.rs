@@ -63,8 +63,20 @@ pub struct CodexSuggestion {
     pub action: SuggestionAction,
     pub title: String,
     pub rationale: String,
+    #[serde(default)]
+    pub mapping: Option<MappingProposal>,
     pub evidence: Vec<SuggestionEvidence>,
     pub collision_check: CollisionCheck,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MappingProposal {
+    pub mode: String,
+    pub scope: String,
+    pub lhs: Vec<String>,
+    #[serde(default)]
+    pub target_mapping_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -206,47 +218,39 @@ pub fn validate_codex_suggestions_json_for_summary(
                 return Err(invalid("evidence.value"));
             }
         }
-        if let Some(snapshot) = snapshot {
-            let attribution = summary
-                .mapping_attribution
-                .as_ref()
-                .expect("validated above");
-            let collision_ids: BTreeSet<&str> = attribution
-                .collisions
-                .iter()
-                .flat_map(|collision| {
-                    std::iter::once(collision.global_mapping_id.as_str())
-                        .chain(std::iter::once(collision.buffer_mapping_id.as_str()))
-                })
-                .collect();
-            if matches!(
-                suggestion.action,
-                SuggestionAction::AddMapping | SuggestionAction::ChangeMapping
-            ) && suggestion
-                .collision_check
-                .conflicting_mapping_ids
-                .iter()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>()
-                != collision_ids
-            {
-                return Err(invalid("collision_check.conflicting_mapping_ids"));
-            }
-            for mapping_id in &suggestion.collision_check.conflicting_mapping_ids {
-                if !snapshot
-                    .mappings
-                    .iter()
-                    .any(|mapping| mapping.mapping_id == *mapping_id)
-                    || !collision_ids.contains(mapping_id.as_str())
-                {
-                    return Err(invalid("collision_check.conflicting_mapping_ids"));
-                }
-            }
-        } else if !suggestion
+        let reported = suggestion
             .collision_check
             .conflicting_mapping_ids
-            .is_empty()
-        {
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if reported.len() != suggestion.collision_check.conflicting_mapping_ids.len() {
+            return Err(invalid("collision_check.conflicting_mapping_ids"));
+        }
+        if let (Some(snapshot), Some(proposal)) = (snapshot, suggestion.mapping.as_ref()) {
+            let target = proposal.target_mapping_id.as_deref();
+            if let Some(target) = target
+                && !snapshot
+                    .mappings
+                    .iter()
+                    .any(|mapping| mapping.mapping_id == target)
+            {
+                return Err(invalid("mapping.target_mapping_id"));
+            }
+            let expected = snapshot
+                .mappings
+                .iter()
+                .filter(|mapping| {
+                    mapping.mode.as_str() == proposal.mode
+                        && mapping.lhs == proposal.lhs
+                        && Some(mapping.mapping_id.as_str()) != target
+                })
+                .map(|mapping| mapping.mapping_id.as_str())
+                .collect::<BTreeSet<_>>();
+            if reported != expected {
+                return Err(invalid("collision_check.conflicting_mapping_ids"));
+            }
+        } else if !reported.is_empty() {
             return Err(invalid("collision_check.conflicting_mapping_ids"));
         }
     }
@@ -265,6 +269,20 @@ fn validate_document(document: &CodexSuggestionDocument) -> Result<(), CodexSugg
     for suggestion in &document.suggestions {
         validate_text(&suggestion.title, 256, "suggestion.title")?;
         validate_text(&suggestion.rationale, 4096, "suggestion.rationale")?;
+        match (suggestion.action, suggestion.mapping.as_ref()) {
+            (SuggestionAction::AddMapping, Some(mapping))
+                if mapping.target_mapping_id.is_none() =>
+            {
+                validate_mapping_proposal(mapping)?;
+            }
+            (SuggestionAction::ChangeMapping, Some(mapping))
+                if mapping.target_mapping_id.is_some() =>
+            {
+                validate_mapping_proposal(mapping)?;
+            }
+            (SuggestionAction::LearnExisting | SuggestionAction::NoChange, None) => {}
+            _ => return Err(invalid("suggestion.mapping")),
+        }
         if suggestion.evidence.is_empty() || suggestion.evidence.len() > MAX_SUGGESTION_EVIDENCE {
             return Err(invalid("evidence"));
         }
@@ -309,6 +327,20 @@ pub fn render_codex_suggestions_markdown(
         output.push_str(action_name(suggestion.action));
         output.push_str("`\n- **Rationale:** ");
         output.push_str(&escape_markdown(&suggestion.rationale));
+        if let Some(mapping) = &suggestion.mapping {
+            output.push_str("\n- **Proposed mapping:** `");
+            output.push_str(&escape_markdown(&mapping.mode));
+            output.push('/');
+            output.push_str(&escape_markdown(&mapping.scope));
+            output.push_str("` `");
+            output.push_str(&escape_markdown(&mapping.lhs.join("")));
+            output.push('`');
+            if let Some(target) = &mapping.target_mapping_id {
+                output.push_str(" (change target `");
+                output.push_str(target);
+                output.push_str("`)");
+            }
+        }
         output.push_str("\n- **Evidence:**\n");
         for evidence in &suggestion.evidence {
             output.push_str("  - `");
@@ -413,6 +445,28 @@ fn invalid(field: &'static str) -> CodexSuggestionError {
     CodexSuggestionError::InvalidContract { field }
 }
 
+fn validate_mapping_proposal(mapping: &MappingProposal) -> Result<(), CodexSuggestionError> {
+    if !matches!(
+        mapping.mode.as_str(),
+        "normal" | "visual" | "operator_pending"
+    ) || !matches!(mapping.scope.as_str(), "global" | "buffer")
+        || mapping.lhs.is_empty()
+        || mapping.lhs.len() > 64
+    {
+        return Err(invalid("suggestion.mapping"));
+    }
+    for token in &mapping.lhs {
+        crate::codex_payload::validate_token(token, "mapping.lhs")
+            .map_err(|_| invalid("suggestion.mapping"))?;
+    }
+    if let Some(target) = &mapping.target_mapping_id
+        && !is_mapping_id(target)
+    {
+        return Err(invalid("mapping.target_mapping_id"));
+    }
+    Ok(())
+}
+
 fn validate_text(
     value: &str,
     maximum: usize,
@@ -420,7 +474,7 @@ fn validate_text(
 ) -> Result<(), CodexSuggestionError> {
     let lower = value.to_ascii_lowercase();
     if value.is_empty()
-        || value.len() > maximum
+        || value.chars().count() > maximum
         || value.chars().any(|character| character.is_control())
         || value.chars().any(|character| {
             matches!(character, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
