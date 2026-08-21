@@ -143,6 +143,18 @@
             test ! -e "$XDG_CACHE_HOME/nvim/key-insights"
             touch "$out"
           '';
+          packaged-codex-plugin = pkgs.runCommand "nvim-key-insights-packaged-codex-plugin-check" { } ''
+            plugin=${packages.nvim-key-insights-codex-plugin}
+            test -f "$plugin/.codex-plugin/plugin.json"
+            test -f "$plugin/skills/analyze-neovim-usage/SKILL.md"
+            test -f "$plugin/skills/analyze-neovim-usage/agents/openai.yaml"
+            test -f "$plugin/skills/analyze-neovim-usage/references/payload.schema.json"
+            test -f "$plugin/skills/analyze-neovim-usage/references/suggestions.schema.json"
+            test "$(find "$plugin" -type f | wc -l)" -eq 5
+            test -z "$(find "$plugin" -type l -print -quit)"
+            test -z "$(find "$plugin" -type f -perm -111 -print -quit)"
+            touch "$out"
+          '';
         });
 
       devShells = forAllSystems (system:

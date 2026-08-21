@@ -87,7 +87,7 @@ replacing an existing output.
 
 ## S5: Nix package, installation, and final review
 
-Status: implementation complete; final validation in progress.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Export a separate `nvim-key-insights-codex-plugin` package and overlay attribute,
 add package-content and inert-load checks, and document Git marketplace,

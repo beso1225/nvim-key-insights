@@ -12,7 +12,22 @@
   },
   "$defs": {
     "counter": { "type": "integer", "minimum": 0 },
-    "token": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "token": {
+      "anyOf": [
+        { "enum": ["/", "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^(?:.|<[^>]+>)$",
+          "allOf": [
+            { "not": { "pattern": "[\u0000-\u001f\u007f]" } },
+            { "not": { "pattern": "[/\\\\]" } },
+            { "not": { "pattern": "[.][Ee][Nn][Vv]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]" } }
+          ]
+        }
+      ]
+    },
     "mapping_id": {
       "type": "string",
       "pattern": "^mapping-v1:[0-9a-f]{64}$"
@@ -46,7 +61,7 @@
       "additionalProperties": false,
       "required": ["mode", "sequences", "keys"],
       "properties": {
-        "mode": { "enum": ["normal", "visual", "operator_pending"] },
+        "mode": { "enum": ["normal", "visual", "operator_pending", "insert", "command", "search", "other"] },
         "sequences": { "$ref": "#/$defs/counter" },
         "keys": { "$ref": "#/$defs/counter" }
       }
@@ -65,7 +80,7 @@
       "additionalProperties": false,
       "required": ["mapping_id", "count"],
       "properties": {
-        "mapping_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "mapping_id": { "$ref": "#/$defs/mapping_id" },
         "count": { "$ref": "#/$defs/counter" }
       }
     },
@@ -93,8 +108,8 @@
       "additionalProperties": false,
       "required": ["from", "to", "count"],
       "properties": {
-        "from": { "type": "string", "minLength": 1, "maxLength": 32 },
-        "to": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "from": { "enum": ["normal", "visual", "operator_pending", "insert", "command", "search", "other"] },
+        "to": { "enum": ["normal", "visual", "operator_pending", "insert", "command", "search", "other"] },
         "count": { "$ref": "#/$defs/counter" }
       }
     },
@@ -105,9 +120,9 @@
       "properties": {
         "observed_sessions": { "$ref": "#/$defs/counter" },
         "observed_sequence_keys": { "$ref": "#/$defs/counter" },
-        "required_sessions": { "$ref": "#/$defs/counter" },
-        "required_sequence_keys": { "$ref": "#/$defs/counter" },
-        "required_observations": { "$ref": "#/$defs/counter" }
+        "required_sessions": { "const": 3 },
+        "required_sequence_keys": { "const": 100 },
+        "required_observations": { "const": 3 }
       }
     },
     "candidate": {
@@ -115,17 +130,42 @@
       "additionalProperties": false,
       "required": ["candidate_id", "kind", "kind_version", "observations", "measurements", "guard"],
       "properties": {
-        "candidate_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "candidate_id": {
+          "oneOf": [
+            { "enum": ["repeated-motion-h", "repeated-motion-j", "repeated-motion-k", "repeated-motion-l", "repeated-motion-w", "repeated-motion-b", "repeated-motion-e"] },
+            { "type": "string", "pattern": "^mapping-unobserved-v1:mapping-v1:[0-9a-f]{64}$" }
+          ]
+        },
+        "kind": { "enum": ["repeated_motion", "current_mapping_unobserved_in_sample"] },
         "kind_version": { "const": 1 },
         "observations": { "$ref": "#/$defs/counter" },
         "measurements": {
           "type": "object",
-          "propertyNames": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "propertyNames": { "enum": ["presses", "runs", "observed_uses", "sampled_sessions"] },
           "additionalProperties": { "$ref": "#/$defs/counter" }
         },
         "guard": { "$ref": "#/$defs/candidate_guard" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "repeated_motion" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "candidate_id": { "enum": ["repeated-motion-h", "repeated-motion-j", "repeated-motion-k", "repeated-motion-l", "repeated-motion-w", "repeated-motion-b", "repeated-motion-e"] },
+              "measurements": { "propertyNames": { "enum": ["presses", "runs"] } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "current_mapping_unobserved_in_sample" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "candidate_id": { "type": "string", "pattern": "^mapping-unobserved-v1:mapping-v1:[0-9a-f]{64}$" },
+              "measurements": { "propertyNames": { "enum": ["observed_uses", "sampled_sessions"] } }
+            }
+          }
+        }
+      ]
     },
     "ergonomics": {
       "type": "object",
@@ -139,9 +179,9 @@
           "additionalProperties": false,
           "required": ["minimum_candidate_sessions", "minimum_candidate_sequence_keys", "minimum_candidate_observations"],
           "properties": {
-            "minimum_candidate_sessions": { "$ref": "#/$defs/counter" },
-            "minimum_candidate_sequence_keys": { "$ref": "#/$defs/counter" },
-            "minimum_candidate_observations": { "$ref": "#/$defs/counter" }
+            "minimum_candidate_sessions": { "const": 3 },
+            "minimum_candidate_sequence_keys": { "const": 100 },
+            "minimum_candidate_observations": { "const": 3 }
           }
         },
         "distributions": {
@@ -150,9 +190,44 @@
           "required": ["histogram_version", "session_duration_ms", "sequence_length_keys", "average_inter_key_latency_ms"],
           "properties": {
             "histogram_version": { "const": 1 },
-            "session_duration_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/histogram_bucket" } },
-            "sequence_length_keys": { "type": "array", "minItems": 7, "maxItems": 7, "items": { "$ref": "#/$defs/histogram_bucket" } },
-            "average_inter_key_latency_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/histogram_bucket" } }
+            "session_duration_ms": {
+              "type": "array",
+              "minItems": 5,
+              "prefixItems": [
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "0-1s" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "1-10s" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "10-60s" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "1-5m" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "over-5m" } } }] }
+              ],
+              "items": false
+            },
+            "sequence_length_keys": {
+              "type": "array",
+              "minItems": 7,
+              "prefixItems": [
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "1" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "2" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "3-4" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "5-8" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "9-16" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "17-32" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "33-plus" } } }] }
+              ],
+              "items": false
+            },
+            "average_inter_key_latency_ms": {
+              "type": "array",
+              "minItems": 5,
+              "prefixItems": [
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "0-50ms" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "50-100ms" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "100-250ms" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "250-500ms" } } }] },
+                { "allOf": [{ "$ref": "#/$defs/histogram_bucket" }, { "properties": { "bucket": { "const": "over-500ms" } } }] }
+              ],
+              "items": false
+            }
           }
         },
         "operations": {
@@ -193,7 +268,7 @@
                 "additionalProperties": false,
                 "required": ["motion", "runs", "presses"],
                 "properties": {
-                  "motion": { "$ref": "#/$defs/token" },
+                  "motion": { "enum": ["h", "j", "k", "l", "w", "b", "e"] },
                   "runs": { "$ref": "#/$defs/counter" },
                   "presses": { "$ref": "#/$defs/counter" }
                 }
@@ -204,7 +279,7 @@
         "mapping_coverage": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["total_snapshot_mappings", "observed_mappings", "unobserved_mappings"],
+          "required": ["snapshot_version", "total_snapshot_mappings", "observed_mappings", "unobserved_mappings"],
           "properties": {
             "snapshot_version": { "type": ["integer", "null"], "minimum": 1, "maximum": 1 },
             "total_snapshot_mappings": { "$ref": "#/$defs/counter" },
@@ -220,7 +295,7 @@
       "additionalProperties": false,
       "required": ["mapping_id", "status", "count"],
       "properties": {
-        "mapping_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "mapping_id": { "$ref": "#/$defs/mapping_id" },
         "status": { "enum": ["observed", "observed_not_in_snapshot", "unobserved_in_sample"] },
         "count": { "$ref": "#/$defs/counter" },
         "mode": { "enum": ["normal", "visual", "operator_pending"] },

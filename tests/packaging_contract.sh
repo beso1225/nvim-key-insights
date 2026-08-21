@@ -33,7 +33,8 @@ test -f "${codex_plugin}/skills/analyze-neovim-usage/agents/openai.yaml"
 test -f "${codex_plugin}/skills/analyze-neovim-usage/references/payload.schema.json"
 test -f "${codex_plugin}/skills/analyze-neovim-usage/references/suggestions.schema.json"
 test "$(find "$codex_plugin" -type f | wc -l | tr -d ' ')" = 5
-test -z "$(find "$codex_plugin" -type l -o -type f -perm -111 -print -quit)"
+test -z "$(find "$codex_plugin" -type l -print -quit)"
+test -z "$(find "$codex_plugin" -type f -perm -111 -print -quit)"
 
 cli_program="$(nix eval --no-update-lock-file --raw ".#apps.${system}.key-insights.program")"
 default_program="$(nix eval --no-update-lock-file --raw ".#apps.${system}.default.program")"

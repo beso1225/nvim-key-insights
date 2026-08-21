@@ -32,6 +32,8 @@ Require all of the following before analysis:
 
 - Validate the complete input against `references/payload.schema.json`; do not
   approximate its nested summary, attribution, snapshot, or instruction shapes.
+  Passing the structural schema is necessary but not sufficient; apply every
+  semantic check below and reject the payload if any check cannot be proven.
 - The top-level payload keys are exactly `payload_schema_version`, `purpose`,
   `instructions`, `summary`, and the optional `keymap_snapshot`. Reject any
   additional top-level key.
@@ -43,6 +45,25 @@ Require all of the following before analysis:
   `change_mapping`, `no_change` in that order; both required booleans are true;
   and `instructions.privacy_boundary` exactly matches the bundled payload
   schema;
+- every key or left-hand-side token is canonical, at most 256 UTF-8 bytes, and
+  is either one Unicode scalar or one bracket token ending at its first `>`;
+  reject controls, path-like `/` or `\` content except the literal `/` and the
+  eight modifier slash/backslash tokens, and reject case-insensitive `.env`,
+  `secret`, or `credential` content;
+- every mapping ID has the exact `mapping-v1:` plus 64 lowercase hexadecimal
+  form. For snapshot entries, recompute the SHA-256 ID from the byte-length
+  prefixed strings `mapping-v1`, mode, scope, LHS token count, and each token;
+  require mappings in mode, LHS, scope, then ID order with no duplicate ID or
+  tuple;
+- `mapping_attribution` is present exactly when `keymap_snapshot` is present.
+  Each snapshot mapping appears once with the identical tuple and either a
+  positive `observed` count or zero `unobserved_in_sample` count; only a
+  positive `observed_not_in_snapshot` entry may omit its tuple. Coverage totals,
+  collision tuples/IDs, and candidate mapping IDs must match that same snapshot;
+- thresholds are exactly 3 sessions, 100 sequence keys, and 3 observations;
+  histogram labels and order, candidate kinds/IDs, measurement names, ranking
+  limits, token-set versions, and all other constants must match the bundled
+  payload schema;
 - the requested output follows `references/suggestions.schema.json`, schema
   version `1`.
 

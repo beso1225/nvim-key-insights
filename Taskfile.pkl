@@ -41,6 +41,7 @@ local packagingSources: Listing<String> = new {
   ...rustSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
+  "plugins/nvim-key-insights/**/*"
   "docs/installation.md"
   "tests/packaging_contract.sh"
   "Taskfile.pkl"
