@@ -128,6 +128,7 @@
               pkgs.clippy
               pkgs.neovim
               pkgs.pkl
+              (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.pyyaml ]))
               pkgs.rustc
               pkgs.rustfmt
               pkfire.packages.${system}.default

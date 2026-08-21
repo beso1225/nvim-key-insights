@@ -42,7 +42,7 @@ separate Nix derivation exposes only the marketplace-independent plugin artifact
 
 ## S1: structure and privacy contract
 
-Status: in progress.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Write a failing contract that requires the marketplace, manifest, canonical
 standalone skill, UI metadata, self-contained schema reference, exact version
@@ -52,7 +52,7 @@ files.
 
 ## S2: plugin and standalone skill scaffold
 
-Status: pending.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Use the Codex plugin and skill scaffolders, then replace all placeholders with a
 minimal public manifest and concise workflow skill. Validate both structures with
@@ -61,7 +61,7 @@ to the runtime suggestion schema through a drift test.
 
 ## S3: semantic skill contract
 
-Status: pending.
+Status: in progress.
 
 Add contract tests proving that the skill:
 

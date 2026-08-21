@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze Neovim Usage"
+  short_description: "Review sanitized Neovim usage evidence"
+  default_prompt: "Use $analyze-neovim-usage to evaluate my sanitized Neovim usage summary."

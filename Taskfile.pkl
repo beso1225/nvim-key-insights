@@ -45,6 +45,17 @@ local packagingSources: Listing<String> = new {
   "Taskfile.pkl"
 }
 
+local codexPluginSources: Listing<String> = new {
+  ...toolchainSources
+  ".agents/plugins/marketplace.json"
+  "plugins/nvim-key-insights/**/*"
+  "codex/suggestions.schema.json"
+  "Cargo.toml"
+  "crates/key-insights-cli/Cargo.toml"
+  "tests/codex_plugin_contract.sh"
+  "Taskfile.pkl"
+}
+
 local testRust: Task = new {
   name = "test:rust"
   description = "Run Rust unit and integration tests"
@@ -72,6 +83,13 @@ local testPackaging: Task = new {
   description = "Validate Nix package, app, and overlay outputs"
   cmd = "bash tests/packaging_contract.sh"
   inputs = packagingSources
+}
+
+local testCodexPlugin: Task = new {
+  name = "test:codex-plugin"
+  description = "Validate the installable Codex plugin and standalone skill"
+  cmd = "bash tests/codex_plugin_contract.sh"
+  inputs = codexPluginSources
 }
 
 local formatCheck: Task = new {
@@ -104,7 +122,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging }
+  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin }
 }
 
 local default: Task = new {
@@ -113,4 +131,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; formatCheck; lintRust; lintActions; test; check; default }

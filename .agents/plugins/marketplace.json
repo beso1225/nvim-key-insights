@@ -1,0 +1,20 @@
+{
+  "name": "nvim-key-insights",
+  "interface": {
+    "displayName": "nvim-key-insights"
+  },
+  "plugins": [
+    {
+      "name": "nvim-key-insights",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nvim-key-insights"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
