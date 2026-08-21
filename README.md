@@ -53,6 +53,13 @@ ASCII filename, and it does not follow session-directory or entry symlinks.
 Incomplete, lock, legacy, and unrelated entries are ignored. Legacy logs remain
 available through explicit positional input paths.
 
+## Installation
+
+The Nix flake exports the Rust analyzer as `key-insights`, the Neovim runtime as
+`nvim-key-insights`, executable apps, and a reusable overlay. lazy.nvim, direct
+flake, overlay, supported-system, and complete configuration examples are in
+[Installation and configuration](docs/installation.md).
+
 ## Collector lifecycle
 
 The collector can be loaded with lazy.nvim without starting collection automatically:
@@ -60,9 +67,20 @@ The collector can be loaded with lazy.nvim without starting collection automatic
 ```lua
 {
   "beso1225/nvim-key-insights",
+  version = false,
+  cmd = {
+    "KeyInsightsStart",
+    "KeyInsightsPause",
+    "KeyInsightsStop",
+    "KeyInsightsStatus",
+    "KeyInsightsReport",
+    "KeyInsightsAnalyze",
+    "KeyInsightsOpenReport",
+    "KeyInsightsPurge",
+  },
   opts = {
     report = {
-      analyzer = "/path/to/key-insights",
+      analyzer = "key-insights",
       directory = "/path/to/private/reports",
       codex = {
         -- Optional; defaults to an owner-only empty cache directory.
@@ -105,6 +123,9 @@ local-only and is refused while a report process is running.
 
 See [Local collection and reporting](docs/local-workflow.md) for ordering,
 discovery, output, purge, and recovery contracts.
+See [Installation and configuration](docs/installation.md) for the complete
+supported option reference. Raw capture options are deliberately unavailable;
+attempting to enable them fails configuration.
 
 ## Repository layout
 
@@ -129,6 +150,8 @@ implementations remain callback-local. Deterministic ergonomic distributions,
 operation evidence, guarded repeated-motion candidates, and cautious mapping
 coverage are implemented. The bounded Codex payload preview and explicit
 confirmation-gated Codex workflow are available from `:KeyInsightsAnalyze`.
+The flake exports separate analyzer and Neovim packages, executable apps, and a
+reusable overlay as the first Milestone 5 integration surface.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the

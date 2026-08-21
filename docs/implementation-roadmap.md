@@ -228,6 +228,9 @@ output while the local analyzer remains independent of Codex.
 
 ## Milestone 5: packaging and integration surfaces
 
+Status: in progress. The first packaging and installation slice is tracked in
+the [Milestone 5 packaging plan](milestone-5-packaging-plan.md).
+
 - Export the Rust CLI as a flake package and app for supported systems.
 - Document lazy.nvim installation and all user-facing configuration.
 - Provide a stable Nix module or overlay surface suitable for integration from

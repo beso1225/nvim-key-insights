@@ -17,6 +17,7 @@ local luaSources: Listing<String> = new {
   ...toolchainSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
+  "docs/installation.md"
   "tests/lua/**/*.lua"
 }
 
@@ -34,6 +35,14 @@ local workflowSources: Listing<String> = new {
   ".github/workflows/*.yaml"
   "Taskfile.pkl"
   "tests/ci_contract.sh"
+}
+
+local packagingSources: Listing<String> = new {
+  ...rustSources
+  "lua/**/*.lua"
+  "plugin/**/*.lua"
+  "tests/packaging_contract.sh"
+  "Taskfile.pkl"
 }
 
 local testRust: Task = new {
@@ -56,6 +65,13 @@ local testE2e: Task = new {
   cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/e2e_spec.lua"
   inputs = e2eSources
   deps { testRust }
+}
+
+local testPackaging: Task = new {
+  name = "test:packaging"
+  description = "Validate Nix package, app, and overlay outputs"
+  cmd = "bash tests/packaging_contract.sh"
+  inputs = packagingSources
 }
 
 local formatCheck: Task = new {
@@ -88,7 +104,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test }
+  deps { formatCheck; lintRust; lintActions; test; testPackaging }
 }
 
 local default: Task = new {
@@ -97,4 +113,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testPackaging; formatCheck; lintRust; lintActions; test; check; default }
