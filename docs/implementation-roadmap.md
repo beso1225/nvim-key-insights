@@ -230,6 +230,8 @@ output while the local analyzer remains independent of Codex.
 
 Status: in progress. The first packaging and installation slice is tracked in
 the [Milestone 5 packaging plan](milestone-5-packaging-plan.md).
+The installable Codex plugin slice is tracked in the
+[Milestone 5 Codex plugin plan](milestone-5-codex-plugin-plan.md).
 
 - Export the Rust CLI as a flake package and app for supported systems.
 - Document lazy.nvim installation and all user-facing configuration.
