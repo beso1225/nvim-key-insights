@@ -46,12 +46,64 @@ local DEFAULTS = {
   },
 }
 
+local CONFIG_SHAPE = {
+  privacy = {
+    raw_keylog = true,
+    capture_insert_text = true,
+    capture_command_text = true,
+    capture_search_text = true,
+    store_file_paths = true,
+  },
+  collection = {
+    exclude_special_buffers = true,
+    max_sequence_keys = true,
+    sequence_timeout_ms = true,
+  },
+  storage = {
+    directory = true,
+    retention = {
+      max_age_days = true,
+      max_sessions = true,
+    },
+  },
+  report = {
+    analyzer = true,
+    directory = true,
+    codex = {
+      binary = true,
+      output_schema = true,
+      working_directory = true,
+    },
+  },
+}
+
+local function validate_shape(value, shape, path)
+  assert(type(value) == "table", path .. " must be a table")
+  for key, nested in pairs(value) do
+    local expected = shape[key]
+    assert(expected ~= nil, path .. "." .. tostring(key) .. " is not a supported option")
+    if type(expected) == "table" then
+      validate_shape(nested, expected, path .. "." .. key)
+    end
+  end
+end
+
 function M.defaults()
   return vim.deepcopy(DEFAULTS)
 end
 
 function M.resolve(options)
+  if options ~= nil then
+    validate_shape(options, CONFIG_SHAPE, "key-insights")
+  end
   local resolved = vim.tbl_deep_extend("force", M.defaults(), options or {})
+  for name, enabled in pairs(resolved.privacy) do
+    assert(enabled == false, "privacy." .. name .. " is not supported")
+  end
+  assert(
+    resolved.collection.exclude_special_buffers == true,
+    "collection.exclude_special_buffers cannot be disabled"
+  )
   local max_sequence_keys = resolved.collection.max_sequence_keys
   assert(
     type(max_sequence_keys) == "number"
@@ -86,6 +138,11 @@ function M.resolve(options)
     "storage.retention.max_age_days must be a positive integer"
   )
   assert(
+    resolved.storage.directory == nil
+      or (type(resolved.storage.directory) == "string" and resolved.storage.directory ~= ""),
+    "storage.directory must be nil or a non-empty string"
+  )
+  assert(
     type(resolved.report.analyzer) == "string" and resolved.report.analyzer ~= "",
     "report.analyzer must be a non-empty string"
   )
@@ -113,9 +170,8 @@ function M.resolve(options)
   return resolved
 end
 
-function M.is_excluded_buffer(buffer, options)
-  local config = options or DEFAULTS
-  return config.collection.exclude_special_buffers and buffer.buftype ~= ""
+function M.is_excluded_buffer(buffer, _options)
+  return buffer.buftype ~= ""
 end
 
 function M.is_sensitive_name(name, _options)

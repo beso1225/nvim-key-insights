@@ -16,6 +16,28 @@ const INPUT: &str = include_str!("fixtures/reporting.jsonl");
 const EXPECTED_SUMMARY: &str = include_str!("fixtures/summary.json");
 const EXPECTED_REPORT: &str = include_str!("fixtures/report.md");
 
+#[test]
+fn cli_help_and_version_are_successful_packaging_entrypoints() {
+    let help = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .arg("--help")
+        .output()
+        .expect("run help");
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: key-insights "));
+    assert!(help.stderr.is_empty());
+
+    let version = Command::new(env!("CARGO_BIN_EXE_key-insights"))
+        .arg("--version")
+        .output()
+        .expect("run version");
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout),
+        format!("key-insights {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(version.stderr.is_empty());
+}
+
 fn repeated_motion_guard_sample(sessions: usize, sequence_keys: usize, runs: usize) -> String {
     assert!(sequence_keys >= runs * 3);
     let mut input = String::new();

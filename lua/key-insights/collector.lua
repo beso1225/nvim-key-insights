@@ -242,7 +242,9 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
     local timeout_ms = self._options.collection.sequence_timeout_ms
     local max_keys = self._options.collection.max_sequence_keys
     if sequence ~= nil
-      and (sequence.mode ~= mode or elapsed_ms - sequence.last_ms > timeout_ms or #sequence.keys >= max_keys)
+      and (sequence.mode ~= mode
+        or (timeout_ms > 0 and elapsed_ms - sequence.last_ms > timeout_ms)
+        or #sequence.keys >= max_keys)
     then
       if not self:_emit_sequence(elapsed_ms) then
         return false

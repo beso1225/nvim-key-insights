@@ -34,7 +34,17 @@ use secure_fs::*;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn main() -> ExitCode {
-    match run(env::args_os().skip(1).collect()) {
+    let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("--help" | "-h")) {
+        let text = usage();
+        println!("Usage: {}", text.strip_prefix("usage: ").unwrap_or(&text));
+        return ExitCode::SUCCESS;
+    }
+    if arguments.len() == 1 && matches!(arguments[0].to_str(), Some("--version" | "-V")) {
+        println!("key-insights {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    match run(arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("key-insights: {error}");

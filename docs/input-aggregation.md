@@ -22,7 +22,8 @@ coverage instead of producing a guess.
 A typed-key sequence ends when:
 
 - the normalized mode changes;
-- the next key arrives after `sequence_timeout_ms`;
+- `sequence_timeout_ms` is greater than zero and the next key arrives after
+  that interval;
 - the sequence reaches `max_sequence_keys`;
 - its encoded JSONL event would exceed the 64 KiB collector/analyzer limit;
 - collection is paused, stopped, or explicitly flushed;
@@ -39,7 +40,8 @@ require("key-insights").setup({
 })
 ```
 
-`sequence_timeout_ms` must be a finite non-negative integer. `max_sequence_keys`
+`sequence_timeout_ms` must be a finite non-negative integer; zero disables the
+idle-time boundary. `max_sequence_keys`
 must be an integer from 1 through 65,536. Byte-size splitting is always
 enforced, including when `max_sequence_keys` is configured above its default. It
 preserves every typed key and computes duration independently for each resulting
