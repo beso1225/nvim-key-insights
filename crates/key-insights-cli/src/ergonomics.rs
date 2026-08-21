@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt::Write};
 
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{KeymapSnapshot, Mode};
 
@@ -15,11 +15,15 @@ pub const COUNTABLE_TOKEN_SET_VERSION: u32 = 1;
 pub const DIRECTIONAL_MOTION_TOKEN_SET_VERSION: u32 = 1;
 pub const CANDIDATE_KIND_VERSION: u32 = 1;
 
-const SESSION_DURATION_BUCKETS: [&str; 5] = ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
-const SEQUENCE_LENGTH_BUCKETS: [&str; 7] = ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
-const LATENCY_BUCKETS: [&str; 5] = ["0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms"];
+pub(crate) const SESSION_DURATION_BUCKETS: [&str; 5] =
+    ["0-1s", "1-10s", "10-60s", "1-5m", "over-5m"];
+pub(crate) const SEQUENCE_LENGTH_BUCKETS: [&str; 7] =
+    ["1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus"];
+pub(crate) const LATENCY_BUCKETS: [&str; 5] =
+    ["0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms"];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErgonomicSummary {
     pub contract_version: u32,
     pub candidate_limit: usize,
@@ -50,7 +54,8 @@ impl Default for ErgonomicSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErgonomicDistributions {
     pub histogram_version: u32,
     pub session_duration_ms: Vec<HistogramBucket>,
@@ -85,7 +90,8 @@ pub struct HistogramBucket {
     pub count: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OperationEvidence {
     pub token_set_version: u32,
     pub undo: u64,
@@ -115,7 +121,8 @@ pub struct ModeTransitionCount {
     pub count: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CountPrefixEvidence {
     pub token_set_version: u32,
     pub occurrences: u64,
@@ -129,7 +136,8 @@ pub struct RepeatedMotionEvidence {
     pub presses: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepeatedMotionSummary {
     pub token_set_version: u32,
     pub items: Vec<RepeatedMotionEvidence>,
@@ -144,7 +152,8 @@ impl Default for RepeatedMotionSummary {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingCoverageEvidence {
     pub snapshot_version: Option<u32>,
     pub total_snapshot_mappings: u64,
@@ -546,7 +555,8 @@ fn latency_bucket(average_ms: u64) -> usize {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErgonomicThresholds {
     pub minimum_candidate_sessions: u64,
     pub minimum_candidate_sequence_keys: u64,
@@ -563,7 +573,8 @@ impl Default for ErgonomicThresholds {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErgonomicCandidate {
     pub candidate_id: String,
     pub kind: String,
@@ -573,13 +584,119 @@ pub struct ErgonomicCandidate {
     pub guard: CandidateGuard,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CandidateGuard {
     pub observed_sessions: u64,
     pub observed_sequence_keys: u64,
     pub required_sessions: u64,
     pub required_sequence_keys: u64,
     pub required_observations: u64,
+}
+
+impl<'de> Deserialize<'de> for HistogramBucket {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            bucket: String,
+            count: u64,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            bucket: bucket_from_value(wire.bucket)?,
+            count: wire.count,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ModeTransitionCount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            from: String,
+            to: String,
+            count: u64,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            from: mode_from_value(wire.from)?,
+            to: mode_from_value(wire.to)?,
+            count: wire.count,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for RepeatedMotionEvidence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            motion: String,
+            runs: u64,
+            presses: u64,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            motion: motion_from_value(wire.motion)?,
+            runs: wire.runs,
+            presses: wire.presses,
+        })
+    }
+}
+
+fn bucket_from_value<E>(value: String) -> Result<&'static str, E>
+where
+    E: serde::de::Error,
+{
+    SESSION_DURATION_BUCKETS
+        .into_iter()
+        .chain(SEQUENCE_LENGTH_BUCKETS)
+        .chain(LATENCY_BUCKETS)
+        .find(|candidate| *candidate == value)
+        .ok_or_else(|| E::custom("unknown histogram bucket"))
+}
+
+fn mode_from_value<E>(value: String) -> Result<&'static str, E>
+where
+    E: serde::de::Error,
+{
+    match value.as_str() {
+        "normal" => Ok("normal"),
+        "visual" => Ok("visual"),
+        "operator_pending" => Ok("operator_pending"),
+        "insert" => Ok("insert"),
+        "command" => Ok("command"),
+        "search" => Ok("search"),
+        "other" => Ok("other"),
+        _ => Err(E::custom("unknown mode")),
+    }
+}
+
+fn motion_from_value<E>(value: String) -> Result<&'static str, E>
+where
+    E: serde::de::Error,
+{
+    match value.as_str() {
+        "h" => Ok("h"),
+        "j" => Ok("j"),
+        "k" => Ok("k"),
+        "l" => Ok("l"),
+        "w" => Ok("w"),
+        "b" => Ok("b"),
+        "e" => Ok("e"),
+        _ => Err(E::custom("unknown repeated motion")),
+    }
 }
 
 pub(crate) fn render_markdown(output: &mut String, summary: &ErgonomicSummary) {

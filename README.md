@@ -64,6 +64,10 @@ The collector can be loaded with lazy.nvim without starting collection automatic
     report = {
       analyzer = "/path/to/key-insights",
       directory = "/path/to/private/reports",
+      codex = {
+        -- Optional; defaults to an owner-only empty cache directory.
+        working_directory = "/path/to/empty/private/directory",
+      },
     },
   },
 }
@@ -76,6 +80,7 @@ The current implementation provides these commands:
 - `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
 - `:KeyInsightsStatus` displays collection state and whether a report job is running;
 - `:KeyInsightsReport` asynchronously analyzes finalized sessions and opens the new report;
+- `:KeyInsightsAnalyze` renders the bounded sanitized Codex payload, then asks for explicit confirmation before launching Codex;
 - `:KeyInsightsOpenReport` opens the existing report without running analysis;
 - `:KeyInsightsPurge` previews collector-owned session artifacts and asks before deletion;
 - `:KeyInsightsPurge!` skips that prompt but retains every ownership and race check.
@@ -122,11 +127,18 @@ contents and mapping expansions are discarded. Confirmed Normal, Visual, and
 Operator-pending mappings emit only opaque IDs and canonical typed keys; mapping
 implementations remain callback-local. Deterministic ergonomic distributions,
 operation evidence, guarded repeated-motion candidates, and cautious mapping
-coverage are implemented; optional Codex integration remains future work.
+coverage are implemented. The bounded Codex payload preview and explicit
+confirmation-gated Codex workflow are available from `:KeyInsightsAnalyze`.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the
 [Milestone 3 implementation plan](docs/milestone-3-deterministic-ergonomic-metrics-plan.md)
 for the current deterministic ergonomic evidence contract, and the
 [mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
-mapping evidence.
+mapping evidence. The optional Codex payload contract is implemented in
+the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md). Codex is
+launched only after confirmation, with saved authentication, ignored user
+configuration/rules, an empty working directory, and a payload-only permission
+profile. The Codex workflow currently fails closed outside Unix because its
+timeout and shutdown guarantees require process-group termination. Cancelling
+leaves the workflow local-only.

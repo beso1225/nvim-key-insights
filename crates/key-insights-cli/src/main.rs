@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -13,8 +13,11 @@ use std::{
 };
 
 use key_insights::{
-    MAX_SESSIONS_PER_LOG, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
-    parse_keymap_snapshot, render_markdown, render_summary_json,
+    AnalysisSummary, MAX_CODEX_PAYLOAD_BYTES, MAX_SESSIONS_PER_LOG, MAX_SNAPSHOT_BYTES,
+    analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot, parse_keymap_snapshot,
+    reconstruct_keymap_snapshot, render_codex_payload_json, render_codex_payload_json_from_summary,
+    render_codex_suggestions_markdown, render_markdown, render_summary_json,
+    validate_codex_suggestions_json_for_summary,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +45,12 @@ fn main() -> ExitCode {
 
 fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     let command = arguments.first().and_then(|value| value.to_str());
+    if command == Some("preview") {
+        return run_preview(arguments);
+    }
+    if command == Some("suggestions") {
+        return run_suggestions(arguments);
+    }
     if command != Some("analyze") {
         return Err(usage());
     }
@@ -104,11 +113,19 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     };
     let keymap_snapshot = match keymap_snapshot_path {
         Some(path) if path == Path::new("-") => Some(SnapshotInput {
-            bytes: read_snapshot(std::io::stdin().lock())?,
+            bytes: read_bounded(
+                std::io::stdin().lock(),
+                MAX_SNAPSHOT_BYTES,
+                "keymap snapshot",
+            )?,
             identity: None,
             path: None,
         }),
-        Some(path) => Some(open_snapshot_input(&path)?),
+        Some(path) => Some(open_private_input(
+            &path,
+            MAX_SNAPSHOT_BYTES,
+            "keymap snapshot",
+        )?),
         None => None,
     };
     let paths = resolve_paths_for_inputs(inputs, &summary_path, &report_path)?;
@@ -144,28 +161,199 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
     Ok(())
 }
 
+fn run_preview(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    let summary_path = arguments
+        .get(1)
+        .ok_or_else(|| "usage: key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]".to_owned())?;
+    if summary_path == OsStr::new("-") || summary_path.to_str().is_none() {
+        return Err("preview requires a private summary path".to_owned());
+    }
+    let mut keymap_snapshot_path = None;
+    let mut output_path = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        let flag = arguments[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_owned())?;
+        let value = arguments
+            .get(index + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--keymap-snapshot" if keymap_snapshot_path.is_none() => {
+                keymap_snapshot_path = Some(PathBuf::from(value));
+            }
+            "--output" if output_path.is_none() => output_path = Some(value.clone()),
+            "--keymap-snapshot" | "--output" => return Err(format!("duplicate option {flag}")),
+            _ => return Err(format!("unknown option {flag}")),
+        }
+        index += 2;
+    }
+
+    let summary_input = open_private_input(Path::new(summary_path), MAX_SUMMARY_BYTES, "summary")?;
+    let summary: AnalysisSummary = serde_json::from_slice(&summary_input.bytes)
+        .map_err(|_| "failed to parse sanitized summary".to_owned())?;
+    let keymap_snapshot = match keymap_snapshot_path {
+        Some(path) if path == Path::new("-") => Some(SnapshotInput {
+            bytes: read_bounded(
+                std::io::stdin().lock(),
+                MAX_SNAPSHOT_BYTES,
+                "keymap snapshot",
+            )?,
+            identity: None,
+            path: None,
+        }),
+        Some(path) => Some(open_private_input(
+            &path,
+            MAX_SNAPSHOT_BYTES,
+            "keymap snapshot",
+        )?),
+        None => None,
+    };
+    let payload = match keymap_snapshot.as_ref() {
+        Some(input) => {
+            let snapshot = parse_keymap_snapshot(input.bytes.as_slice())
+                .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
+            render_codex_payload_json(&summary, Some(&snapshot))
+        }
+        None => render_codex_payload_json_from_summary(&summary),
+    }
+    .map_err(|error| format!("failed to render Codex preview: {error}"))?;
+    let output_path = output_path.unwrap_or_else(|| OsString::from("-"));
+    if output_path == OsStr::new("-") {
+        std::io::stdout()
+            .lock()
+            .write_all(payload.as_bytes())
+            .map_err(|error| format!("failed to write Codex preview: {error}"))?;
+        return Ok(());
+    }
+
+    let output = resolve_output_path(Path::new(&output_path))?;
+    if summary_input
+        .path
+        .as_ref()
+        .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+        || keymap_snapshot.as_ref().is_some_and(|input| {
+            input
+                .path
+                .as_ref()
+                .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+        })
+    {
+        return Err("preview output must not overwrite an input artifact".to_owned());
+    }
+    StagedOutput::create(&output, payload.as_bytes())?.publish()
+}
+
+fn run_suggestions(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    let summary_path = arguments.get(1).ok_or_else(|| {
+        "usage: key-insights suggestions <summary.json> [--input <suggestions.json|->] [--output <report.md|->]"
+            .to_owned()
+    })?;
+    if summary_path == OsStr::new("-") || summary_path.to_str().is_none() {
+        return Err("suggestions requires a private summary path".to_owned());
+    }
+    let mut input_path = None;
+    let mut output_path = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        let flag = arguments[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_owned())?;
+        let value = arguments
+            .get(index + 1)
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag {
+            "--input" if input_path.is_none() => input_path = Some(PathBuf::from(value)),
+            "--output" if output_path.is_none() => output_path = Some(value.clone()),
+            "--input" | "--output" => return Err(format!("duplicate option {flag}")),
+            _ => return Err(format!("unknown option {flag}")),
+        }
+        index += 2;
+    }
+
+    let summary_input = open_private_input(Path::new(summary_path), MAX_SUMMARY_BYTES, "summary")?;
+    let summary: AnalysisSummary = serde_json::from_slice(&summary_input.bytes)
+        .map_err(|_| "failed to parse sanitized summary".to_owned())?;
+    let suggestions_input = match input_path {
+        Some(path) if path == Path::new("-") => SnapshotInput {
+            bytes: read_bounded(
+                std::io::stdin().lock(),
+                MAX_CODEX_PAYLOAD_BYTES,
+                "Codex suggestions",
+            )?,
+            identity: None,
+            path: None,
+        },
+        Some(path) => open_private_input(&path, MAX_CODEX_PAYLOAD_BYTES, "Codex suggestions")?,
+        None => SnapshotInput {
+            bytes: read_bounded(
+                std::io::stdin().lock(),
+                MAX_CODEX_PAYLOAD_BYTES,
+                "Codex suggestions",
+            )?,
+            identity: None,
+            path: None,
+        },
+    };
+    let snapshot = reconstruct_keymap_snapshot(&summary)
+        .map_err(|error| format!("failed to reconstruct keymap snapshot: {error}"))?;
+    let document = validate_codex_suggestions_json_for_summary(
+        &suggestions_input.bytes,
+        &summary,
+        snapshot.as_ref(),
+    )
+    .map_err(|error| format!("failed to validate Codex suggestions: {error}"))?;
+    let markdown = render_codex_suggestions_markdown(&document)
+        .map_err(|error| format!("failed to render Codex suggestions: {error}"))?;
+    let output_path = output_path.unwrap_or_else(|| OsString::from("-"));
+    if output_path == OsStr::new("-") {
+        std::io::stdout()
+            .lock()
+            .write_all(markdown.as_bytes())
+            .map_err(|error| format!("failed to write Codex suggestions: {error}"))?;
+        return Ok(());
+    }
+    let output = resolve_output_path(Path::new(&output_path))?;
+    if summary_input
+        .path
+        .as_ref()
+        .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+        || suggestions_input
+            .path
+            .as_ref()
+            .is_some_and(|path| output.path == *path || same_file(&output.path, path))
+    {
+        return Err("suggestion output must not overwrite an input artifact".to_owned());
+    }
+    StagedOutput::create(&output, markdown.as_bytes())?.publish()
+}
+
 #[cfg(unix)]
-fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
+fn open_private_input(
+    path: &Path,
+    maximum: usize,
+    artifact: &'static str,
+) -> Result<SnapshotInput, String> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|_| "failed to open keymap snapshot".to_owned())?;
+        .map_err(|_| format!("failed to open {artifact}"))?;
     let metadata = file
         .metadata()
-        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+        .map_err(|_| format!("failed to inspect {artifact}"))?;
     let permissions = metadata.mode() & 0o7777;
     let private_mode = permissions == 0o400 || permissions == 0o600;
     // SAFETY: geteuid has no preconditions and does not mutate memory.
     let owned = metadata.uid() == unsafe { libc::geteuid() };
     if !metadata.is_file() || metadata.nlink() != 1 || !private_mode || !owned {
-        return Err("keymap snapshot permissions are unsafe".to_owned());
+        return Err(format!("{artifact} permissions are unsafe"));
     }
     let identity = (metadata.dev(), metadata.ino());
     Ok(SnapshotInput {
-        bytes: read_snapshot(file)?,
+        bytes: read_bounded(file, maximum, artifact)?,
         identity: Some(identity),
         path: Some(
             fs::canonicalize(path).map_err(|_| "failed to resolve keymap snapshot".to_owned())?,
@@ -174,16 +362,20 @@ fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
 }
 
 #[cfg(not(unix))]
-fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
-    let file = File::open(path).map_err(|_| "failed to open keymap snapshot".to_owned())?;
+fn open_private_input(
+    path: &Path,
+    maximum: usize,
+    artifact: &'static str,
+) -> Result<SnapshotInput, String> {
+    let file = File::open(path).map_err(|_| format!("failed to open {artifact}"))?;
     let metadata = file
         .metadata()
-        .map_err(|_| "failed to inspect keymap snapshot".to_owned())?;
+        .map_err(|_| format!("failed to inspect {artifact}"))?;
     if !metadata.is_file() {
-        return Err("keymap snapshot is not a regular file".to_owned());
+        return Err(format!("{artifact} is not a regular file"));
     }
     Ok(SnapshotInput {
-        bytes: read_snapshot(file)?,
+        bytes: read_bounded(file, maximum, artifact)?,
         path: Some(path.to_owned()),
         identity: Some(
             fs::canonicalize(path).map_err(|_| "failed to resolve keymap snapshot".to_owned())?,
@@ -191,16 +383,20 @@ fn open_snapshot_input(path: &Path) -> Result<SnapshotInput, String> {
     })
 }
 
-const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+const MAX_SUMMARY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_snapshot<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
+fn read_bounded<R: Read>(
+    mut reader: R,
+    maximum: usize,
+    artifact: &'static str,
+) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     Read::by_ref(&mut reader)
-        .take((MAX_SNAPSHOT_BYTES + 1) as u64)
+        .take((maximum + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| "failed to read keymap snapshot".to_owned())?;
-    if bytes.len() > MAX_SNAPSHOT_BYTES {
-        return Err("keymap snapshot exceeds the size limit".to_owned());
+        .map_err(|_| format!("failed to read {artifact}"))?;
+    if bytes.len() > maximum {
+        return Err(format!("{artifact} exceeds the size limit"));
     }
     Ok(bytes)
 }
@@ -494,7 +690,7 @@ fn resolve_output_path(path: &Path) -> Result<ResolvedOutputPath, String> {
 }
 
 fn usage() -> String {
-    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json|->]".to_owned()
+    "usage: key-insights analyze (<input.jsonl>... | --session-dir <directory>) --summary <summary.json> --report <report.md> [--keymap-snapshot <snapshot.json|->]; key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]; key-insights suggestions <summary.json> [--input <suggestions.json|->] [--output <report.md|->]".to_owned()
 }
 
 #[cfg(all(test, unix))]

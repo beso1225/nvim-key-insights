@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::BTreeMap, fmt::Write, io::BufRead};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
@@ -95,7 +95,8 @@ impl std::error::Error for AnalysisInputsError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AnalysisSummary {
     pub schema_version: u32,
     pub ranking_limit: usize,
@@ -122,33 +123,38 @@ pub struct AnalysisSummary {
     pub mapping_attribution: Option<MappingAttribution>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModeStats {
     pub mode: String,
     pub sequences: u64,
     pub keys: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeyCount {
     pub key: String,
     pub count: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingCount {
     pub mapping_id: String,
     pub count: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingAttribution {
     pub snapshot_version: u32,
     pub mappings: Vec<MappingAttributionEntry>,
     pub collisions: Vec<MappingCollision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingAttributionEntry {
     pub mapping_id: String,
     pub status: MappingAttributionStatus,
@@ -159,11 +165,11 @@ pub struct MappingAttributionEntry {
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lhs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collision_mapping_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MappingAttributionStatus {
     Observed,
@@ -171,7 +177,8 @@ pub enum MappingAttributionStatus {
     UnobservedInSample,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MappingCollision {
     pub kind: String,
     pub mode: String,
@@ -180,7 +187,8 @@ pub struct MappingCollision {
     pub buffer_mapping_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepeatedKeyStats {
     pub key: String,
     pub runs: u64,

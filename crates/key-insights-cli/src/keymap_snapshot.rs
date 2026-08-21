@@ -7,6 +7,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::analyzer::{AnalysisSummary, MappingAttributionStatus};
+
 pub const SNAPSHOT_VERSION: u32 = 1;
 pub const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
 pub const MAX_SNAPSHOT_MAPPINGS: usize = 4096;
@@ -128,6 +130,56 @@ pub fn parse_keymap_snapshot<R: Read>(reader: R) -> Result<KeymapSnapshot, Snaps
     })
 }
 
+/// Reconstruct the exact sanitized report-time snapshot retained in mapping
+/// attribution. This supports previewing an existing report after Neovim has
+/// restarted without sampling a different current keymap.
+pub fn reconstruct_keymap_snapshot(
+    summary: &AnalysisSummary,
+) -> Result<Option<KeymapSnapshot>, SnapshotError> {
+    let Some(attribution) = &summary.mapping_attribution else {
+        return Ok(None);
+    };
+    let mut mappings = Vec::new();
+    for entry in &attribution.mappings {
+        if entry.status == MappingAttributionStatus::ObservedNotInSnapshot {
+            continue;
+        }
+        let mode = match entry.mode.as_deref() {
+            Some("normal") => SnapshotMode::Normal,
+            Some("operator_pending") => SnapshotMode::OperatorPending,
+            Some("visual") => SnapshotMode::Visual,
+            _ => return Err(SnapshotError("mapping attribution has an invalid mode")),
+        };
+        let scope = match entry.scope.as_deref() {
+            Some("buffer") => SnapshotScope::Buffer,
+            Some("global") => SnapshotScope::Global,
+            _ => return Err(SnapshotError("mapping attribution has an invalid scope")),
+        };
+        let Some(lhs) = &entry.lhs else {
+            return Err(SnapshotError("mapping attribution has no mapping LHS"));
+        };
+        mappings.push(SnapshotMapping {
+            mapping_id: entry.mapping_id.clone(),
+            mode,
+            scope,
+            lhs: lhs.clone(),
+        });
+    }
+    mappings.sort_by(mapping_order);
+    let by_id = mappings
+        .iter()
+        .enumerate()
+        .map(|(index, mapping)| (mapping.mapping_id.clone(), index))
+        .collect();
+    let snapshot = KeymapSnapshot {
+        snapshot_version: attribution.snapshot_version,
+        mappings,
+        by_id,
+    };
+    validate_snapshot(&snapshot)?;
+    Ok(Some(snapshot))
+}
+
 fn validate_mapping(mapping: &SnapshotMapping) -> Result<(), SnapshotError> {
     if mapping.lhs.is_empty() || mapping.lhs.len() > MAX_LHS_TOKENS {
         return Err(SnapshotError(
@@ -163,6 +215,36 @@ fn validate_mapping(mapping: &SnapshotMapping) -> Result<(), SnapshotError> {
     Ok(())
 }
 
+pub(crate) fn validate_snapshot(snapshot: &KeymapSnapshot) -> Result<(), SnapshotError> {
+    if snapshot.snapshot_version != SNAPSHOT_VERSION {
+        return Err(SnapshotError("unsupported keymap snapshot version"));
+    }
+    if snapshot.mappings.len() > MAX_SNAPSHOT_MAPPINGS {
+        return Err(SnapshotError("keymap snapshot exceeds the mapping limit"));
+    }
+    let mut tuples = BTreeSet::new();
+    let mut mapping_ids = BTreeSet::new();
+    let mut previous: Option<&SnapshotMapping> = None;
+    for mapping in &snapshot.mappings {
+        validate_mapping(mapping)?;
+        if previous.is_some_and(|prior| mapping_order(prior, mapping).is_ge()) {
+            return Err(SnapshotError("keymap snapshot mappings are not canonical"));
+        }
+        previous = Some(mapping);
+        if !mapping_ids.insert(mapping.mapping_id.clone()) {
+            return Err(SnapshotError(
+                "keymap snapshot contains a duplicate mapping ID",
+            ));
+        }
+        if !tuples.insert((mapping.mode, mapping.scope, mapping.lhs.clone())) {
+            return Err(SnapshotError(
+                "keymap snapshot contains a duplicate mapping tuple",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn tokenize_canonical(canonical: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -186,6 +268,15 @@ fn tokenize_canonical(canonical: &str) -> Vec<String> {
         index = end;
     }
     tokens
+}
+
+pub(crate) fn is_canonical_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= MAX_TOKEN_BYTES
+        && !token
+            .chars()
+            .any(|character| character <= '\u{1f}' || character == '\u{7f}')
+        && tokenize_canonical(token) == [token.to_owned()]
 }
 
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {

@@ -20,7 +20,101 @@ end)
 vim.system = original_system
 assert(vim.deep_equal(system_argv, { "tool with spaces", "arg;$" }))
 assert(system_options.text == true)
+assert(system_options.detach == true, "subprocesses must run in a dedicated process group")
+assert(type(system_options.stdout) == "function")
+assert(type(system_options.stderr) == "function")
 assert(system_result.code == 0)
+
+local group_kills = {}
+local group_callback = nil
+local group_system = vim.system
+local original_uv_kill = vim.uv.kill
+vim.uv.kill = function(pid, signal)
+  table.insert(group_kills, { pid = pid, signal = signal })
+  return 0
+end
+vim.system = function(_, options, callback)
+  assert(options.detach == true)
+  group_callback = callback
+  return { pid = 73, kill = function() error("direct kill must not be used on Unix") end }
+end
+local group_job = process.run({ "grouped" }, function() end, nil, { timeout_ms = math.huge })
+group_job:kill(9)
+assert(vim.deep_equal(group_kills, { { pid = -73, signal = 9 } }), "the entire process group must be killed")
+group_callback({ code = 1, signal = 9 })
+vim.wait(1000)
+vim.system = group_system
+vim.uv.kill = original_uv_kill
+
+if process.supports_process_groups() then
+  local descendant_marker = vim.fn.tempname()
+  local descendant_result = nil
+  process.run({
+    "/bin/sh",
+    "-c",
+    "(trap '' TERM; sleep 1; printf leaked > \"$1\") </dev/null >/dev/null 2>/dev/null & exit 0",
+    "holder",
+    descendant_marker,
+  }, function(result)
+    descendant_result = result
+  end, nil, { timeout_ms = 2000 })
+  assert(vim.wait(1000, function()
+    return descendant_result ~= nil
+  end), "the direct child must complete promptly")
+  vim.wait(1250)
+  assert(vim.uv.fs_stat(descendant_marker) == nil, "successful direct exit must terminate descendants")
+end
+
+local bounded_result = nil
+local bounded_system = vim.system
+vim.system = function(_, options, callback)
+  options.stdout(nil, string.rep("o", 1024 * 1024))
+  options.stderr(nil, string.rep("e", 1024 * 1024))
+  callback({ code = 0 })
+  return { pid = 9 }
+end
+process.run({ "bounded" }, function(result)
+  bounded_result = result
+end)
+vim.wait(1000, function()
+  return bounded_result ~= nil
+end)
+vim.system = bounded_system
+assert(#bounded_result.stdout == 256 * 1024 + 1, "stdout capture must be bounded")
+assert(#bounded_result.stderr == 8 * 1024, "stderr capture must be bounded")
+
+local expanded_result = nil
+vim.system = function(_, options, callback)
+  options.stdout(nil, string.rep("m", 512 * 1024))
+  callback({ code = 0 })
+  return { pid = 10 }
+end
+process.run({ "expanded" }, function(result)
+  expanded_result = result
+end, nil, { max_stdout_bytes = 1024 * 1024 + 1 })
+vim.wait(1000, function()
+  return expanded_result ~= nil
+end)
+vim.system = bounded_system
+assert(#expanded_result.stdout == 512 * 1024, "renderer capture must use its separate bounded limit")
+
+local timeout_result = nil
+local timeout_system = vim.system
+vim.system = function(_, _, callback)
+  return {
+    kill = function(_, signal)
+      callback({ code = 1, signal = signal })
+    end,
+  }
+end
+process.run({ "hung" }, function(result)
+  timeout_result = result
+end, nil, { timeout_ms = 10 })
+assert(vim.wait(1000, function()
+  return timeout_result ~= nil
+end), "process watchdog must terminate a hung subprocess")
+assert(timeout_result.signal == 9)
+vim.system = timeout_system
 
 local notifications = {}
 local invocations = {}
@@ -120,7 +214,8 @@ outputs_valid = true
 assert(instance:start() == true)
 pending_callback({ code = 2, signal = 0, stdout = "", stderr = "invalid session\n" })
 assert(#opened == 1, "failed analysis must preserve the current editor view")
-assert(string.find(notifications[#notifications].message, "invalid session", 1, true) ~= nil)
+assert(string.find(notifications[#notifications].message, "invalid session", 1, true) == nil)
+assert(string.find(notifications[#notifications].message, "report failed", 1, true) ~= nil)
 
 assert(instance:start() == true)
 pending_callback({ code = 2, signal = 0, stdout = "", stderr = "\27[31munsafe\0message\n" })
@@ -199,7 +294,7 @@ local shutdown_report = report.new({
     shutdown_callback = callback
     return {
       kill = function(_, signal)
-        assert(signal == 15)
+        assert(signal == 9)
         shutdown_kills = shutdown_kills + 1
       end,
     }
@@ -211,6 +306,643 @@ assert(shutdown_report:status().running == false)
 assert(shutdown_kills == 1)
 shutdown_callback({ code = 0, signal = 0, stdout = "", stderr = "" })
 assert(shutdown_report:status().running == false, "a late process callback must stay ignored")
+
+local preview_notifications = {}
+local preview_invocation = nil
+local preview_stdin = nil
+local preview_callback = nil
+local shown_preview = nil
+local valid_preview = vim.json.encode({
+  payload_schema_version = 1,
+  purpose = "analyze-neovim-usage",
+  instructions = {
+    action_kinds = { "learn_existing", "add_mapping", "change_mapping", "no_change" },
+    evidence_required = true,
+    collision_check_required = true,
+    privacy_boundary = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input.",
+  },
+  summary = {
+    schema_version = 3,
+    ranking_limit = 100,
+    sessions = 1,
+    events = 1,
+    total_session_duration_ms = 1,
+    key_sequences = 0,
+    sequence_keys = 0,
+    text_runs = 0,
+    text_keys = 0,
+    mode_transitions = 0,
+    mapping_uses = 0,
+    repeated_key_runs = 0,
+    repeated_key_presses = 0,
+    unique_keys = 1,
+    unique_mappings = 0,
+    unique_repeated_keys = 0,
+    modes = {},
+    keys = { { key = "/", count = 1 } },
+    mappings = {},
+    repeated_keys = {},
+    ergonomics = {
+      contract_version = 1,
+      candidate_limit = 100,
+      thresholds = {
+        minimum_candidate_sessions = 3,
+        minimum_candidate_sequence_keys = 100,
+        minimum_candidate_observations = 3,
+      },
+      distributions = {
+        histogram_version = 1,
+        session_duration_ms = {
+          { bucket = "0-1s", count = 0 },
+          { bucket = "1-10s", count = 0 },
+          { bucket = "10-60s", count = 0 },
+          { bucket = "1-5m", count = 0 },
+          { bucket = "over-5m", count = 0 },
+        },
+        sequence_length_keys = {
+          { bucket = "1", count = 0 },
+          { bucket = "2", count = 0 },
+          { bucket = "3-4", count = 0 },
+          { bucket = "5-8", count = 0 },
+          { bucket = "9-16", count = 0 },
+          { bucket = "17-32", count = 0 },
+          { bucket = "33-plus", count = 0 },
+        },
+        average_inter_key_latency_ms = {
+          { bucket = "0-50ms", count = 0 },
+          { bucket = "50-100ms", count = 0 },
+          { bucket = "100-250ms", count = 0 },
+          { bucket = "250-500ms", count = 0 },
+          { bucket = "over-500ms", count = 0 },
+        },
+      },
+      operations = { token_set_version = 1, undo = 0, redo = 0, ["repeat"] = 0, search_start = 0, search_navigation = 0 },
+      count_prefixes = { token_set_version = 1, occurrences = 0, digit_presses = 0 },
+      mode_transitions = {},
+      repeated_motions = { token_set_version = 1, items = {} },
+      mapping_coverage = { total_snapshot_mappings = 0, observed_mappings = 0, unobserved_mappings = 0 },
+      candidates = {},
+    },
+  },
+})
+local default_openers = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/default-openers",
+  session_directory = "/state/sessions",
+}, { notify = function() end })
+default_openers:_complete_preview({ code = 0, signal = 0, stdout = valid_preview, stderr = "" }, 0)
+assert(vim.bo.filetype == "json", "the sanitized payload must open as JSON")
+vim.api.nvim_buf_delete(0, { force = true })
+default_openers._phase = "rendering_suggestions"
+default_openers:_complete_suggestion_render({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\nNo suggestions were returned.\n",
+  stderr = "",
+}, 0)
+assert(vim.bo.filetype == "markdown", "deterministic suggestions must open as Markdown")
+vim.api.nvim_buf_delete(0, { force = true })
+local expanded_markdown_opened = false
+local expanded_openers = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/expanded-openers",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  open_suggestions = function(contents)
+    expanded_markdown_opened = #contents > 256 * 1024
+  end,
+})
+expanded_openers._phase = "rendering_suggestions"
+expanded_openers:_complete_suggestion_render({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\n" .. string.rep("*", 300 * 1024),
+  stderr = "",
+}, 0)
+assert(expanded_markdown_opened, "expanded valid Markdown must use its separate output bound")
+local unsupported_notification = nil
+local unsupported_codex = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/unsupported-codex-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    unsupported_notification = message
+  end,
+  supports_process_groups = function()
+    return false
+  end,
+  prepare_codex_directory = function()
+    error("unsupported platforms must fail before preparing Codex")
+  end,
+  run_codex = function()
+    error("unsupported platforms must never launch Codex")
+  end,
+})
+assert(unsupported_codex:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+assert(string.find(unsupported_notification, "requires Unix process-group isolation", 1, true) ~= nil)
+
+local preview = report.new({
+  analyzer = "/tools/key insights;$analyzer",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    error("a fresh preview must reconstruct an attributed report snapshot from summary.json")
+  end,
+  open_preview = function(payload)
+    shown_preview = payload
+  end,
+  run = function(argv, callback, stdin)
+    preview_invocation = vim.deepcopy(argv)
+    preview_callback = callback
+    preview_stdin = stdin
+    return { pid = 43 }
+  end,
+})
+assert(preview:preview() == true)
+assert(vim.deep_equal(preview_invocation, {
+  "/tools/key insights;$analyzer",
+  "preview",
+  "/state/preview-reports/summary.json",
+  "--output",
+  "-",
+}))
+assert(preview_stdin == nil)
+assert(shown_preview == nil, "preview must wait for analyzer output")
+preview_callback({
+  code = 0,
+  signal = 0,
+  stdout = valid_preview,
+  stderr = "",
+})
+assert(shown_preview == valid_preview)
+assert(preview:status().running == false)
+
+local reuse_snapshot_collections = 0
+local reconstruction_callbacks = {}
+local reconstruction_stdin = {}
+local reconstruction_argv = {}
+local snapshot_reconstruction = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/reused-snapshot-reports",
+  session_directory = "/state/sessions",
+}, {
+  protect_directory = function()
+    return true
+  end,
+  mkdir = function()
+    return 1
+  end,
+  notify = function() end,
+  open_file = function() end,
+  collect_snapshot_payload = function()
+    reuse_snapshot_collections = reuse_snapshot_collections + 1
+    return string.format('{"snapshot_version":1,"mappings":[],"marker":%d}', reuse_snapshot_collections)
+  end,
+  run = function(argv, callback, stdin)
+    table.insert(reconstruction_argv, vim.deepcopy(argv))
+    table.insert(reconstruction_callbacks, callback)
+    table.insert(reconstruction_stdin, stdin)
+    return { pid = 49, kill = function() end }
+  end,
+  validate_outputs = function()
+    return true
+  end,
+})
+assert(snapshot_reconstruction:start() == true)
+reconstruction_callbacks[1]({ code = 0, signal = 0, stdout = "", stderr = "" })
+assert(snapshot_reconstruction:preview() == true)
+assert(reuse_snapshot_collections == 1, "preview must not resample the current keymap")
+assert(reconstruction_stdin[1] ~= nil and reconstruction_stdin[2] == nil)
+assert(vim.tbl_contains(reconstruction_argv[2], "--keymap-snapshot") == false)
+assert(snapshot_reconstruction:shutdown() == true)
+
+local analysis_preview_callback = nil
+local analysis_codex_callback = nil
+local analysis_render_callback = nil
+local analysis_render_stdin = nil
+local analysis_render_options = nil
+local analysis_confirm_callback = nil
+local analysis_invocations = {}
+local analysis_opened = {}
+local analysis_markdown_opened = false
+local analysis = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/analyze-reports",
+  session_directory = "/state/sessions",
+  codex = {
+    binary = "/tools/codex;$",
+    output_schema = "/state/schema.json",
+    working_directory = "/state/empty-codex-workspace",
+  },
+}, {
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function(payload)
+    table.insert(analysis_opened, payload)
+  end,
+  open_suggestions = function(payload)
+    analysis_markdown_opened = true
+    table.insert(analysis_opened, payload)
+  end,
+  confirm = function(callback)
+    analysis_confirm_callback = callback
+  end,
+  prepare_codex_directory = function(path)
+    assert(path == "/state/empty-codex-workspace")
+    return true
+  end,
+  run = function(argv, callback)
+    table.insert(analysis_invocations, vim.deepcopy(argv))
+    analysis_preview_callback = callback
+    return { pid = 50, kill = function() end }
+  end,
+  run_codex = function(argv, callback, stdin)
+    table.insert(analysis_invocations, vim.deepcopy(argv))
+    assert(stdin == shown_preview)
+    analysis_codex_callback = callback
+    return { pid = 51, kill = function() end }
+  end,
+  run_suggestions = function(argv, callback, stdin, options)
+    assert(vim.deep_equal(argv, {
+      "key-insights",
+      "suggestions",
+      "/state/analyze-reports/summary.json",
+      "--input",
+      "-",
+      "--output",
+      "-",
+    }))
+    analysis_render_callback = callback
+    analysis_render_stdin = stdin
+    analysis_render_options = options
+    return { pid = 52, kill = function() end }
+  end,
+})
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+assert(analysis:status().phase == "awaiting_confirmation")
+assert(#analysis_invocations == 1, "Codex must wait for explicit confirmation")
+assert(analysis:preview() == false, "a pending confirmation must block another preview")
+assert(analysis:start() == false, "a pending confirmation must block report generation")
+analysis_confirm_callback(false)
+assert(analysis:status().running == false)
+assert(#analysis_invocations == 1, "cancelled analysis must not launch Codex")
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+assert(analysis:status().phase == "codex")
+assert(vim.deep_equal(analysis_invocations[3], {
+  "/tools/codex;$",
+  "exec",
+  "--ephemeral",
+  "--ignore-user-config",
+  "--ignore-rules",
+  "--strict-config",
+  "--skip-git-repo-check",
+  "--cd",
+  "/state/empty-codex-workspace",
+  "--config",
+  'shell_environment_policy.inherit="none"',
+  "--config",
+  'approval_policy="never"',
+  "--config",
+  'default_permissions="key-insights-payload-only"',
+  "--config",
+  'permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}',
+  "--config",
+  "permissions.key-insights-payload-only.network.enabled=false",
+  "--output-schema",
+  "/state/schema.json",
+}))
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use / to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().phase == "rendering_suggestions")
+assert(string.find(analysis_render_stdin, '"schema_version":1', 1, true) ~= nil)
+assert(analysis_render_options.max_stdout_bytes == 1024 * 1024 + 1)
+analysis_render_callback({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\n## 1. Use the existing motion\n",
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 3, "preview and Codex output must be shown")
+assert(analysis_markdown_opened == true)
+assert(string.sub(analysis_opened[3], 1, 19) == "# Codex suggestions")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+assert(analysis:status().phase == "awaiting_confirmation")
+assert(analysis:shutdown() == true, "shutdown must cancel a pending confirmation")
+analysis_confirm_callback(true)
+assert(#analysis_invocations == 4, "stale confirmation must not launch Codex")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use the existing motion","rationale":"The measured motion is already available.","evidence":[{"metric":"sessions","value":999}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 5, "invalid Codex output must not be opened")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Review src/config.lua","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 6, "path-shaped Codex output must not be opened")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"schema_\\u0076ersion":1,"suggestions":[]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 7, "duplicate JSON keys must be rejected before opening Codex output")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().phase == "rendering_suggestions")
+analysis_render_callback({ code = 1, signal = 0, stdout = "raw model response", stderr = "/secret" })
+assert(analysis:status().running == false)
+assert(#analysis_opened == 8, "renderer failure must not open raw or partial output")
+
+local global_gg = "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71"
+local prefix_preview_table = vim.json.decode(valid_preview)
+prefix_preview_table.keymap_snapshot = {
+  snapshot_version = 1,
+  mappings = { { mapping_id = global_gg, mode = "normal", scope = "global", lhs = { "g", "g" } } },
+}
+prefix_preview_table.summary.ergonomics.mapping_coverage = {
+  snapshot_version = 1,
+  total_snapshot_mappings = 1,
+  observed_mappings = 0,
+  unobserved_mappings = 1,
+}
+prefix_preview_table.summary.mapping_attribution = {
+  snapshot_version = 1,
+  mappings = {
+    {
+      mapping_id = global_gg,
+      status = "unobserved_in_sample",
+      count = 0,
+      mode = "normal",
+      scope = "global",
+      lhs = { "g", "g" },
+    },
+  },
+  collisions = {},
+}
+local prefix_preview = vim.json.encode(prefix_preview_table)
+local function run_prefix_case(conflicting_mapping_ids, should_render, proposal_lhs, preview_payload)
+  local opened_outputs = {}
+  local rendered = false
+  local notifications = {}
+  local prefix_case = report.new({
+    analyzer = "key-insights",
+    output_directory = "/state/prefix-reports",
+    session_directory = "/state/sessions",
+  }, {
+    notify = function(message)
+      table.insert(notifications, message)
+    end,
+    open_preview = function(contents)
+      table.insert(opened_outputs, contents)
+    end,
+    confirm = function(callback)
+      callback(true)
+    end,
+    prepare_codex_directory = function()
+      return true
+    end,
+    run = function(_, callback)
+      callback({ code = 0, signal = 0, stdout = preview_payload or prefix_preview, stderr = "" })
+      return { pid = 60 }
+    end,
+    run_codex = function(_, callback)
+      callback({
+        code = 0,
+        signal = 0,
+        stdout = vim.json.encode({
+          schema_version = 1,
+          suggestions = {
+            {
+              action = "add_mapping",
+              title = "Add a shorter mapping",
+              rationale = "The measured sample supports considering the shorter prefix.",
+              mapping = { mode = "normal", scope = "global", lhs = proposal_lhs or { "g" } },
+              evidence = { { metric = "sessions", value = 1 } },
+              collision_check = { checked = true, conflicting_mapping_ids = conflicting_mapping_ids },
+            },
+          },
+        }),
+        stderr = "",
+      })
+      return { pid = 61 }
+    end,
+    run_suggestions = function(_, callback)
+      rendered = true
+      callback({ code = 0, signal = 0, stdout = "# Codex suggestions\n\n", stderr = "" })
+      return { pid = 62 }
+    end,
+  })
+  assert(prefix_case:analyze() == true)
+  assert(rendered == should_render)
+  return opened_outputs, notifications
+end
+
+local prefix_blind_outputs, prefix_blind_notifications = run_prefix_case({}, false)
+assert(#prefix_blind_outputs == 1, "a prefix-blind proposal must not be rendered")
+local prefix_omission_reported = false
+for _, message in ipairs(prefix_blind_notifications) do
+  prefix_omission_reported = prefix_omission_reported or string.find(message, "omitted", 1, true) ~= nil
+end
+assert(prefix_omission_reported)
+local prefix_checked_outputs = run_prefix_case({ global_gg }, true)
+assert(#prefix_checked_outputs == 2)
+assert(prefix_checked_outputs[2] == "# Codex suggestions\n\n")
+
+local global_g = "mapping-v1:494845698ff45708f6996ca041b292cbe37a38c30e46af662058ec44d0ba2e67"
+local shorter_preview_table = vim.deepcopy(prefix_preview_table)
+shorter_preview_table.keymap_snapshot.mappings[1].mapping_id = global_g
+shorter_preview_table.keymap_snapshot.mappings[1].lhs = { "g" }
+shorter_preview_table.summary.mapping_attribution.mappings[1].mapping_id = global_g
+shorter_preview_table.summary.mapping_attribution.mappings[1].lhs = { "g" }
+local shorter_preview = vim.json.encode(shorter_preview_table)
+local reverse_prefix_outputs = run_prefix_case({ global_g }, true, { "g", "g" }, shorter_preview)
+assert(#reverse_prefix_outputs == 2, "a longer proposal must report the existing shorter mapping")
+
+local forged_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function()
+    error("forged preview must not be opened")
+  end,
+  run = function(_, callback)
+    local forged = vim.json.decode(valid_preview)
+    forged.summary.path = "/Users/secret"
+    callback({
+      code = 0,
+      signal = 0,
+      stdout = vim.json.encode(forged),
+      stderr = "",
+    })
+    return { pid = 45 }
+  end,
+})
+assert(forged_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "forbidden field", 1, true) ~= nil)
+
+local nested_forged_key = "<file:///home/alice/project>"
+local nested_extra_field = false
+local nested_forged_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function()
+    error("nested forged preview must not be opened")
+  end,
+  run = function(_, callback)
+    local forged = vim.json.decode(valid_preview)
+    forged.summary.keys = { { key = nested_forged_key, count = 1 } }
+    if nested_extra_field then
+      forged.summary.keys[1].mode = "normal"
+    end
+    callback({
+      code = 0,
+      signal = 0,
+      stdout = vim.json.encode(forged),
+      stderr = "",
+    })
+    return { pid = 46 }
+  end,
+})
+assert(nested_forged_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil)
+nested_forged_key = "hunter2"
+assert(nested_forged_preview:preview() == true)
+assert(
+  string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil,
+  "non-canonical summary tokens must be rejected before Codex"
+)
+nested_forged_key = "/"
+nested_extra_field = true
+assert(nested_forged_preview:preview() == true)
+assert(
+  string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil,
+  "known fields in the wrong nested object must be rejected"
+)
+nested_extra_field = false
+local inexact_counter_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  open_preview = function()
+    error("inexact JSON counters must not be opened")
+  end,
+  run = function(_, callback)
+    local forged = vim.json.decode(valid_preview)
+    forged.summary.sessions = 9007199254740992
+    callback({ code = 0, signal = 0, stdout = vim.json.encode(forged), stderr = "" })
+    return { pid = 46 }
+  end,
+})
+assert(inexact_counter_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "unexpected format", 1, true) ~= nil)
+
+local malformed_attribution = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  open_preview = function()
+    error("malformed attribution must not be opened")
+  end,
+  run = function(_, callback)
+    local forged = vim.json.decode(valid_preview)
+    forged.keymap_snapshot = { snapshot_version = 1, mappings = {} }
+    forged.summary.mapping_attribution = {}
+    callback({ code = 0, signal = 0, stdout = vim.json.encode(forged), stderr = "" })
+    return { pid = 47 }
+  end,
+})
+assert(malformed_attribution:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "keymap snapshot", 1, true) ~= nil)
+
+local oversized_preview = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/preview-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    table.insert(preview_notifications, message)
+  end,
+  collect_snapshot_payload = function()
+    return '{"snapshot_version":1,"mappings":[]}'
+  end,
+  run = function(_, callback)
+    callback({ code = 0, signal = 0, stdout = string.rep("x", 262145), stderr = "" })
+    return { pid = 44 }
+  end,
+})
+assert(oversized_preview:preview() == true)
+assert(string.find(preview_notifications[#preview_notifications], "preview", 1, true) ~= nil)
 
 assert(instance:open() == true)
 assert(#opened == 2)

@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suggestions"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "suggestions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "title", "rationale", "evidence", "collision_check"],
+        "properties": {
+          "action": { "enum": ["learn_existing", "add_mapping", "change_mapping", "no_change"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "rationale": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "mapping": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "scope", "lhs"],
+            "properties": {
+              "mode": { "enum": ["normal", "visual", "operator_pending"] },
+              "scope": { "enum": ["global", "buffer"] },
+              "lhs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+              },
+              "target_mapping_id": {
+                "type": "string",
+                "pattern": "^mapping-v1:[0-9a-f]{64}$"
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metric", "value"],
+              "properties": {
+                "metric": {
+                  "enum": [
+                    "sessions",
+                    "events",
+                    "total_session_duration_ms",
+                    "key_sequences",
+                    "sequence_keys",
+                    "text_runs",
+                    "text_keys",
+                    "mode_transitions",
+                    "mapping_uses",
+                    "repeated_key_runs",
+                    "repeated_key_presses",
+                    "unique_keys",
+                    "unique_mappings",
+                    "unique_repeated_keys",
+                    "observed_mappings",
+                    "unobserved_mappings",
+                    "total_snapshot_mappings",
+                    "count_prefix_occurrences",
+                    "count_prefix_digit_presses",
+                    "session_duration_ms",
+                    "sequence_length_keys",
+                    "average_inter_key_latency_ms"
+                  ]
+                },
+                "value": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "collision_check": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["checked", "conflicting_mapping_ids"],
+            "properties": {
+              "checked": { "const": true },
+              "conflicting_mapping_ids": {
+                "type": "array",
+                "maxItems": 4096,
+                "items": {
+                  "type": "string",
+                  "pattern": "^mapping-v1:[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "action": { "const": "add_mapping" } }, "required": ["action"] },
+            "then": {
+              "required": ["mapping"],
+              "properties": { "mapping": { "not": { "required": ["target_mapping_id"] } } }
+            }
+          },
+          {
+            "if": { "properties": { "action": { "const": "change_mapping" } }, "required": ["action"] },
+            "then": {
+              "required": ["mapping"],
+              "properties": { "mapping": { "required": ["target_mapping_id"] } }
+            }
+          },
+          {
+            "if": {
+              "properties": { "action": { "enum": ["learn_existing", "no_change"] } },
+              "required": ["action"]
+            },
+            "then": { "not": { "required": ["mapping"] } }
+          }
+        ]
+      }
+    }
+  }
+}

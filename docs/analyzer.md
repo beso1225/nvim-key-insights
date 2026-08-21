@@ -97,3 +97,73 @@ contain only collector-generated opaque IDs. Markdown treats event-derived
 tokens as untrusted content and escapes them before rendering.
 
 Only `summary.json`, after user preview, is intended to cross the optional Codex boundary. JSONL collector logs and `report.md` remain local by default.
+
+## Optional Codex payload preview
+
+The CLI exposes the same renderer through an explicit preview command:
+
+```sh
+key-insights preview <summary.json> [--keymap-snapshot <snapshot.json|->] [--output <payload.json|->]
+```
+
+The summary must be an owner-only regular file. A snapshot may be supplied as
+an owner-only file or through stdin (`-`); stdout is also selected with
+`--output -` and receives the exact compact JSON bytes without a trailing
+newline. File outputs are staged atomically and cannot alias either input.
+The Rust library and CLI renderer accept only an in-memory schema-v3 `AnalysisSummary`
+and an optional parsed keymap snapshot, emits compact deterministic JSON, and
+rejects unsupported summary versions or payloads larger than 256 KiB. The
+payload contains a fixed purpose, evidence and collision-check instructions,
+the summary, and—when supplied—the snapshot's version, mode, scope, canonical
+LHS, and opaque mapping IDs. It does not accept paths, JSONL, report Markdown,
+or mapping implementations, and it omits those fields from the serialized
+boundary by construction. No Codex process is launched by this renderer. The
+Neovim `:KeyInsightsAnalyze` command opens the bounded JSON in a scratch buffer
+and requests explicit confirmation; only confirmation launches the non-shell
+`codex exec` runner. Cancelling leaves the workflow local-only, and raw
+JSONL/report artifacts are never sent.
+
+## Optional Codex exec runner
+
+The library also provides a non-shell `codex exec` runner for the next explicit
+approval step. It inherits saved Codex authentication, supplies `--ephemeral`,
+ignores user configuration and rules, clears the shell environment inheritance,
+starts in an owner-only empty directory, and selects a permission profile that
+denies filesystem-root and tool-network access while retaining only Codex's
+minimal runtime reads. Approval prompts are disabled for this bounded
+non-interactive run. `--output-schema` constrains the response, and the exact
+previewed payload is written only to stdin. Input and output are bounded to
+256 KiB, stderr is not returned as a publishable result, and timeout/overflow
+termination kills the dedicated process group. The runner fails closed on
+non-Unix platforms until equivalent process-tree termination is available. It
+is wired into
+`:KeyInsightsAnalyze`; real Codex invocations remain opt-in and are not run by
+ordinary CI.
+
+Codex responses are accepted only through the structured suggestion validator.
+The validator bounds the document, rejects duplicate JSON keys and unknown
+fields, requires measured evidence and a completed collision check, and binds
+every metric value and reported mapping ID to the exact summary and keymap
+snapshot used for the request. Markdown is rendered only from that validated
+boundary; raw response text is never published as a report.
+
+The same validation-and-render boundary is exposed for local orchestration:
+
+```sh
+key-insights suggestions <summary.json> [--input <suggestions.json|->] [--output <report.md|->]
+```
+
+The command reconstructs the report-time snapshot from sanitized attribution,
+requires mapping proposals to report exact and prefix collisions in either
+direction, and emits deterministic Markdown only after contextual validation.
+`:KeyInsightsAnalyze` uses this command after Codex exits; it never opens the
+raw wire-format JSON as the user-facing result.
+
+Private input readers retain separate fail-closed bounds: 16 MiB for generated
+summaries, 1 MiB for keymap snapshots, and 256 KiB for Codex suggestions. This
+keeps large valid attributed summaries usable without broadening the AI input
+boundary.
+
+Rendered Markdown has a separate 1 MiB bound because escaping can expand a
+valid 256 KiB structured response; the Neovim process runner captures that
+output with the same explicit limit.
