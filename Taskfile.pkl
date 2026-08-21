@@ -9,6 +9,7 @@ local rustSources: Listing<String> = new {
   ...toolchainSources
   "Cargo.toml"
   "Cargo.lock"
+  "codex/suggestions.schema.json"
   "crates/**/*.rs"
   "crates/**/Cargo.toml"
 }
@@ -17,7 +18,6 @@ local luaSources: Listing<String> = new {
   ...toolchainSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
-  "docs/installation.md"
   "tests/lua/**/*.lua"
 }
 
@@ -41,6 +41,7 @@ local packagingSources: Listing<String> = new {
   ...rustSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
+  "docs/installation.md"
   "tests/packaging_contract.sh"
   "Taskfile.pkl"
 }

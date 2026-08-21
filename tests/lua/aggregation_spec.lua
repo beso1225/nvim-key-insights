@@ -102,6 +102,20 @@ assert(#timeout_sequences == 2, "inter-key timeout must split sequences")
 assert(vim.deep_equal(timeout_sequences[1].keys, { "j" }))
 assert(vim.deep_equal(timeout_sequences[2].keys, { "k" }))
 
+local no_timeout_collector, no_timeout = new_harness(
+  "aggregation-no-timeout",
+  config.resolve({ collection = { sequence_timeout_ms = 0 } })
+)
+no_timeout_collector:start()
+no_timeout.now_ms = 100
+no_timeout.callback("j", "j")
+no_timeout.now_ms = 10000
+no_timeout.callback("k", "k")
+no_timeout_collector:stop()
+local no_timeout_sequences = events_of_type(no_timeout.events, "key_sequence")
+assert(#no_timeout_sequences == 1, "zero timeout must disable the idle-time boundary")
+assert(vim.deep_equal(no_timeout_sequences[1].keys, { "j", "k" }))
+
 local bounded_collector, bounded = new_harness(
   "aggregation-bounded",
   config.resolve({ collection = { max_sequence_keys = 2 } })

@@ -3,12 +3,12 @@ set -euo pipefail
 
 system="$(nix eval --raw --impure --expr 'builtins.currentSystem')"
 
-test "$(nix eval --raw ".#packages.${system}.key-insights.pname")" = "key-insights"
-test "$(nix eval --raw ".#packages.${system}.nvim-key-insights.pname")" = "nvim-key-insights"
-test "$(nix eval --raw ".#packages.${system}.default.pname")" = "key-insights"
-package_version="$(nix eval --raw ".#packages.${system}.key-insights.version")"
+test "$(nix eval --no-update-lock-file --raw ".#packages.${system}.key-insights.pname")" = "key-insights"
+test "$(nix eval --no-update-lock-file --raw ".#packages.${system}.nvim-key-insights.pname")" = "nvim-key-insights"
+test "$(nix eval --no-update-lock-file --raw ".#packages.${system}.default.pname")" = "key-insights"
+package_version="$(nix eval --no-update-lock-file --raw ".#packages.${system}.key-insights.version")"
 
-cli_source="$(nix eval --raw ".#packages.${system}.key-insights.src")"
+cli_source="$(nix eval --no-update-lock-file --raw ".#packages.${system}.key-insights.src")"
 for entry in "${cli_source}"/*; do
   case "$(basename "${entry}")" in
     Cargo.lock|Cargo.toml|codex|crates) ;;
@@ -16,7 +16,7 @@ for entry in "${cli_source}"/*; do
   esac
 done
 
-plugin_source="$(nix eval --raw ".#packages.${system}.nvim-key-insights.src")"
+plugin_source="$(nix eval --no-update-lock-file --raw ".#packages.${system}.nvim-key-insights.src")"
 for entry in "${plugin_source}"/*; do
   case "$(basename "${entry}")" in
     codex|lua|plugin) ;;
@@ -25,15 +25,15 @@ for entry in "${plugin_source}"/*; do
 done
 test -e "${plugin_source}/codex/suggestions.schema.json"
 
-cli_program="$(nix eval --raw ".#apps.${system}.key-insights.program")"
-default_program="$(nix eval --raw ".#apps.${system}.default.program")"
+cli_program="$(nix eval --no-update-lock-file --raw ".#apps.${system}.key-insights.program")"
+default_program="$(nix eval --no-update-lock-file --raw ".#apps.${system}.default.program")"
 test "${cli_program}" = "${default_program}"
 case "${cli_program}" in
   */bin/key-insights) ;;
   *) echo "unexpected key-insights app program: ${cli_program}" >&2; exit 1 ;;
 esac
 
-test "$(nix eval --raw --impure --expr '
+test "$(nix eval --no-update-lock-file --raw --impure --expr '
   let
     flake = builtins.getFlake (toString ./.);
     pkgs = import flake.inputs.nixpkgs {
@@ -43,7 +43,7 @@ test "$(nix eval --raw --impure --expr '
   in pkgs.key-insights.pname
 ')" = "key-insights"
 
-test "$(nix eval --raw --impure --expr '
+test "$(nix eval --no-update-lock-file --raw --impure --expr '
   let
     flake = builtins.getFlake (toString ./.);
     pkgs = import flake.inputs.nixpkgs {
