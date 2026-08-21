@@ -1,6 +1,6 @@
 # Milestone 5 packaging and integration plan
 
-Status: in progress on `codex/m5-packaging-integration`.
+Status: complete on `codex/m5-packaging-integration`.
 
 ## Scope
 
@@ -49,9 +49,10 @@ system. Build only the Cargo workspace sources required by the CLI.
 
 Status: complete on `codex/m5-packaging-integration`.
 
-Package only `lua/` and `plugin/` as `packages.nvim-key-insights`. Export an
-overlay with `pkgs.key-insights` and `pkgs.vimPlugins.nvim-key-insights`, using
-local constructors rather than recursively referring to `self.packages`.
+Package only `lua/`, `plugin/`, and the Codex output schema as
+`packages.nvim-key-insights`. Export an overlay with `pkgs.key-insights` and
+`pkgs.vimPlugins.nvim-key-insights`, using local constructors rather than
+recursively referring to `self.packages`.
 
 ## S4: installation and configuration documentation
 
@@ -63,7 +64,7 @@ configuration field and default. Do not describe raw capture as available.
 
 ## S5: packaged integration and final review
 
-Status: in progress.
+Status: complete on `codex/m5-packaging-integration`.
 
 Add a flake check that loads the packaged plugin in headless Neovim, verifies
 the commands exist, and confirms the collector remains stopped without any

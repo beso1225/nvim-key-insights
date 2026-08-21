@@ -10,8 +10,7 @@ local rustSources: Listing<String> = new {
   "Cargo.toml"
   "Cargo.lock"
   "codex/suggestions.schema.json"
-  "crates/**/*.rs"
-  "crates/**/Cargo.toml"
+  "crates/**/*"
 }
 
 local luaSources: Listing<String> = new {
