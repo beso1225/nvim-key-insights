@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload_schema_version", "purpose", "instructions", "summary"],
+  "properties": {
+    "payload_schema_version": { "const": 1 },
+    "purpose": { "const": "analyze-neovim-usage" },
+    "instructions": { "$ref": "#/$defs/instructions" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "keymap_snapshot": { "$ref": "#/$defs/keymap_snapshot" }
+  },
+  "$defs": {
+    "counter": { "type": "integer", "minimum": 0 },
+    "token": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "mapping_id": {
+      "type": "string",
+      "pattern": "^mapping-v1:[0-9a-f]{64}$"
+    },
+    "instructions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_kinds", "evidence_required", "collision_check_required", "privacy_boundary"],
+      "properties": {
+        "action_kinds": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "learn_existing" },
+            { "const": "add_mapping" },
+            { "const": "change_mapping" },
+            { "const": "no_change" }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "evidence_required": { "const": true },
+        "collision_check_required": { "const": true },
+        "privacy_boundary": {
+          "const": "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."
+        }
+      }
+    },
+    "mode_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "sequences", "keys"],
+      "properties": {
+        "mode": { "enum": ["normal", "visual", "operator_pending"] },
+        "sequences": { "$ref": "#/$defs/counter" },
+        "keys": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "key_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "count"],
+      "properties": {
+        "key": { "$ref": "#/$defs/token" },
+        "count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "mapping_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapping_id", "count"],
+      "properties": {
+        "mapping_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "repeated_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "runs", "presses"],
+      "properties": {
+        "key": { "$ref": "#/$defs/token" },
+        "runs": { "$ref": "#/$defs/counter" },
+        "presses": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "histogram_bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "count"],
+      "properties": {
+        "bucket": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "mode_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "count"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "to": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "candidate_guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed_sessions", "observed_sequence_keys", "required_sessions", "required_sequence_keys", "required_observations"],
+      "properties": {
+        "observed_sessions": { "$ref": "#/$defs/counter" },
+        "observed_sequence_keys": { "$ref": "#/$defs/counter" },
+        "required_sessions": { "$ref": "#/$defs/counter" },
+        "required_sequence_keys": { "$ref": "#/$defs/counter" },
+        "required_observations": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "kind", "kind_version", "observations", "measurements", "guard"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "kind_version": { "const": 1 },
+        "observations": { "$ref": "#/$defs/counter" },
+        "measurements": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "additionalProperties": { "$ref": "#/$defs/counter" }
+        },
+        "guard": { "$ref": "#/$defs/candidate_guard" }
+      }
+    },
+    "ergonomics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "candidate_limit", "thresholds", "distributions", "operations", "count_prefixes", "mode_transitions", "repeated_motions", "mapping_coverage", "candidates"],
+      "properties": {
+        "contract_version": { "const": 1 },
+        "candidate_limit": { "const": 100 },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum_candidate_sessions", "minimum_candidate_sequence_keys", "minimum_candidate_observations"],
+          "properties": {
+            "minimum_candidate_sessions": { "$ref": "#/$defs/counter" },
+            "minimum_candidate_sequence_keys": { "$ref": "#/$defs/counter" },
+            "minimum_candidate_observations": { "$ref": "#/$defs/counter" }
+          }
+        },
+        "distributions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["histogram_version", "session_duration_ms", "sequence_length_keys", "average_inter_key_latency_ms"],
+          "properties": {
+            "histogram_version": { "const": 1 },
+            "session_duration_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/histogram_bucket" } },
+            "sequence_length_keys": { "type": "array", "minItems": 7, "maxItems": 7, "items": { "$ref": "#/$defs/histogram_bucket" } },
+            "average_inter_key_latency_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/histogram_bucket" } }
+          }
+        },
+        "operations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["token_set_version", "undo", "redo", "repeat", "search_start", "search_navigation"],
+          "properties": {
+            "token_set_version": { "const": 1 },
+            "undo": { "$ref": "#/$defs/counter" },
+            "redo": { "$ref": "#/$defs/counter" },
+            "repeat": { "$ref": "#/$defs/counter" },
+            "search_start": { "$ref": "#/$defs/counter" },
+            "search_navigation": { "$ref": "#/$defs/counter" }
+          }
+        },
+        "count_prefixes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["token_set_version", "occurrences", "digit_presses"],
+          "properties": {
+            "token_set_version": { "const": 1 },
+            "occurrences": { "$ref": "#/$defs/counter" },
+            "digit_presses": { "$ref": "#/$defs/counter" }
+          }
+        },
+        "mode_transitions": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/mode_transition" } },
+        "repeated_motions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["token_set_version", "items"],
+          "properties": {
+            "token_set_version": { "const": 1 },
+            "items": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["motion", "runs", "presses"],
+                "properties": {
+                  "motion": { "$ref": "#/$defs/token" },
+                  "runs": { "$ref": "#/$defs/counter" },
+                  "presses": { "$ref": "#/$defs/counter" }
+                }
+              }
+            }
+          }
+        },
+        "mapping_coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["total_snapshot_mappings", "observed_mappings", "unobserved_mappings"],
+          "properties": {
+            "snapshot_version": { "type": ["integer", "null"], "minimum": 1, "maximum": 1 },
+            "total_snapshot_mappings": { "$ref": "#/$defs/counter" },
+            "observed_mappings": { "$ref": "#/$defs/counter" },
+            "unobserved_mappings": { "$ref": "#/$defs/counter" }
+          }
+        },
+        "candidates": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/candidate" } }
+      }
+    },
+    "attribution_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapping_id", "status", "count"],
+      "properties": {
+        "mapping_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "status": { "enum": ["observed", "observed_not_in_snapshot", "unobserved_in_sample"] },
+        "count": { "$ref": "#/$defs/counter" },
+        "mode": { "enum": ["normal", "visual", "operator_pending"] },
+        "scope": { "enum": ["global", "buffer"] },
+        "lhs": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/token" } },
+        "collision_mapping_ids": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/mapping_id" } }
+      }
+    },
+    "mapping_collision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "mode", "lhs", "global_mapping_id", "buffer_mapping_id"],
+      "properties": {
+        "kind": { "const": "potential_buffer_shadowing" },
+        "mode": { "enum": ["normal", "visual", "operator_pending"] },
+        "lhs": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/token" } },
+        "global_mapping_id": { "$ref": "#/$defs/mapping_id" },
+        "buffer_mapping_id": { "$ref": "#/$defs/mapping_id" }
+      }
+    },
+    "mapping_attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshot_version", "mappings", "collisions"],
+      "properties": {
+        "snapshot_version": { "const": 1 },
+        "mappings": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/attribution_entry" } },
+        "collisions": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/mapping_collision" } }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "ranking_limit", "sessions", "events", "total_session_duration_ms", "key_sequences", "sequence_keys", "text_runs", "text_keys", "mode_transitions", "mapping_uses", "repeated_key_runs", "repeated_key_presses", "unique_keys", "unique_mappings", "unique_repeated_keys", "modes", "keys", "mappings", "repeated_keys", "ergonomics"],
+      "properties": {
+        "schema_version": { "const": 3 },
+        "ranking_limit": { "const": 100 },
+        "sessions": { "$ref": "#/$defs/counter" },
+        "events": { "$ref": "#/$defs/counter" },
+        "total_session_duration_ms": { "$ref": "#/$defs/counter" },
+        "key_sequences": { "$ref": "#/$defs/counter" },
+        "sequence_keys": { "$ref": "#/$defs/counter" },
+        "text_runs": { "$ref": "#/$defs/counter" },
+        "text_keys": { "$ref": "#/$defs/counter" },
+        "mode_transitions": { "$ref": "#/$defs/counter" },
+        "mapping_uses": { "$ref": "#/$defs/counter" },
+        "repeated_key_runs": { "$ref": "#/$defs/counter" },
+        "repeated_key_presses": { "$ref": "#/$defs/counter" },
+        "unique_keys": { "$ref": "#/$defs/counter" },
+        "unique_mappings": { "$ref": "#/$defs/counter" },
+        "unique_repeated_keys": { "$ref": "#/$defs/counter" },
+        "modes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/mode_stats" } },
+        "keys": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/key_count" } },
+        "mappings": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/mapping_count" } },
+        "repeated_keys": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/repeated_key" } },
+        "ergonomics": { "$ref": "#/$defs/ergonomics" },
+        "mapping_attribution": { "$ref": "#/$defs/mapping_attribution" }
+      }
+    },
+    "snapshot_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapping_id", "mode", "scope", "lhs"],
+      "properties": {
+        "mapping_id": { "$ref": "#/$defs/mapping_id" },
+        "mode": { "enum": ["normal", "visual", "operator_pending"] },
+        "scope": { "enum": ["global", "buffer"] },
+        "lhs": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/token" } }
+      }
+    },
+    "keymap_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshot_version", "mappings"],
+      "properties": {
+        "snapshot_version": { "const": 1 },
+        "mappings": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/snapshot_mapping" } }
+      }
+    }
+  }
+}

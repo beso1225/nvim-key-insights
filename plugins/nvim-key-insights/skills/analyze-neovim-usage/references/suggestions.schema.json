@@ -64,10 +64,7 @@
                     "unobserved_mappings",
                     "total_snapshot_mappings",
                     "count_prefix_occurrences",
-                    "count_prefix_digit_presses",
-                    "session_duration_ms",
-                    "sequence_length_keys",
-                    "average_inter_key_latency_ms"
+                    "count_prefix_digit_presses"
                   ]
                 },
                 "value": { "type": "integer", "minimum": 0 }

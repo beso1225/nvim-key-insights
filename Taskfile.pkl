@@ -10,6 +10,7 @@ local rustSources: Listing<String> = new {
   "Cargo.toml"
   "Cargo.lock"
   "codex/suggestions.schema.json"
+  "codex/payload.schema.json"
   "crates/**/*"
 }
 
@@ -53,6 +54,8 @@ local codexPluginSources: Listing<String> = new {
   "Cargo.toml"
   "crates/key-insights-cli/Cargo.toml"
   "tests/codex_plugin_contract.sh"
+  "tests/codex_skill_contract.py"
+  "tests/codex_plugin_workflow.sh"
   "Taskfile.pkl"
 }
 
@@ -92,6 +95,21 @@ local testCodexPlugin: Task = new {
   inputs = codexPluginSources
 }
 
+local testCodexSkill: Task = new {
+  name = "test:codex-skill"
+  description = "Validate the semantic privacy and trust contract of the Codex skill"
+  cmd = "python3 tests/codex_skill_contract.py"
+  inputs = codexPluginSources
+}
+
+local testCodexPluginWorkflow: Task = new {
+  name = "test:codex-plugin-workflow"
+  description = "Exercise the privacy-safe manual skill validation workflow"
+  cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights bash tests/codex_plugin_workflow.sh"
+  inputs = codexPluginSources
+  deps { testRust }
+}
+
 local formatCheck: Task = new {
   name = "format:check"
   description = "Check Rust formatting"
@@ -122,7 +140,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin }
+  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow }
 }
 
 local default: Task = new {
@@ -131,4 +149,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; formatCheck; lintRust; lintActions; test; check; default }

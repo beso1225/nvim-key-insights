@@ -61,7 +61,7 @@ to the runtime suggestion schema through a drift test.
 
 ## S3: semantic skill contract
 
-Status: in progress.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Add contract tests proving that the skill:
 
@@ -76,7 +76,7 @@ Add contract tests proving that the skill:
 
 ## S4: mocked manual workflow
 
-Status: pending.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Exercise a private summary through preview generation, fixture suggestion JSON,
 contextual validation, and deterministic Markdown rendering. Seed paths, secrets,
@@ -87,7 +87,7 @@ replacing an existing output.
 
 ## S5: Nix package, installation, and final review
 
-Status: pending.
+Status: implementation complete; final validation in progress.
 
 Export a separate `nvim-key-insights-codex-plugin` package and overlay attribute,
 add package-content and inert-load checks, and document Git marketplace,

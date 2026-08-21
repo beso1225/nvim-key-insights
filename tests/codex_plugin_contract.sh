@@ -22,6 +22,7 @@ required_files = {
     ".codex-plugin/plugin.json",
     "skills/analyze-neovim-usage/SKILL.md",
     "skills/analyze-neovim-usage/agents/openai.yaml",
+    "skills/analyze-neovim-usage/references/payload.schema.json",
     "skills/analyze-neovim-usage/references/suggestions.schema.json",
 }
 
@@ -139,5 +140,7 @@ PY
 
 cmp "$repo_root/codex/suggestions.schema.json" \
   "$skill/references/suggestions.schema.json"
+cmp "$repo_root/codex/payload.schema.json" \
+  "$skill/references/payload.schema.json"
 
 echo "Codex plugin contract: ok"

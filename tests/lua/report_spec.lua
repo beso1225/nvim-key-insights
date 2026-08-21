@@ -666,11 +666,23 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Mislabel a histogram","rationale":"Histogram bucket counts are not scalar duration measurements.","evidence":[{"metric":"session_duration_ms","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 6, "histogram names must not be accepted as scalar evidence")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
   stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Review src/config.lua","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
-assert(#analysis_opened == 6, "path-shaped Codex output must not be opened")
+assert(#analysis_opened == 7, "path-shaped Codex output must not be opened")
 
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
@@ -682,7 +694,7 @@ analysis_codex_callback({
   stderr = "",
 })
 assert(analysis:status().running == false)
-assert(#analysis_opened == 7, "duplicate JSON keys must be rejected before opening Codex output")
+assert(#analysis_opened == 8, "duplicate JSON keys must be rejected before opening Codex output")
 
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
@@ -696,7 +708,7 @@ analysis_codex_callback({
 assert(analysis:status().phase == "rendering_suggestions")
 analysis_render_callback({ code = 1, signal = 0, stdout = "raw model response", stderr = "/secret" })
 assert(analysis:status().running == false)
-assert(#analysis_opened == 8, "renderer failure must not open raw or partial output")
+assert(#analysis_opened == 9, "renderer failure must not open raw or partial output")
 
 local global_gg = "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71"
 local prefix_preview_table = vim.json.decode(valid_preview)

@@ -30,10 +30,19 @@ summary and optional keymap snapshot.
 
 Require all of the following before analysis:
 
+- Validate the complete input against `references/payload.schema.json`; do not
+  approximate its nested summary, attribution, snapshot, or instruction shapes.
+- The top-level payload keys are exactly `payload_schema_version`, `purpose`,
+  `instructions`, `summary`, and the optional `keymap_snapshot`. Reject any
+  additional top-level key.
 - `payload_schema_version` is `1`;
 - `purpose` is `analyze-neovim-usage`;
 - `summary.schema_version` is `3`;
 - `keymap_snapshot.snapshot_version` is `1` when a snapshot is present;
+- `instructions.action_kinds` is exactly `learn_existing`, `add_mapping`,
+  `change_mapping`, `no_change` in that order; both required booleans are true;
+  and `instructions.privacy_boundary` exactly matches the bundled payload
+  schema;
 - the requested output follows `references/suggestions.schema.json`, schema
   version `1`.
 

@@ -80,7 +80,8 @@ nix-darwin, or Home Manager configuration:
 The overlay exposes:
 
 - `pkgs.key-insights` for the Rust CLI;
-- `pkgs.vimPlugins.nvim-key-insights` for Neovim.
+- `pkgs.vimPlugins.nvim-key-insights` for Neovim;
+- `pkgs.nvim-key-insights-codex-plugin` for the inert Codex plugin tree.
 
 For example, a Home Manager configuration can install the explicit pair:
 
@@ -96,6 +97,60 @@ The overlay does not wrap the plugin or inject the CLI path. Keep
 `report.analyzer = "key-insights"` when the CLI is on `PATH`, or set an explicit
 absolute executable path in Lua configuration. The executable is resolved only
 when a report or analysis command is used.
+
+## Optional Codex plugin and standalone skill
+
+The Codex plugin is optional. Installing it does not start Neovim collection,
+read any report, invoke a model, send data, or require a plugin-specific API
+key. The `key-insights` CLI remains a separate prerequisite for creating the
+sanitized preview and validating the result.
+
+Install from the repository marketplace with a current Codex CLI:
+
+```sh
+codex plugin marketplace add beso1225/nvim-key-insights
+codex plugin add nvim-key-insights@nvim-key-insights
+```
+
+There is no release tag yet. These commands therefore track the selected Git
+revision; review changes before upgrading the marketplace or plugin cache. To
+use only the standalone skill, copy
+`plugins/nvim-key-insights/skills/analyze-neovim-usage` into
+`$CODEX_HOME/skills/`. That directory is self-contained and does not resolve
+resources from the repository.
+
+The flake exposes the same inert plugin tree without installing it into Codex:
+
+```sh
+nix build github:beso1225/nvim-key-insights#nvim-key-insights-codex-plugin
+```
+
+Use the manual skill only with the output of `key-insights preview`:
+
+```sh
+chmod 600 summary.json
+key-insights preview summary.json --output sanitized-preview.json
+# Inspect sanitized-preview.json, then deliberately provide exactly that file
+# to $analyze-neovim-usage in Codex Desktop or a new Codex task.
+chmod 600 suggestions.json
+key-insights suggestions summary.json \
+  --input suggestions.json \
+  --output codex-suggestions.md
+```
+
+Do not provide `summary.json`, collector JSONL, `report.md`, project files, or
+dotfiles to the skill. It returns suggestion-schema-v1 JSON only. The output is
+not trusted until `key-insights suggestions` binds every evidence value and
+collision claim to the exact private summary and optional sanitized snapshot,
+then renders Markdown locally.
+
+Manual/Desktop skill invocation and `:KeyInsightsAnalyze` are intentionally
+separate entry points. The Neovim-managed subprocess uses an empty working
+directory and ignores user configuration and rules, so it does not load the
+installed plugin. Conversely, an interactive Codex task may have ambient local
+permissions; the skill contract instructs it not to inspect files or use tools
+or the network to enrich the supplied preview. Neither entry point broadens the
+sanitized payload boundary.
 
 ## Configuration reference
 
