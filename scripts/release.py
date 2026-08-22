@@ -14,6 +14,7 @@ import tempfile
 import tomllib
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import NoReturn
 
@@ -69,6 +70,14 @@ SCHEMA_VERSIONS = {
 }
 MAPPING_IDENTITY = "mapping-v1"
 MAPPING_CANDIDATE_IDENTITY = "mapping-unobserved-v1"
+CHANGELOG_FILE = Path("CHANGELOG.md")
+LICENSE_FILE = Path("LICENSE")
+RELEASE_DOCUMENTATION_FILES = (
+    CHANGELOG_FILE,
+    Path("README.md"),
+    Path("docs/installation.md"),
+    Path("docs/releasing.md"),
+)
 
 
 class ContractError(Exception):
@@ -669,6 +678,120 @@ def validate_schema_contract(root: Path) -> None:
             fail(f"schema compatibility policy is missing {statement!r}")
 
 
+def decode_document(root: Path, relative: Path, field: str) -> str:
+    try:
+        return read_regular_file(root, relative).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"{field} is not UTF-8: {error}")
+
+
+def release_date(value: str) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        fail(f"release date {value!r} must be a real YYYY-MM-DD date")
+    if parsed.isoformat() != value:
+        fail(f"release date {value!r} must use canonical YYYY-MM-DD form")
+    return parsed
+
+
+def version_order(value: str) -> tuple[int, int, int]:
+    stable_version(value, "changelog release version")
+    return tuple(int(component) for component in value.split("."))
+
+
+def validate_changelog_text(contents: str, version: str, tag: str | None) -> None:
+    if not contents.startswith("# Changelog\n"):
+        fail("changelog must start with # Changelog")
+    if contents.count("## [Unreleased]") != 1:
+        fail("changelog must contain exactly one Unreleased section")
+    heading_pattern = re.compile(
+        r"^## \[((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\]"
+        r" - ([^\n]+)$",
+        re.MULTILINE,
+    )
+    heading_matches = list(heading_pattern.finditer(contents))
+    headings = [match.groups() for match in heading_matches]
+    heading_versions = [heading_version for heading_version, _ in headings]
+    all_h2 = list(re.finditer(r"^## ([^\n]+)$", contents, re.MULTILINE))
+    if not all_h2 or all_h2[0].group(1) != "[Unreleased]":
+        fail("changelog Unreleased section must be the first H2 section")
+    dated_heading_starts = {match.start() for match in heading_matches}
+    for heading in all_h2[1:]:
+        if heading.start() not in dated_heading_starts:
+            fail(f"changelog contains unexpected H2 {heading.group(1)!r}")
+    if len(heading_versions) != len(set(heading_versions)):
+        fail("changelog contains a duplicate release version")
+    parsed_dates = [release_date(heading_date) for _, heading_date in headings]
+    if tag is not None:
+        matching = [heading_date for heading_version, heading_date in headings if heading_version == version]
+        if len(matching) != 1:
+            fail(f"changelog has no unique dated release entry for {version}")
+        if not headings or headings[0][0] != version:
+            fail(f"latest changelog release must be {version}")
+    for newer, older in zip(heading_versions, heading_versions[1:]):
+        if version_order(newer) <= version_order(older):
+            fail("changelog release version order must be strictly descending")
+    for newer, older in zip(parsed_dates, parsed_dates[1:]):
+        if newer < older:
+            fail("changelog release date order must be non-increasing")
+    if tag is not None:
+        current_index = heading_versions.index(version)
+        section_start = heading_matches[current_index].end()
+        section_end = (
+            heading_matches[current_index + 1].start()
+            if current_index + 1 < len(heading_matches)
+            else len(contents)
+        )
+        release_notes = contents[section_start:section_end]
+        if (
+            re.search(r"^### [^\n]+$", release_notes, re.MULTILINE) is None
+            or re.search(r"^- [^\n]+$", release_notes, re.MULTILINE) is None
+        ):
+            fail(f"changelog release notes for {version} must contain a section and entry")
+
+
+def validate_release_documentation(root: Path, version: str, tag: str | None) -> None:
+    documents = {
+        relative: decode_document(root, relative, str(relative))
+        for relative in RELEASE_DOCUMENTATION_FILES
+    }
+    validate_changelog_text(documents[CHANGELOG_FILE], version, tag)
+    if tag is not None:
+        license_text = decode_document(root, LICENSE_FILE, str(LICENSE_FILE))
+        if not license_text.strip():
+            fail("LICENSE must be nonempty")
+    releasing = documents[Path("docs/releasing.md")]
+    normalized_releasing = " ".join(releasing.split())
+    required_release_phrases = (
+        "release.py prepare-changelog",
+        "pkf run --no-cache check",
+        "nix flake check --no-update-lock-file",
+        "git tag -a",
+        "does not publish to crates.io",
+        "rollback",
+        "existing GitHub release",
+        "contents: write",
+    )
+    for phrase in required_release_phrases:
+        if phrase not in normalized_releasing:
+            fail(f"release documentation is missing {phrase!r}")
+    installation = documents[Path("docs/installation.md")]
+    for phrase in (
+        'version = "v0.1.0"',
+        "?ref=v0.1.0#key-insights",
+        "nvim-key-insights@v0.1.0",
+        "schema-compatibility.md",
+        "releasing.md",
+    ):
+        if phrase not in installation:
+            fail(f"installation documentation is missing {phrase!r}")
+    readme = documents[Path("README.md")]
+    for link in ("CHANGELOG.md", "docs/schema-compatibility.md", "docs/releasing.md"):
+        if link not in readme:
+            fail(f"README is missing release documentation link {link}")
+
+
 def replace_once(data: bytes, old: bytes, new: bytes, field: str) -> bytes:
     if data.count(old) != 1:
         fail(f"{field} did not contain exactly one expected version field")
@@ -818,6 +941,20 @@ def write_updates_transactionally(
         remove_if_present(backup)
 
 
+def write_single_update(root: Path, relative: Path, original: bytes, replacement: bytes) -> None:
+    if read_regular_file(root, relative) != original:
+        fail(f"{relative} changed while preparing the update")
+    destination = root / relative
+    staged = stage_file(destination, replacement, "new")
+    try:
+        if read_regular_file(root, relative) != original:
+            fail(f"{relative} changed while installing the update")
+        os.replace(staged, destination)
+    except BaseException:
+        remove_if_present(staged)
+        raise
+
+
 def bump(root: Path, old_version: str, new_version: str) -> None:
     stable_version(old_version, "--from")
     stable_version(new_version, "--to")
@@ -830,6 +967,32 @@ def bump(root: Path, old_version: str, new_version: str) -> None:
     updates = candidate_updates(root, old_version, new_version)
     validate_candidates(root, updates, new_version)
     write_updates_transactionally(root, updates)
+
+
+def prepare_changelog(root: Path, version: str, date_value: str) -> None:
+    stable_version(version, "--version")
+    release_date(date_value)
+    current_version = validate_contract(root)
+    if version != current_version:
+        fail(f"--version {version} does not match current version {current_version}")
+    original = read_regular_file(root, CHANGELOG_FILE)
+    try:
+        contents = original.decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"changelog is not UTF-8: {error}")
+    validate_changelog_text(contents, version, None)
+    if re.search(rf"^## \[{re.escape(version)}\] - ", contents, re.MULTILINE):
+        fail(f"changelog already contains release {version}")
+    marker = "## [Unreleased]\n\n"
+    if contents.count(marker) != 1:
+        fail("changelog Unreleased section must be followed by one blank line")
+    updated = contents.replace(
+        marker,
+        f"{marker}## [{version}] - {date_value}\n\n",
+        1,
+    )
+    validate_changelog_text(updated, version, f"v{version}")
+    write_single_update(root, CHANGELOG_FILE, original, updated.encode("utf-8"))
 
 
 def validate_nix_versions(root: Path, version: str, systems: list[str]) -> None:
@@ -880,6 +1043,13 @@ def parser() -> argparse.ArgumentParser:
     update = subcommands.add_parser("bump", help="update synchronized version mirrors")
     update.add_argument("--from", dest="old_version", required=True)
     update.add_argument("--to", dest="new_version", required=True)
+
+    changelog = subcommands.add_parser(
+        "prepare-changelog",
+        help="move Unreleased notes under a dated package release",
+    )
+    changelog.add_argument("--version", required=True)
+    changelog.add_argument("--date", required=True)
     return command
 
 
@@ -890,11 +1060,15 @@ def main() -> int:
         if arguments.command == "check":
             version = validate_contract(root, arguments.tag)
             validate_schema_contract(root)
+            validate_release_documentation(root, version, arguments.tag)
             validate_nix_versions(root, version, arguments.nix_system)
             print(f"release contract {version}: ok")
-        else:
+        elif arguments.command == "bump":
             bump(root, arguments.old_version, arguments.new_version)
             print(f"release version {arguments.old_version} -> {arguments.new_version}: updated")
+        else:
+            prepare_changelog(root, arguments.version, arguments.date)
+            print(f"changelog release {arguments.version} ({arguments.date}): prepared")
     except (ContractError, OSError) as error:
         print(f"release: {error}", file=sys.stderr)
         return 1

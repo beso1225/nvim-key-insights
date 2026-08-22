@@ -44,6 +44,10 @@ The following specification remains lazy until one of the commands is used:
 There is no release tag yet. Keep the revision recorded by the plugin-manager
 lock file, and review changes before updating it.
 
+After the first release is published, replace `version = false` with an exact
+immutable tag such as `version = "v0.1.0"`. Do not mix a tagged Neovim plugin
+with an analyzer or Codex plugin from an unrelated revision.
+
 ## Nix flake packages
 
 Run or install the deterministic analyzer directly:
@@ -51,6 +55,13 @@ Run or install the deterministic analyzer directly:
 ```sh
 nix run github:beso1225/nvim-key-insights#key-insights -- --version
 nix profile install github:beso1225/nvim-key-insights#key-insights
+```
+
+After a tag is published, pin it explicitly:
+
+```sh
+nix run 'github:beso1225/nvim-key-insights?ref=v0.1.0#key-insights' -- --version
+nix profile install 'github:beso1225/nvim-key-insights?ref=v0.1.0#key-insights'
 ```
 
 The flake also exports `packages.nvim-key-insights` for consumers that assemble
@@ -123,6 +134,14 @@ use only the standalone skill, copy
 `plugins/nvim-key-insights/skills/analyze-neovim-usage` into
 `$CODEX_HOME/skills/`. That directory is self-contained and does not resolve
 resources from the repository.
+
+After a release, install the marketplace from the same immutable tag before
+installing the plugin:
+
+```sh
+codex plugin marketplace add beso1225/nvim-key-insights@v0.1.0
+codex plugin add nvim-key-insights@nvim-key-insights
+```
 
 The flake exposes the same inert plugin tree without installing it into Codex:
 
@@ -211,3 +230,16 @@ require("key-insights").setup({
 Collection starts only after `:KeyInsightsStart`. Codex starts only after
 `:KeyInsightsAnalyze` displays the exact sanitized payload and the user confirms
 the subprocess launch.
+
+## Upgrade and rollback
+
+Pin one reviewed Git tag across lazy.nvim, Nix, and the optional Codex
+marketplace. Before upgrading, read the
+[changelog](../CHANGELOG.md) and
+[schema compatibility policy](schema-compatibility.md). Keep finalized private
+event logs until the new version has regenerated a valid summary/report pair.
+
+To rollback, restore the prior tag in each package manager and regenerate
+derived summaries, reports, payloads, and suggestions. Do not edit a schema
+number to make a newer artifact appear compatible. The detailed maintainer and
+failure-recovery procedure is in [Release procedure](releasing.md).

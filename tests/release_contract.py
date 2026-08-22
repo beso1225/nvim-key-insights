@@ -15,6 +15,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TOOL = ROOT / "scripts" / "release.py"
 SCHEMA_COMPATIBILITY = ROOT / "docs" / "schema-compatibility.md"
+CHANGELOG = ROOT / "CHANGELOG.md"
+RELEASING = ROOT / "docs" / "releasing.md"
 
 
 def load_release_module():
@@ -53,6 +55,8 @@ def copy_version_contract(destination: Path) -> None:
 
 def copy_schema_contract(destination: Path) -> None:
     for relative in (
+        "CHANGELOG.md",
+        "README.md",
         "codex/payload.schema.json",
         "codex/suggestions.schema.json",
         "crates/key-insights-cli/src/analyzer.rs",
@@ -62,6 +66,8 @@ def copy_schema_contract(destination: Path) -> None:
         "crates/key-insights-cli/src/keymap_snapshot.rs",
         "crates/key-insights-cli/src/lib.rs",
         "docs/schema-compatibility.md",
+        "docs/installation.md",
+        "docs/releasing.md",
         "lua/key-insights/contract_versions.lua",
         "lua/key-insights/keymap_snapshot.lua",
         "lua/key-insights/report.lua",
@@ -73,6 +79,12 @@ def copy_schema_contract(destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+
+
+def write_test_license(root: Path) -> None:
+    (root / "LICENSE").write_text(
+        "Test-only license fixture selected by the repository owner.\n"
+    )
 
 
 class ReleaseContractTest(unittest.TestCase):
@@ -237,13 +249,230 @@ class ReleaseContractTest(unittest.TestCase):
 
     def test_release_tag_must_exactly_match_the_package_version(self) -> None:
         accepted = run_release("check", "--tag", "v0.1.0")
-        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertNotEqual(accepted.returncode, 0)
+        self.assertIn("changelog", accepted.stderr.lower())
 
         for tag in ("0.1.0", "v0.1.1", "v0.1.0-rc.1", "refs/tags/v0.1.0"):
             with self.subTest(tag=tag):
                 rejected = run_release("check", "--tag", tag)
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn("release tag", rejected.stderr)
+
+    def test_changelog_and_release_documentation_are_complete(self) -> None:
+        self.assertTrue(CHANGELOG.is_file())
+        self.assertTrue(RELEASING.is_file())
+        changelog = CHANGELOG.read_text()
+        releasing = RELEASING.read_text()
+        normalized_releasing = " ".join(releasing.split())
+        self.assertIn("# Changelog", changelog)
+        self.assertIn("## [Unreleased]", changelog)
+        for phrase in (
+            "release.py prepare-changelog",
+            "pkf run --no-cache check",
+            "nix flake check --no-update-lock-file",
+            "git tag -a",
+            "does not publish to crates.io",
+            "rollback",
+            "existing GitHub release",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized_releasing)
+
+    def test_prepare_changelog_enables_only_the_exact_dated_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            result = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            changelog = (root / "CHANGELOG.md").read_text()
+            self.assertIn("## [Unreleased]\n\n## [0.1.0] - 2026-08-22", changelog)
+            write_test_license(root)
+            check = run_release("check", "--tag", "v0.1.0", root=root)
+            self.assertEqual(check.returncode, 0, check.stderr)
+
+            repeated = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertNotEqual(repeated.returncode, 0)
+            self.assertEqual((root / "CHANGELOG.md").read_text(), changelog)
+
+    def test_invalid_changelog_preparation_preserves_the_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            changelog_path = root / "CHANGELOG.md"
+            original = changelog_path.read_bytes()
+            for version, date in (
+                ("0.2.0", "2026-08-22"),
+                ("0.1.0", "22-08-2026"),
+                ("0.1.0", "2026-02-30"),
+            ):
+                with self.subTest(version=version, date=date):
+                    result = run_release(
+                        "prepare-changelog",
+                        "--version",
+                        version,
+                        "--date",
+                        date,
+                        root=root,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(changelog_path.read_bytes(), original)
+
+    def test_empty_or_nonlatest_release_entry_cannot_satisfy_a_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            changelog_path = root / "CHANGELOG.md"
+            changelog_path.write_text("# Changelog\n\n## [Unreleased]\n\n")
+            empty = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertNotEqual(empty.returncode, 0)
+            self.assertIn("release notes", empty.stderr)
+
+            shutil.copyfile(CHANGELOG, changelog_path)
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            write_test_license(root)
+            changed = changelog_path.read_text().replace(
+                "## [0.1.0] - 2026-08-22",
+                "## [0.2.0] - 2026-08-23\n\n### Added\n\n- Future.\n\n"
+                "## [0.1.0] - 2026-08-22",
+                1,
+            )
+            changelog_path.write_text(changed)
+            nonlatest = run_release("check", "--tag", "v0.1.0", root=root)
+            self.assertNotEqual(nonlatest.returncode, 0)
+            self.assertIn("latest changelog release", nonlatest.stderr)
+
+    def test_concurrent_changelog_edit_is_preserved(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            changelog_path = root / "CHANGELOG.md"
+            real_stage = release.stage_file
+
+            def edit_after_stage(path, data, label):
+                staged = real_stage(path, data, label)
+                if path == changelog_path and label == "new":
+                    changelog_path.write_text(
+                        changelog_path.read_text() + "\n<!-- concurrent edit -->\n"
+                    )
+                return staged
+
+            with mock.patch.object(release, "stage_file", side_effect=edit_after_stage):
+                with self.assertRaises(release.ContractError):
+                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+
+            self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
+            self.assertNotIn("## [0.1.0]", changelog_path.read_text())
+            self.assertEqual(list(root.rglob(".release-new-CHANGELOG.md-*")), [])
+
+    def test_tag_requires_an_owner_supplied_regular_license(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+
+            missing = run_release("check", "--tag", "v0.1.0", root=root)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("LICENSE", missing.stderr)
+
+            license_path = root / "LICENSE"
+            license_path.write_text(" \n")
+            empty = run_release("check", "--tag", "v0.1.0", root=root)
+            self.assertNotEqual(empty.returncode, 0)
+            self.assertIn("nonempty", empty.stderr)
+
+            license_path.unlink()
+            target = root / "license-target"
+            target.write_text("test license\n")
+            license_path.symlink_to(target)
+            linked = run_release("check", "--tag", "v0.1.0", root=root)
+            self.assertNotEqual(linked.returncode, 0)
+            self.assertIn("not a symlink", linked.stderr)
+
+    def test_tag_rejects_changelog_order_and_unrelated_h2_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            write_test_license(root)
+            changelog_path = root / "CHANGELOG.md"
+            original = changelog_path.read_text()
+
+            mutations = (
+                (
+                    original + "\n## [0.2.0] - 2026-08-21\n\n### Added\n\n- Out of order.\n",
+                    "version order",
+                ),
+                (
+                    original + "\n## [0.0.9] - 2026-08-23\n\n### Added\n\n- Future date.\n",
+                    "date order",
+                ),
+                (
+                    original.replace(
+                        "### Added",
+                        "## Other notes\n\n### Added",
+                        1,
+                    ),
+                    "unexpected H2",
+                ),
+            )
+            for changed, diagnostic in mutations:
+                with self.subTest(diagnostic=diagnostic):
+                    changelog_path.write_text(changed)
+                    result = run_release("check", "--tag", "v0.1.0", root=root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(diagnostic, result.stderr)
 
     def test_version_bump_updates_only_the_explicit_mirrors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

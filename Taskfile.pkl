@@ -69,6 +69,9 @@ local releaseSources: Listing<String> = new {
   ...codexSchemaSources
   "Cargo.lock"
   "Cargo.toml"
+  "CHANGELOG.md"
+  "LICENSE*"
+  "README.md"
   "crates/**/*"
   ".agents/plugins/marketplace.json"
   "plugins/nvim-key-insights/.codex-plugin/plugin.json"
@@ -76,6 +79,7 @@ local releaseSources: Listing<String> = new {
   "docs/analyzer.md"
   "docs/event-schema.md"
   "docs/installation.md"
+  "docs/releasing.md"
   "docs/schema-compatibility.md"
   "lua/key-insights/contract_versions.lua"
   "lua/key-insights/keymap_snapshot.lua"
