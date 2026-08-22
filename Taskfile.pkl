@@ -66,11 +66,21 @@ local codexPluginSources: Listing<String> = new {
 
 local releaseSources: Listing<String> = new {
   ...toolchainSources
+  ...codexSchemaSources
   "Cargo.lock"
   "Cargo.toml"
-  "crates/key-insights-cli/Cargo.toml"
+  "crates/**/*"
   ".agents/plugins/marketplace.json"
   "plugins/nvim-key-insights/.codex-plugin/plugin.json"
+  "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/*.json"
+  "docs/analyzer.md"
+  "docs/event-schema.md"
+  "docs/installation.md"
+  "docs/schema-compatibility.md"
+  "lua/key-insights/contract_versions.lua"
+  "lua/key-insights/keymap_snapshot.lua"
+  "lua/key-insights/report.lua"
+  "lua/key-insights/schema.lua"
   "scripts/release.py"
   "tests/release_contract.py"
   "Taskfile.pkl"

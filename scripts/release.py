@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
@@ -30,6 +31,44 @@ REQUIRED_FILES = (
     PLUGIN_MANIFEST,
     MARKETPLACE,
 )
+SCHEMA_REQUIRED_FILES = (
+    Path("codex/payload.schema.json"),
+    Path("codex/suggestions.schema.json"),
+    Path("crates/key-insights-cli/src/analyzer.rs"),
+    Path("crates/key-insights-cli/src/codex_payload.rs"),
+    Path("crates/key-insights-cli/src/codex_suggestions.rs"),
+    Path("crates/key-insights-cli/src/ergonomics.rs"),
+    Path("crates/key-insights-cli/src/keymap_snapshot.rs"),
+    Path("crates/key-insights-cli/src/lib.rs"),
+    Path("docs/schema-compatibility.md"),
+    Path("lua/key-insights/contract_versions.lua"),
+    Path("lua/key-insights/keymap_snapshot.lua"),
+    Path("lua/key-insights/report.lua"),
+    Path("lua/key-insights/schema.lua"),
+    Path(
+        "plugins/nvim-key-insights/skills/analyze-neovim-usage/"
+        "references/payload.schema.json"
+    ),
+    Path(
+        "plugins/nvim-key-insights/skills/analyze-neovim-usage/"
+        "references/suggestions.schema.json"
+    ),
+)
+SCHEMA_VERSIONS = {
+    "Event log": 1,
+    "Analysis summary": 3,
+    "Keymap snapshot": 1,
+    "Codex payload": 1,
+    "Codex suggestions": 1,
+    "Ergonomics contract": 1,
+    "Histogram layout": 1,
+    "Operation token set": 1,
+    "Count-prefix token set": 1,
+    "Directional-motion token set": 1,
+    "Candidate kind": 1,
+}
+MAPPING_IDENTITY = "mapping-v1"
+MAPPING_CANDIDATE_IDENTITY = "mapping-unobserved-v1"
 
 
 class ContractError(Exception):
@@ -151,6 +190,483 @@ def validate_contract(root: Path, tag: str | None = None) -> str:
     if tag is not None and tag != f"v{version}":
         fail(f"release tag {tag!r} must exactly match v{version}")
     return version
+
+
+def rust_constant(root: Path, relative: Path, name: str) -> int:
+    try:
+        source = read_regular_file(root, relative).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"schema source {relative} is not UTF-8: {error}")
+    matches = re.findall(
+        rf"^(?:pub )?const {re.escape(name)}: u32 = ([0-9]+);$",
+        source,
+        re.MULTILINE,
+    )
+    if len(matches) != 1:
+        fail(f"schema source {relative} must define exactly one {name}")
+    return int(matches[0])
+
+
+def lua_named_version(root: Path, relative: Path, name: str) -> int:
+    try:
+        source = read_regular_file(root, relative).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"schema source {relative} is not UTF-8: {error}")
+    matches = re.findall(
+        rf"^\s*{re.escape(name)} = ([0-9]+),$", source, re.MULTILINE
+    )
+    if len(matches) != 1:
+        fail(f"schema source {relative} must define exactly one {name}")
+    return int(matches[0])
+
+
+def json_field(document: object, path: tuple[str, ...], field: str) -> object:
+    value = document
+    for component in path:
+        if not isinstance(value, dict) or component not in value:
+            fail(f"schema {field} is missing {'.'.join(path)}")
+        value = value[component]
+    return value
+
+
+def schema_const(document: object, path: tuple[str, ...], field: str) -> int:
+    value = json_field(document, path, field)
+    if not isinstance(value, int) or isinstance(value, bool):
+        fail(f"schema {field} must be an integer const")
+    return value
+
+
+def schema_nullable_version(
+    document: object, path: tuple[str, ...], expected: int, field: str
+) -> None:
+    value = json_field(document, path, field)
+    if not isinstance(value, dict):
+        fail(f"schema {field} must be an object")
+    if value.get("type") != ["integer", "null"]:
+        fail(f"schema {field} must accept only integer or null")
+    if value.get("minimum") != expected or value.get("maximum") != expected:
+        fail(f"schema {field} must be null or exact version {expected}")
+
+
+def json_patterns(value: object) -> list[str]:
+    patterns: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "pattern" and isinstance(child, str):
+                patterns.append(child)
+            patterns.extend(json_patterns(child))
+    elif isinstance(value, list):
+        for child in value:
+            patterns.extend(json_patterns(child))
+    return patterns
+
+
+def validate_schema_contract(root: Path) -> None:
+    for relative in SCHEMA_REQUIRED_FILES:
+        read_regular_file(root, relative)
+
+    runtime_versions = {
+        "Event log": rust_constant(root, Path("crates/key-insights-cli/src/lib.rs"), "SCHEMA_VERSION"),
+        "Analysis summary": rust_constant(
+            root, Path("crates/key-insights-cli/src/analyzer.rs"), "SUMMARY_SCHEMA_VERSION"
+        ),
+        "Keymap snapshot": rust_constant(
+            root, Path("crates/key-insights-cli/src/keymap_snapshot.rs"), "SNAPSHOT_VERSION"
+        ),
+        "Codex payload": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/codex_payload.rs"),
+            "CODEX_PAYLOAD_SCHEMA_VERSION",
+        ),
+        "Codex suggestions": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/codex_suggestions.rs"),
+            "CODEX_SUGGESTIONS_SCHEMA_VERSION",
+        ),
+        "Ergonomics contract": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/ergonomics.rs"),
+            "ERGONOMICS_CONTRACT_VERSION",
+        ),
+        "Histogram layout": rust_constant(
+            root, Path("crates/key-insights-cli/src/ergonomics.rs"), "HISTOGRAM_VERSION"
+        ),
+        "Operation token set": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/ergonomics.rs"),
+            "OPERATION_TOKEN_SET_VERSION",
+        ),
+        "Count-prefix token set": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/ergonomics.rs"),
+            "COUNTABLE_TOKEN_SET_VERSION",
+        ),
+        "Directional-motion token set": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/ergonomics.rs"),
+            "DIRECTIONAL_MOTION_TOKEN_SET_VERSION",
+        ),
+        "Candidate kind": rust_constant(
+            root,
+            Path("crates/key-insights-cli/src/ergonomics.rs"),
+            "CANDIDATE_KIND_VERSION",
+        ),
+    }
+    for contract, expected in SCHEMA_VERSIONS.items():
+        if runtime_versions.get(contract) != expected:
+            fail(
+                f"schema runtime version for {contract} is "
+                f"{runtime_versions.get(contract)}, expected {expected}"
+            )
+
+    lua_contract_path = Path("lua/key-insights/contract_versions.lua")
+    lua_version_fields = {
+        "Event log": "event_log",
+        "Analysis summary": "analysis_summary",
+        "Keymap snapshot": "keymap_snapshot",
+        "Codex payload": "codex_payload",
+        "Codex suggestions": "codex_suggestions",
+        "Ergonomics contract": "ergonomics",
+        "Histogram layout": "histogram",
+        "Operation token set": "operation_token_set",
+        "Count-prefix token set": "count_prefix_token_set",
+        "Directional-motion token set": "directional_motion_token_set",
+        "Candidate kind": "candidate_kind",
+    }
+    lua_versions = {
+        contract: lua_named_version(root, lua_contract_path, field)
+        for contract, field in lua_version_fields.items()
+    }
+    for contract, actual in lua_versions.items():
+        expected = SCHEMA_VERSIONS[contract]
+        if actual != expected:
+            fail(f"schema Lua version for {contract} is {actual}, expected {expected}")
+
+    try:
+        lua_contract_source = read_regular_file(root, lua_contract_path).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"schema source {lua_contract_path} is not UTF-8: {error}")
+    summary_table = re.search(
+        r"^\s*report_summary_versions = \{\n(?P<body>.*?)^\s*\},$",
+        lua_contract_source,
+        re.MULTILINE | re.DOTALL,
+    )
+    if summary_table is None:
+        fail("schema Lua report summary versions table is missing")
+    body = summary_table.group("body")
+    summary_entries = re.findall(r"^\s*\[([0-9]+)\] = true,$", body, re.MULTILINE)
+    remainder = re.sub(r"^\s*\[[0-9]+\] = true,\s*$", "", body, flags=re.MULTILINE)
+    expected_summary_versions = {1, 2, SCHEMA_VERSIONS["Analysis summary"]}
+    if (
+        remainder.strip()
+        or len(summary_entries) != len(set(summary_entries))
+        or {int(version) for version in summary_entries} != expected_summary_versions
+    ):
+        fail(
+            "schema Lua report summary versions must be exactly "
+            f"{sorted(expected_summary_versions)} with true values"
+        )
+
+    lua_writer_contracts = {
+        Path("lua/key-insights/schema.lua"): (
+            'local contract_versions = require("key-insights.contract_versions")',
+            "M.VERSION = contract_versions.event_log",
+        ),
+        Path("lua/key-insights/keymap_snapshot.lua"): (
+            'local contract_versions = require("key-insights.contract_versions")',
+            "M.VERSION = contract_versions.keymap_snapshot",
+        ),
+    }
+    for relative, expressions in lua_writer_contracts.items():
+        try:
+            source = read_regular_file(root, relative).decode("utf-8")
+        except UnicodeDecodeError as error:
+            fail(f"schema source {relative} is not UTF-8: {error}")
+        for expression in expressions:
+            if expression not in source:
+                fail(f"schema Lua writer {relative} is missing {expression}")
+
+    report_path = Path("lua/key-insights/report.lua")
+    try:
+        report_source = read_regular_file(root, report_path).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"schema source lua/key-insights/report.lua is not UTF-8: {error}")
+    numeric_version_comparison = re.search(
+        r"(?:schema_version|snapshot_version|contract_version|"
+        r"histogram_version|token_set_version|kind_version) ~= [0-9]",
+        report_source,
+    )
+    if numeric_version_comparison is not None:
+        fail(
+            "schema Lua validator contains a numeric version gate instead of "
+            "contract_versions"
+        )
+    expected_report_references = Counter(
+        {
+            "analysis_summary": 1,
+            "candidate_kind": 1,
+            "codex_payload": 1,
+            "codex_suggestions": 1,
+            "count_prefix_token_set": 1,
+            "directional_motion_token_set": 1,
+            "ergonomics": 1,
+            "histogram": 1,
+            "keymap_snapshot": 6,
+            "operation_token_set": 1,
+            "report_summary_versions": 1,
+        }
+    )
+    actual_report_references = Counter(
+        re.findall(r"contract_versions\.([a-z_]+)", report_source)
+    )
+    if actual_report_references != expected_report_references:
+        fail(
+            "schema Lua validator contract_versions references drifted: "
+            f"{dict(actual_report_references)}"
+        )
+    lua_report_contracts = {
+        "decoded.payload_schema_version ~= contract_versions.codex_payload": "Codex payload",
+        "summary.schema_version ~= contract_versions.analysis_summary": "Analysis summary",
+        "document.schema_version ~= contract_versions.codex_suggestions": "Codex suggestions",
+        "contract_versions.report_summary_versions[summary.schema_version] ~= true": (
+            "legacy report summary versions"
+        ),
+    }
+    for expression, contract in lua_report_contracts.items():
+        if expression not in report_source:
+            fail(f"schema Lua validator is missing {contract} version expression")
+
+    payload_path = Path("codex/payload.schema.json")
+    suggestions_path = Path("codex/suggestions.schema.json")
+    payload_bytes = read_regular_file(root, payload_path)
+    suggestions_bytes = read_regular_file(root, suggestions_path)
+    payload = parse_json(payload_bytes, str(payload_path))
+    suggestions = parse_json(suggestions_bytes, str(suggestions_path))
+    schema_versions = {
+        "Codex payload": schema_const(
+            payload, ("properties", "payload_schema_version", "const"), "Codex payload"
+        ),
+        "Analysis summary": schema_const(
+            payload,
+            ("$defs", "summary", "properties", "schema_version", "const"),
+            "Analysis summary",
+        ),
+        "Keymap snapshot": schema_const(
+            payload,
+            ("$defs", "keymap_snapshot", "properties", "snapshot_version", "const"),
+            "Keymap snapshot",
+        ),
+        "Ergonomics contract": schema_const(
+            payload,
+            ("$defs", "ergonomics", "properties", "contract_version", "const"),
+            "Ergonomics contract",
+        ),
+        "Histogram layout": schema_const(
+            payload,
+            (
+                "$defs",
+                "ergonomics",
+                "properties",
+                "distributions",
+                "properties",
+                "histogram_version",
+                "const",
+            ),
+            "Histogram layout",
+        ),
+        "Operation token set": schema_const(
+            payload,
+            (
+                "$defs",
+                "ergonomics",
+                "properties",
+                "operations",
+                "properties",
+                "token_set_version",
+                "const",
+            ),
+            "Operation token set",
+        ),
+        "Count-prefix token set": schema_const(
+            payload,
+            (
+                "$defs",
+                "ergonomics",
+                "properties",
+                "count_prefixes",
+                "properties",
+                "token_set_version",
+                "const",
+            ),
+            "Count-prefix token set",
+        ),
+        "Directional-motion token set": schema_const(
+            payload,
+            (
+                "$defs",
+                "ergonomics",
+                "properties",
+                "repeated_motions",
+                "properties",
+                "token_set_version",
+                "const",
+            ),
+            "Directional-motion token set",
+        ),
+        "Candidate kind": schema_const(
+            payload,
+            ("$defs", "candidate", "properties", "kind_version", "const"),
+            "Candidate kind",
+        ),
+        "Codex suggestions": schema_const(
+            suggestions,
+            ("properties", "schema_version", "const"),
+            "Codex suggestions",
+        ),
+    }
+    for contract, actual in schema_versions.items():
+        expected = SCHEMA_VERSIONS[contract]
+        if actual != expected:
+            fail(f"schema JSON version for {contract} is {actual}, expected {expected}")
+
+    attribution_snapshot_version = schema_const(
+        payload,
+        (
+            "$defs",
+            "mapping_attribution",
+            "properties",
+            "snapshot_version",
+            "const",
+        ),
+        "mapping attribution snapshot",
+    )
+    if attribution_snapshot_version != SCHEMA_VERSIONS["Keymap snapshot"]:
+        fail(
+            "schema JSON version for mapping attribution snapshot is "
+            f"{attribution_snapshot_version}, expected "
+            f"{SCHEMA_VERSIONS['Keymap snapshot']}"
+        )
+    schema_nullable_version(
+        payload,
+        (
+            "$defs",
+            "ergonomics",
+            "properties",
+            "mapping_coverage",
+            "properties",
+            "snapshot_version",
+        ),
+        SCHEMA_VERSIONS["Keymap snapshot"],
+        "mapping coverage snapshot",
+    )
+
+    identity_code_contracts = {
+        Path("crates/key-insights-cli/src/keymap_snapshot.rs"): (
+            'append_length_prefixed(&mut preimage, "mapping-v1");',
+            'format!("mapping-v1:{:x}", Sha256::digest(preimage.as_bytes()))',
+        ),
+        Path("crates/key-insights-cli/src/codex_payload.rs"): (
+            'mapping_id.strip_prefix("mapping-v1:")',
+            '.strip_prefix("mapping-unobserved-v1:")',
+        ),
+        Path("crates/key-insights-cli/src/codex_suggestions.rs"): (
+            'value.strip_prefix("mapping-v1:")',
+        ),
+        Path("lua/key-insights/keymap_snapshot.lua"): (
+            'length_prefix("mapping-v1")',
+            'return "mapping-v1:" .. digest',
+        ),
+        Path("lua/key-insights/report.lua"): (
+            'string.sub(value, 1, 11) ~= "mapping-v1:"',
+            '#"mapping-v1" .. ":mapping-v1"',
+            'return "mapping-v1:" .. vim.fn.sha256(preimage)',
+            '"^mapping%-unobserved%-v1:(mapping%-v1:.+)$"',
+        ),
+        Path("crates/key-insights-cli/src/ergonomics.rs"): (
+            'format!("mapping-unobserved-v1:{}", mapping.mapping_id)',
+        ),
+    }
+    for relative, expressions in identity_code_contracts.items():
+        try:
+            source = read_regular_file(root, relative).decode("utf-8")
+        except UnicodeDecodeError as error:
+            fail(f"schema source {relative} is not UTF-8: {error}")
+        for expression in expressions:
+            if expression not in source:
+                fail(
+                    f"schema mapping identity {MAPPING_IDENTITY} is missing "
+                    f"from {relative}"
+                )
+    expected_identity_patterns = {
+        "payload": Counter(
+            {
+                "^mapping-v1:[0-9a-f]{64}$": 1,
+                "^mapping-unobserved-v1:mapping-v1:[0-9a-f]{64}$": 2,
+            }
+        ),
+        "suggestions": Counter({"^mapping-v1:[0-9a-f]{64}$": 2}),
+    }
+    for field, document in (("payload", payload), ("suggestions", suggestions)):
+        identity_patterns = Counter(
+            pattern for pattern in json_patterns(document) if "mapping-" in pattern
+        )
+        if identity_patterns != expected_identity_patterns[field]:
+            fail(
+                f"schema mapping identity patterns in {field} do not match "
+                f"{MAPPING_IDENTITY} and {MAPPING_CANDIDATE_IDENTITY}"
+            )
+
+    bundled_payload = read_regular_file(
+        root,
+        Path(
+            "plugins/nvim-key-insights/skills/analyze-neovim-usage/"
+            "references/payload.schema.json"
+        ),
+    )
+    bundled_suggestions = read_regular_file(
+        root,
+        Path(
+            "plugins/nvim-key-insights/skills/analyze-neovim-usage/"
+            "references/suggestions.schema.json"
+        ),
+    )
+    if bundled_payload != payload_bytes:
+        fail("schema standalone payload copy differs from the canonical schema")
+    if bundled_suggestions != suggestions_bytes:
+        fail("schema standalone suggestions copy differs from the canonical schema")
+
+    documentation_path = Path("docs/schema-compatibility.md")
+    try:
+        documentation = read_regular_file(root, documentation_path).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"schema compatibility documentation is not UTF-8: {error}")
+    for contract, version in SCHEMA_VERSIONS.items():
+        if f"| {contract} | `{version}` |" not in documentation:
+            fail(f"schema compatibility table is missing {contract} version {version}")
+    if f"| Mapping identity | `{MAPPING_IDENTITY}` |" not in documentation:
+        fail(
+            "schema compatibility table is missing mapping identity "
+            f"{MAPPING_IDENTITY}"
+        )
+    if (
+        f"| Mapping-underuse candidate identity | `{MAPPING_CANDIDATE_IDENTITY}` |"
+        not in documentation
+    ):
+        fail(
+            "schema compatibility table is missing mapping candidate identity "
+            f"{MAPPING_CANDIDATE_IDENTITY}"
+        )
+    required_policy = (
+        "unknown versions fail closed",
+        "Removing an event reader requires a package major release.",
+        "Regenerate",
+        "Do not reuse an existing schema number",
+        "freshness check may recognize summary schemas 1 and 2",
+    )
+    normalized_documentation = " ".join(documentation.split())
+    for statement in required_policy:
+        if statement not in normalized_documentation:
+            fail(f"schema compatibility policy is missing {statement!r}")
 
 
 def replace_once(data: bytes, old: bytes, new: bytes, field: str) -> bytes:
@@ -373,6 +889,7 @@ def main() -> int:
     try:
         if arguments.command == "check":
             version = validate_contract(root, arguments.tag)
+            validate_schema_contract(root)
             validate_nix_versions(root, version, arguments.nix_system)
             print(f"release contract {version}: ok")
         else:

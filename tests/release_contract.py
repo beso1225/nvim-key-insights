@@ -14,6 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TOOL = ROOT / "scripts" / "release.py"
+SCHEMA_COMPATIBILITY = ROOT / "docs" / "schema-compatibility.md"
 
 
 def load_release_module():
@@ -50,6 +51,30 @@ def copy_version_contract(destination: Path) -> None:
         shutil.copyfile(source, target)
 
 
+def copy_schema_contract(destination: Path) -> None:
+    for relative in (
+        "codex/payload.schema.json",
+        "codex/suggestions.schema.json",
+        "crates/key-insights-cli/src/analyzer.rs",
+        "crates/key-insights-cli/src/codex_payload.rs",
+        "crates/key-insights-cli/src/codex_suggestions.rs",
+        "crates/key-insights-cli/src/ergonomics.rs",
+        "crates/key-insights-cli/src/keymap_snapshot.rs",
+        "crates/key-insights-cli/src/lib.rs",
+        "docs/schema-compatibility.md",
+        "lua/key-insights/contract_versions.lua",
+        "lua/key-insights/keymap_snapshot.lua",
+        "lua/key-insights/report.lua",
+        "lua/key-insights/schema.lua",
+        "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json",
+        "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/suggestions.schema.json",
+    ):
+        source = ROOT / relative
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 class ReleaseContractTest(unittest.TestCase):
     def test_current_repository_has_one_release_version(self) -> None:
         system = subprocess.run(
@@ -78,6 +103,138 @@ class ReleaseContractTest(unittest.TestCase):
         )
         self.assertNotIn('version = "0.1.0";', flake)
 
+    def test_schema_versions_match_runtime_and_bundled_contracts(self) -> None:
+        self.assertTrue(SCHEMA_COMPATIBILITY.is_file())
+        result = run_release("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_schema_contract_rejects_runtime_documentation_and_copy_drift(self) -> None:
+        mutations = {
+            "crates/key-insights-cli/src/lib.rs": (
+                "pub const SCHEMA_VERSION: u32 = 1;",
+                "pub const SCHEMA_VERSION: u32 = 2;",
+            ),
+            "lua/key-insights/contract_versions.lua": (
+                "event_log = 1",
+                "event_log = 2",
+            ),
+            "lua/key-insights/report.lua": (
+                "summary.schema_version ~= contract_versions.analysis_summary",
+                "summary.schema_version ~= 4",
+            ),
+            "crates/key-insights-cli/src/keymap_snapshot.rs": (
+                'append_length_prefixed(&mut preimage, "mapping-v1");',
+                'append_length_prefixed(&mut preimage, "mapping-v2");',
+            ),
+            "docs/schema-compatibility.md": (
+                "| Event log | `1` |",
+                "| Event log | `2` |",
+            ),
+            "codex/suggestions.schema.json": (
+                '"schema_version": { "const": 1 }',
+                '"schema_version": { "const": 2 }',
+            ),
+            "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
+                '"payload_schema_version": { "const": 1 }',
+                '"payload_schema_version": { "const": 2 }',
+            ),
+        }
+        for relative, (before, after) in mutations.items():
+            with self.subTest(relative=relative):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    copy_version_contract(root)
+                    copy_schema_contract(root)
+                    path = root / relative
+                    changed = path.read_text().replace(before, after, 1)
+                    self.assertNotEqual(changed, path.read_text())
+                    path.write_text(changed)
+                    result = run_release("check", root=root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("schema", result.stderr.lower())
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            versions_path = root / "lua/key-insights/contract_versions.lua"
+            changed = versions_path.read_text().replace("[2] = true", "[4] = true", 1)
+            self.assertNotEqual(changed, versions_path.read_text())
+            versions_path.write_text(changed)
+            result = run_release("check", root=root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("report summary versions", result.stderr)
+
+    def test_schema_contract_rejects_coordinated_nested_snapshot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            canonical_path = root / "codex/payload.schema.json"
+            bundled_path = root / (
+                "plugins/nvim-key-insights/skills/analyze-neovim-usage/"
+                "references/payload.schema.json"
+            )
+            document = json.loads(canonical_path.read_text())
+            document["$defs"]["mapping_attribution"]["properties"][
+                "snapshot_version"
+            ]["const"] = 2
+            changed = json.dumps(document, indent=2).encode() + b"\n"
+            canonical_path.write_bytes(changed)
+            bundled_path.write_bytes(changed)
+
+            result = run_release("check", root=root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("mapping attribution snapshot", result.stderr)
+
+    def test_schema_contract_rejects_one_drifted_lua_snapshot_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            report_path = root / "lua/key-insights/report.lua"
+            changed = report_path.read_text().replace(
+                "decoded.keymap_snapshot.snapshot_version ~= contract_versions.keymap_snapshot",
+                "decoded.keymap_snapshot.snapshot_version ~= 2",
+                1,
+            )
+            self.assertNotEqual(changed, report_path.read_text())
+            report_path.write_text(changed)
+
+            result = run_release("check", root=root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("schema Lua validator", result.stderr)
+
+    def test_schema_contract_rejects_coordinated_mapping_identity_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            for relative in (
+                "codex/payload.schema.json",
+                "codex/suggestions.schema.json",
+                "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json",
+                "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/suggestions.schema.json",
+            ):
+                path = root / relative
+                path.write_text(path.read_text().replace("mapping-v1", "mapping-v2"))
+
+            result = run_release("check", root=root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("mapping identity", result.stderr)
+
+    def test_public_schema_documents_link_the_upgrade_policy(self) -> None:
+        for relative in (
+            "docs/analyzer.md",
+            "docs/event-schema.md",
+            "docs/installation.md",
+        ):
+            with self.subTest(relative=relative):
+                self.assertIn(
+                    "schema-compatibility.md",
+                    (ROOT / relative).read_text(),
+                )
+
     def test_release_tag_must_exactly_match_the_package_version(self) -> None:
         accepted = run_release("check", "--tag", "v0.1.0")
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
@@ -92,6 +249,7 @@ class ReleaseContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             copy_version_contract(root)
+            copy_schema_contract(root)
 
             result = run_release(
                 "bump", "--from", "0.1.0", "--to", "0.2.0", root=root

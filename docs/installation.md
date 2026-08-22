@@ -10,6 +10,11 @@ loading either package does not start collection, generate a report, or launch
 Codex. Install the analyzer explicitly when using `:KeyInsightsReport` or
 `:KeyInsightsAnalyze`.
 
+Before upgrading across a schema change, review the
+[schema compatibility and regeneration policy](schema-compatibility.md).
+Durable event logs and derived summaries have intentionally different upgrade
+paths.
+
 ## lazy.nvim
 
 The following specification remains lazy until one of the commands is used:

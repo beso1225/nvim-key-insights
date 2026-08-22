@@ -1,6 +1,6 @@
 # Event schema contract
 
-The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `1` is the initial compatibility boundary between the Lua collector and Rust analyzer.
+The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `1` is the initial compatibility boundary between the Lua collector and Rust analyzer. Its support lifetime and any future upgrade path are defined in the [schema compatibility policy](schema-compatibility.md).
 
 ## Envelope
 
