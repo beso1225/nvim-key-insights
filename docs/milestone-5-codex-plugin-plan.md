@@ -1,6 +1,6 @@
 # Milestone 5 Codex plugin packaging plan
 
-Status: in progress on `codex/m5-codex-plugin-packaging`.
+Status: complete on `codex/m5-codex-plugin-packaging`.
 
 Roadmap issue: [#20](https://github.com/beso1225/nvim-key-insights/issues/20)
 
@@ -114,4 +114,5 @@ This slice is complete when:
   findings.
 
 Release artifacts, tags, changelog policy, licensing decisions, and schema
-migration policy remain a separate Milestone 5 slice.
+migration policy were delivered in the separate Milestone 5 release-contract
+slice.

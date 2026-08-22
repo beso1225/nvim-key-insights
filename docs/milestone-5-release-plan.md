@@ -1,6 +1,7 @@
 # Milestone 5 release contract plan
 
-Status: in progress on `codex/m5-release-contract`.
+Status: complete as of 2026-08-22. The first release remains deliberately
+unpublished.
 
 ## Objective
 
@@ -194,5 +195,11 @@ re-run behavior, and partial publication.
 
 One command validates version synchronization, schema compatibility, changelog
 coverage, deterministic artifact contents, workflow permissions, and all
-existing project tests without publishing, tagging, using network access, or
-reading collector data.
+existing project tests without publishing, tagging, contacting an AI service,
+or reading collector data. Dependency acquisition may use configured Nix
+caches.
+
+The completion gate passed with `pkf run --no-cache check` inside the locked Nix
+development shell and `nix flake check --no-update-lock-file`. Repeated
+context-light adversarial reviews found no remaining P0-P2 issue after the
+release artifact and workflow hardening cycles.
