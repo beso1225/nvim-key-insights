@@ -5,12 +5,16 @@ local toolchainSources: Listing<String> = new {
   "flake.lock"
 }
 
+local codexSchemaSources: Listing<String> = new {
+  "codex/payload.schema.json"
+  "codex/suggestions.schema.json"
+}
+
 local rustSources: Listing<String> = new {
   ...toolchainSources
+  ...codexSchemaSources
   "Cargo.toml"
   "Cargo.lock"
-  "codex/suggestions.schema.json"
-  "codex/payload.schema.json"
   "crates/**/*"
 }
 
@@ -49,9 +53,9 @@ local packagingSources: Listing<String> = new {
 
 local codexPluginSources: Listing<String> = new {
   ...toolchainSources
+  ...codexSchemaSources
   ".agents/plugins/marketplace.json"
   "plugins/nvim-key-insights/**/*"
-  "codex/suggestions.schema.json"
   "Cargo.toml"
   "crates/key-insights-cli/Cargo.toml"
   "tests/codex_plugin_contract.sh"

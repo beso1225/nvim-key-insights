@@ -10,6 +10,18 @@ SKILL = (
     ROOT
     / "plugins/nvim-key-insights/skills/analyze-neovim-usage/SKILL.md"
 ).read_text()
+TASKFILE = (ROOT / "Taskfile.pkl").read_text()
+
+
+def taskfile_listing(name: str) -> str:
+    match = re.search(
+        rf"local {re.escape(name)}: Listing<String> = new \{{(.*?)\n\}}",
+        TASKFILE,
+        re.DOTALL,
+    )
+    if match is None:
+        raise AssertionError(f"missing Taskfile listing: {name}")
+    return match.group(1)
 
 
 class CodexSkillContractTests(unittest.TestCase):
@@ -64,6 +76,13 @@ class CodexSkillContractTests(unittest.TestCase):
             hashlib.sha256(SKILL.encode()).hexdigest(),
             "476ce3d1b0727208d43c1bec33b619c9e93cdf663a2a6cfe90a013c7d52f3c61",
         )
+
+    def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:
+        schema_sources = taskfile_listing("codexSchemaSources")
+        self.assertIn('"codex/payload.schema.json"', schema_sources)
+        self.assertIn('"codex/suggestions.schema.json"', schema_sources)
+        self.assertIn("...codexSchemaSources", taskfile_listing("rustSources"))
+        self.assertIn("...codexSchemaSources", taskfile_listing("codexPluginSources"))
 
 
 if __name__ == "__main__":
