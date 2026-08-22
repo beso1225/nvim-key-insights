@@ -5,11 +5,16 @@ local toolchainSources: Listing<String> = new {
   "flake.lock"
 }
 
+local codexSchemaSources: Listing<String> = new {
+  "codex/payload.schema.json"
+  "codex/suggestions.schema.json"
+}
+
 local rustSources: Listing<String> = new {
   ...toolchainSources
+  ...codexSchemaSources
   "Cargo.toml"
   "Cargo.lock"
-  "codex/suggestions.schema.json"
   "crates/**/*"
 }
 
@@ -40,8 +45,22 @@ local packagingSources: Listing<String> = new {
   ...rustSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
+  "plugins/nvim-key-insights/**/*"
   "docs/installation.md"
   "tests/packaging_contract.sh"
+  "Taskfile.pkl"
+}
+
+local codexPluginSources: Listing<String> = new {
+  ...toolchainSources
+  ...codexSchemaSources
+  ".agents/plugins/marketplace.json"
+  "plugins/nvim-key-insights/**/*"
+  "Cargo.toml"
+  "crates/key-insights-cli/Cargo.toml"
+  "tests/codex_plugin_contract.sh"
+  "tests/codex_skill_contract.py"
+  "tests/codex_plugin_workflow.sh"
   "Taskfile.pkl"
 }
 
@@ -74,6 +93,28 @@ local testPackaging: Task = new {
   inputs = packagingSources
 }
 
+local testCodexPlugin: Task = new {
+  name = "test:codex-plugin"
+  description = "Validate the installable Codex plugin and standalone skill"
+  cmd = "bash tests/codex_plugin_contract.sh"
+  inputs = codexPluginSources
+}
+
+local testCodexSkill: Task = new {
+  name = "test:codex-skill"
+  description = "Validate the semantic privacy and trust contract of the Codex skill"
+  cmd = "python3 tests/codex_skill_contract.py"
+  inputs = codexPluginSources
+}
+
+local testCodexPluginWorkflow: Task = new {
+  name = "test:codex-plugin-workflow"
+  description = "Exercise the privacy-safe manual skill validation workflow"
+  cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights bash tests/codex_plugin_workflow.sh"
+  inputs = codexPluginSources
+  deps { testRust }
+}
+
 local formatCheck: Task = new {
   name = "format:check"
   description = "Check Rust formatting"
@@ -104,7 +145,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging }
+  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow }
 }
 
 local default: Task = new {
@@ -113,4 +154,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; formatCheck; lintRust; lintActions; test; check; default }

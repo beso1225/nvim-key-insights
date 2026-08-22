@@ -883,18 +883,6 @@ local function expected_metric(summary, metric)
   if metric == "count_prefix_digit_presses" then
     return count_prefixes.digit_presses
   end
-  local distributions = summary.ergonomics.distributions
-  local histogram = distributions[metric]
-  if type(histogram) == "table" then
-    local total = 0
-    for _, bucket in ipairs(histogram) do
-      if type(bucket) ~= "table" or not is_counter(bucket.count) then
-        return nil
-      end
-      total = total + bucket.count
-    end
-    return total
-  end
   return nil
 end
 
@@ -954,9 +942,6 @@ local function validate_codex_suggestions(contents, preview_payload)
     total_snapshot_mappings = true,
     count_prefix_occurrences = true,
     count_prefix_digit_presses = true,
-    session_duration_ms = true,
-    sequence_length_keys = true,
-    average_inter_key_latency_ms = true,
   }
   for _, suggestion in ipairs(document.suggestions) do
     if type(suggestion) ~= "table"

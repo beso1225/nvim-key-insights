@@ -56,8 +56,10 @@ available through explicit positional input paths.
 ## Installation
 
 The Nix flake exports the Rust analyzer as `key-insights`, the Neovim runtime as
-`nvim-key-insights`, executable apps, and a reusable overlay. lazy.nvim, direct
-flake, overlay, supported-system, and complete configuration examples are in
+`nvim-key-insights`, the optional inert Codex plugin as
+`nvim-key-insights-codex-plugin`, executable apps, and a reusable overlay.
+lazy.nvim, Codex marketplace/standalone skill, direct flake, overlay,
+supported-system, and complete configuration examples are in
 [Installation and configuration](docs/installation.md).
 
 ## Collector lifecycle
@@ -150,8 +152,10 @@ implementations remain callback-local. Deterministic ergonomic distributions,
 operation evidence, guarded repeated-motion candidates, and cautious mapping
 coverage are implemented. The bounded Codex payload preview and explicit
 confirmation-gated Codex workflow are available from `:KeyInsightsAnalyze`.
-The flake exports separate analyzer and Neovim packages, executable apps, and a
-reusable overlay as the first Milestone 5 integration surface.
+The flake exports separate analyzer, Neovim, and inert Codex plugin packages,
+executable apps, and a reusable overlay. The repository marketplace packages a
+self-contained `analyze-neovim-usage` skill for an optional manual workflow;
+only the local Rust validator turns its structured JSON into trusted Markdown.
 
 See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
 remaining milestones and the

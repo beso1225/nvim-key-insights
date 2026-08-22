@@ -62,9 +62,6 @@ fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
         "total_snapshot_mappings",
         "count_prefix_occurrences",
         "count_prefix_digit_presses",
-        "session_duration_ms",
-        "sequence_length_keys",
-        "average_inter_key_latency_ms",
     ];
     assert_eq!(
         metrics,
@@ -152,6 +149,23 @@ fn rejects_unsupported_actions_and_non_measurement_evidence() {
             field: "evidence.metric"
         })
     ));
+}
+
+#[test]
+fn rejects_histogram_names_as_scalar_evidence() {
+    for metric in [
+        "session_duration_ms",
+        "sequence_length_keys",
+        "average_inter_key_latency_ms",
+    ] {
+        let document = VALID.replace("repeated_key_runs", metric);
+        assert!(matches!(
+            validate_codex_suggestions_json(document.as_bytes()),
+            Err(CodexSuggestionError::InvalidContract {
+                field: "evidence.metric"
+            })
+        ));
+    }
 }
 
 #[test]

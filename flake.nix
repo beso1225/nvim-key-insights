@@ -34,6 +34,12 @@
           ];
         };
 
+      codexPluginSource = lib:
+        lib.fileset.toSource {
+          root = ./plugins/nvim-key-insights;
+          fileset = ./plugins/nvim-key-insights;
+        };
+
       mkCli = pkgs:
         pkgs.rustPlatform.buildRustPackage {
           pname = "key-insights";
@@ -58,13 +64,34 @@
           };
         };
 
+      mkCodexPlugin = pkgs:
+        pkgs.stdenvNoCC.mkDerivation {
+          pname = "nvim-key-insights-codex-plugin";
+          inherit version;
+          src = codexPluginSource pkgs.lib;
+          dontConfigure = true;
+          dontBuild = true;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp -R . "$out"
+            runHook postInstall
+          '';
+          meta = {
+            description = "Inert Codex plugin for sanitized Neovim usage analysis";
+            homepage = "https://github.com/beso1225/nvim-key-insights";
+          };
+        };
+
       packagesFor = pkgs:
         let
           cli = mkCli pkgs;
           plugin = mkPlugin pkgs;
+          codexPlugin = mkCodexPlugin pkgs;
         in {
           key-insights = cli;
           nvim-key-insights = plugin;
+          nvim-key-insights-codex-plugin = codexPlugin;
           default = cli;
         };
     in {
@@ -86,6 +113,7 @@
 
       overlays.default = final: prev: {
         key-insights = mkCli final;
+        nvim-key-insights-codex-plugin = mkCodexPlugin final;
         vimPlugins = prev.vimPlugins // {
           nvim-key-insights = mkPlugin final;
         };
@@ -96,7 +124,7 @@
           pkgs = import nixpkgs { inherit system; };
           packages = packagesFor pkgs;
         in {
-          inherit (packages) key-insights nvim-key-insights;
+          inherit (packages) key-insights nvim-key-insights nvim-key-insights-codex-plugin;
           packaged-plugin = pkgs.runCommand "nvim-key-insights-packaged-plugin-check" {
             nativeBuildInputs = [ pkgs.neovim ];
           } ''
@@ -115,6 +143,18 @@
             test ! -e "$XDG_CACHE_HOME/nvim/key-insights"
             touch "$out"
           '';
+          packaged-codex-plugin = pkgs.runCommand "nvim-key-insights-packaged-codex-plugin-check" { } ''
+            plugin=${packages.nvim-key-insights-codex-plugin}
+            test -f "$plugin/.codex-plugin/plugin.json"
+            test -f "$plugin/skills/analyze-neovim-usage/SKILL.md"
+            test -f "$plugin/skills/analyze-neovim-usage/agents/openai.yaml"
+            test -f "$plugin/skills/analyze-neovim-usage/references/payload.schema.json"
+            test -f "$plugin/skills/analyze-neovim-usage/references/suggestions.schema.json"
+            test "$(find "$plugin" -type f | wc -l)" -eq 5
+            test -z "$(find "$plugin" -type l -print -quit)"
+            test -z "$(find "$plugin" -type f -perm -111 -print -quit)"
+            touch "$out"
+          '';
         });
 
       devShells = forAllSystems (system:
@@ -128,6 +168,10 @@
               pkgs.clippy
               pkgs.neovim
               pkgs.pkl
+              (pkgs.python3.withPackages (pythonPackages: [
+                pythonPackages.jsonschema
+                pythonPackages.pyyaml
+              ]))
               pkgs.rustc
               pkgs.rustfmt
               pkfire.packages.${system}.default

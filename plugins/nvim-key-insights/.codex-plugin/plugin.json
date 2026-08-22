@@ -1,0 +1,22 @@
+{
+  "name": "nvim-key-insights",
+  "version": "0.1.0",
+  "description": "Evidence-bound Neovim usage analysis from privacy-sanitized local summaries",
+  "author": {
+    "name": "beso1225",
+    "url": "https://github.com/beso1225"
+  },
+  "homepage": "https://github.com/beso1225/nvim-key-insights",
+  "repository": "https://github.com/beso1225/nvim-key-insights",
+  "keywords": ["neovim", "keymaps", "ergonomics", "privacy"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "nvim-key-insights",
+    "shortDescription": "Review sanitized Neovim usage evidence.",
+    "longDescription": "Evaluate a canonical privacy-sanitized key-insights preview, distinguish learning from mapping changes, and return evidence-bound structured suggestions for local validation.",
+    "developerName": "beso1225",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Analyze my sanitized Neovim usage preview and return structured suggestions."
+  }
+}
