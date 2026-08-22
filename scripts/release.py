@@ -793,6 +793,17 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
         license_text = decode_document(root, LICENSE_FILE, str(LICENSE_FILE))
         if not license_text.strip():
             fail("LICENSE must be nonempty")
+        prerelease_wording = (
+            "there is no release tag yet",
+            "the repository currently has no published release",
+        )
+        for relative in (Path("docs/installation.md"), Path("docs/releasing.md")):
+            normalized = " ".join(documents[relative].split()).casefold()
+            for wording in prerelease_wording:
+                if wording in normalized:
+                    fail(
+                        f"{relative} contains prerelease-only wording {wording!r}"
+                    )
     releasing = documents[Path("docs/releasing.md")]
     normalized_releasing = " ".join(releasing.split())
     required_release_phrases = (

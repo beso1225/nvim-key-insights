@@ -89,6 +89,37 @@ def write_test_license(root: Path) -> None:
     )
 
 
+def mark_release_documentation_published(root: Path) -> None:
+    installation_path = root / "docs/installation.md"
+    installation = installation_path.read_text()
+    installation = installation.replace(
+        "There is no release tag yet. Keep the revision recorded by the "
+        "plugin-manager\nlock file, and review changes before updating it.",
+        "Use an exact immutable release tag and keep the Neovim plugin, analyzer, "
+        "and\nCodex plugin on the same release revision.",
+    )
+    installation = installation.replace(
+        "There is no release tag yet. These commands therefore track the selected "
+        "Git\nrevision; review changes before upgrading the marketplace or plugin "
+        "cache.",
+        "Use the same immutable release tag when installing or upgrading the "
+        "marketplace\nand plugin cache.",
+    )
+    installation_path.write_text(installation)
+
+    releasing_path = root / "docs/releasing.md"
+    releasing_path.write_text(
+        releasing_path.read_text().replace(
+            "The repository currently has no published release. The first public "
+            "release\nalso requires an explicit owner decision about the repository "
+            "license; the\nrelease tooling does not choose or modify usage rights.",
+            "Every public release requires an explicit owner decision about the "
+            "repository\nlicense; the release tooling does not choose or modify usage "
+            "rights.",
+        )
+    )
+
+
 def copy_artifact_contract(destination: Path) -> None:
     copy_version_contract(destination)
     for relative in ("codex/payload.schema.json", "codex/suggestions.schema.json"):
@@ -351,6 +382,7 @@ class ReleaseContractTest(unittest.TestCase):
             changelog = (root / "CHANGELOG.md").read_text()
             self.assertIn("## [Unreleased]\n\n## [0.1.0] - 2026-08-22", changelog)
             write_test_license(root)
+            mark_release_documentation_published(root)
             check = run_release("check", "--tag", "v0.1.0", root=root)
             self.assertEqual(check.returncode, 0, check.stderr)
 
@@ -364,6 +396,37 @@ class ReleaseContractTest(unittest.TestCase):
             )
             self.assertNotEqual(repeated.returncode, 0)
             self.assertEqual((root / "CHANGELOG.md").read_text(), changelog)
+
+    def test_tag_rejects_prerelease_only_documentation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            write_test_license(root)
+            mark_release_documentation_published(root)
+
+            cases = (
+                ("docs/installation.md", "There is no release tag yet."),
+                ("docs/releasing.md", "The repository currently has no published release."),
+            )
+            for relative, wording in cases:
+                with self.subTest(relative=relative):
+                    path = root / relative
+                    published = path.read_text()
+                    path.write_text(published + "\n" + wording + "\n")
+                    result = run_release("check", "--tag", "v0.1.0", root=root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("prerelease-only wording", result.stderr)
+                    path.write_text(published)
 
     def test_invalid_changelog_preparation_preserves_the_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
