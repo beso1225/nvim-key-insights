@@ -101,26 +101,15 @@ def copy_artifact_contract(destination: Path) -> None:
         destination / "plugins/nvim-key-insights",
         dirs_exist_ok=True,
     )
-    subprocess.run(["git", "init", "-q"], cwd=destination, check=True)
-    subprocess.run(["git", "add", "."], cwd=destination, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=Release Contract",
-            "-c",
-            "user.email=release-contract@example.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "fixture",
-        ],
-        cwd=destination,
-        check=True,
-    )
+    initialize_git_contract(destination)
 
 
-def commit_artifact_mutation(root: Path) -> None:
+def initialize_git_contract(root: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    commit_artifact_mutation(root, "fixture")
+
+
+def commit_artifact_mutation(root: Path, message: str = "mutate fixture") -> None:
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(
         [
@@ -132,7 +121,7 @@ def commit_artifact_mutation(root: Path) -> None:
             "commit",
             "-q",
             "-m",
-            "mutate fixture",
+            message,
         ],
         cwd=root,
         check=True,
@@ -540,6 +529,94 @@ class ReleaseContractTest(unittest.TestCase):
                     result = run_release("check", "--tag", "v0.1.0", root=root)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(diagnostic, result.stderr)
+
+    def test_release_notes_are_extracted_without_overwriting_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            write_test_license(root)
+            initialize_git_contract(root)
+            output = root / "release-notes.md"
+            extracted = run_release(
+                "release-notes",
+                "--tag",
+                "v0.1.0",
+                "--output",
+                str(output),
+                root=root,
+            )
+            self.assertEqual(extracted.returncode, 0, extracted.stderr)
+            notes = output.read_text()
+            self.assertTrue(notes.startswith("### Added\n"))
+            self.assertIn("Privacy-first Neovim collection", notes)
+            self.assertNotIn("Unreleased", notes)
+            self.assertNotIn("## [0.1.0]", notes)
+
+            existing = run_release(
+                "release-notes",
+                "--tag",
+                "v0.1.0",
+                "--output",
+                str(output),
+                root=root,
+            )
+            self.assertNotEqual(existing.returncode, 0)
+            self.assertEqual(output.read_text(), notes)
+
+    def test_release_notes_reject_mismatched_tags_and_symlink_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            initialize_git_contract(root)
+            output = root / "release-notes.md"
+            mismatch = run_release(
+                "release-notes",
+                "--tag",
+                "v0.2.0",
+                "--output",
+                str(output),
+                root=root,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("release tag", mismatch.stderr)
+            self.assertFalse(output.exists())
+
+            prepared = run_release(
+                "prepare-changelog",
+                "--version",
+                "0.1.0",
+                "--date",
+                "2026-08-22",
+                root=root,
+            )
+            self.assertEqual(prepared.returncode, 0, prepared.stderr)
+            write_test_license(root)
+            commit_artifact_mutation(root)
+            target = root / "notes-target"
+            target.write_text("preserve me\n")
+            output.symlink_to(target)
+            linked = run_release(
+                "release-notes",
+                "--tag",
+                "v0.1.0",
+                "--output",
+                str(output),
+                root=root,
+            )
+            self.assertNotEqual(linked.returncode, 0)
+            self.assertIn("already exists", linked.stderr)
+            self.assertEqual(target.read_text(), "preserve me\n")
 
     def test_codex_plugin_artifact_is_reproducible_and_canonical(self) -> None:
         expected_files = [

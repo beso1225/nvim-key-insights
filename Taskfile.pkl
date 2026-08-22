@@ -39,6 +39,7 @@ local workflowSources: Listing<String> = new {
   ".github/workflows/*.yaml"
   "Taskfile.pkl"
   "tests/ci_contract.sh"
+  "tests/release_workflow_contract.py"
 }
 
 local packagingSources: Listing<String> = new {
@@ -164,7 +165,7 @@ local lintRust: Task = new {
 local lintActions: Task = new {
   name = "lint:actions"
   description = "Lint GitHub Actions workflows"
-  cmd = "actionlint && bash tests/ci_contract.sh"
+  cmd = "actionlint && bash tests/ci_contract.sh && python3 tests/release_workflow_contract.py"
   inputs = workflowSources
 }
 

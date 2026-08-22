@@ -767,6 +767,22 @@ def validate_changelog_text(contents: str, version: str, tag: str | None) -> Non
             fail(f"changelog release notes for {version} must contain a section and entry")
 
 
+def changelog_release_notes(contents: str, version: str) -> str:
+    heading = re.search(
+        rf"^## \[{re.escape(version)}\] - [^\n]+$",
+        contents,
+        re.MULTILINE,
+    )
+    if heading is None:
+        fail(f"changelog has no release notes for {version}")
+    next_heading = re.search(r"^## [^\n]+$", contents[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading is not None else len(contents)
+    notes = contents[heading.end() : end].strip()
+    if not notes:
+        fail(f"changelog release notes for {version} are empty")
+    return notes + "\n"
+
+
 def validate_release_documentation(root: Path, version: str, tag: str | None) -> None:
     documents = {
         relative: decode_document(root, relative, str(relative))
@@ -1011,6 +1027,62 @@ def prepare_changelog(root: Path, version: str, date_value: str) -> None:
     )
     validate_changelog_text(updated, version, f"v{version}")
     write_single_update(root, CHANGELOG_FILE, original, updated.encode("utf-8"))
+
+
+def publish_new_file(destination: Path, data: bytes) -> None:
+    parent = destination.parent
+    try:
+        parent_metadata = parent.lstat()
+    except OSError as error:
+        fail(f"cannot inspect output parent {parent}: {error}")
+    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
+        fail("output parent must be a directory and not a symlink")
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        fail(f"cannot inspect output {destination}: {error}")
+    else:
+        fail(f"output {destination} already exists")
+
+    staged_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=parent,
+            prefix=f".release-new-{destination.name}-",
+            delete=False,
+        ) as staged:
+            staged_name = staged.name
+            staged.write(data)
+            staged.flush()
+            os.fsync(staged.fileno())
+        os.chmod(staged_name, 0o644)
+        try:
+            os.link(staged_name, destination)
+        except FileExistsError:
+            fail(f"output {destination} already exists")
+    finally:
+        if staged_name is not None:
+            remove_if_present(Path(staged_name))
+
+
+def write_release_notes(root: Path, tag: str, output: Path) -> None:
+    commit = git_commit(root)
+    version = git_release_version(root, commit)
+    if tag != f"v{version}":
+        fail(f"release tag {tag!r} must exactly match v{version}")
+    try:
+        changelog = git_path_blob(root, commit, CHANGELOG_FILE).decode("utf-8")
+        license_text = git_path_blob(root, commit, LICENSE_FILE).decode("utf-8")
+    except UnicodeDecodeError as error:
+        fail(f"release documentation in Git is not UTF-8: {error}")
+    validate_changelog_text(changelog, version, tag)
+    if not license_text.strip():
+        fail("LICENSE in Git must be nonempty")
+    notes = changelog_release_notes(changelog, version).encode("utf-8")
+    destination = output if output.is_absolute() else root / output
+    publish_new_file(destination, notes)
 
 
 def git_environment() -> dict[str, str]:
@@ -1413,6 +1485,13 @@ def parser() -> argparse.ArgumentParser:
     artifacts.add_argument("--version", required=True)
     artifacts.add_argument("--epoch", required=True, type=int)
     artifacts.add_argument("--output-dir", required=True, type=Path)
+
+    notes = subcommands.add_parser(
+        "release-notes",
+        help="extract validated changelog notes for a release tag",
+    )
+    notes.add_argument("--tag", required=True)
+    notes.add_argument("--output", required=True, type=Path)
     return command
 
 
@@ -1432,9 +1511,12 @@ def main() -> int:
         elif arguments.command == "prepare-changelog":
             prepare_changelog(root, arguments.version, arguments.date)
             print(f"changelog release {arguments.version} ({arguments.date}): prepared")
-        else:
+        elif arguments.command == "build-artifacts":
             build_artifacts(root, arguments.output_dir, arguments.version, arguments.epoch)
             print(f"release artifacts {arguments.version}: built in {arguments.output_dir}")
+        else:
+            write_release_notes(root, arguments.tag, arguments.output)
+            print(f"release notes {arguments.tag}: written to {arguments.output}")
     except (ContractError, OSError) as error:
         print(f"release: {error}", file=sys.stderr)
         return 1

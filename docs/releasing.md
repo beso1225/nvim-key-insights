@@ -102,7 +102,22 @@ git push origin "v0.1.0"
 The tag-only release workflow re-runs the version, schema, test, artifact, and
 permission contracts with read-only access. Only its dependent publication job
 receives `contents: write`. It refuses a tag/version mismatch and refuses to
-replace an existing GitHub release.
+replace an existing GitHub release. The tagged commit must already be reachable
+from `main`; do not tag an unmerged release-preparation branch.
+
+Before pushing a release tag, configure one active repository tag ruleset named
+`immutable-release-tags`. It must target `refs/tags/v*.*.*`, have no bypass
+actors or exclusions, and enable both deletion and non-fast-forward update
+protection. The publication job verifies this ruleset through the GitHub API and
+fails closed when it is absent or weaker; this closes the tag check/use race.
+Create a protected GitHub environment named `release` with required reviewers,
+and add an expiring fine-grained secret named `RELEASE_RULESET_TOKEN`. The token
+needs repository Administration write permission because GitHub hides
+`bypass_actors` from callers without ruleset write access; grant no Contents
+permission. It is exposed only to the environment-gated, checkout-free ruleset
+verification step. The separate write-capable publication job also contains one
+repository-independent shell step and does not run a checkout or external
+action.
 
 Confirm the published archive checksum and release notes before announcing the
 release. Do not move or reuse a pushed release tag.

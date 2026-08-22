@@ -166,8 +166,7 @@ Review archive extraction paths and all filesystem race/failure paths.
 Red:
 
 - require a `v*.*.*` tag trigger and reject pull-request release execution;
-- require SHA-pinned checkout/upload/download actions with checkout credentials
-  disabled;
+- require SHA-pinned checkout/upload actions with checkout credentials disabled;
 - require `contents: read` for validation and isolate `contents: write` to the
   publication job;
 - reject tag/version mismatch and implicit Nix lock updates before upload;
@@ -176,8 +175,8 @@ Red:
 Green:
 
 - validate and test in a read-only job;
-- transfer only the contract-validated archive and checksum file through a
-  GitHub artifact;
+- transfer only the contract-validated archive, checksum, and extracted release
+  notes through a GitHub artifact;
 - publish in a dependent minimal-permission job with `gh release create`.
 
 Review token reachability, untrusted code execution, artifact substitution,
