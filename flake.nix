@@ -11,7 +11,8 @@
     let
       systems = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      version = "0.1.0";
+      cargoManifest = builtins.fromTOML (builtins.readFile ./crates/key-insights-cli/Cargo.toml);
+      version = cargoManifest.package.version;
 
       cliSource = lib:
         lib.fileset.toSource {
@@ -168,6 +169,7 @@
               pkgs.clippy
               pkgs.neovim
               pkgs.pkl
+              pkgs.uv
               (pkgs.python3.withPackages (pythonPackages: [
                 pythonPackages.jsonschema
                 pythonPackages.pyyaml

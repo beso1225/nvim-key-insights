@@ -64,6 +64,18 @@ local codexPluginSources: Listing<String> = new {
   "Taskfile.pkl"
 }
 
+local releaseSources: Listing<String> = new {
+  ...toolchainSources
+  "Cargo.lock"
+  "Cargo.toml"
+  "crates/key-insights-cli/Cargo.toml"
+  ".agents/plugins/marketplace.json"
+  "plugins/nvim-key-insights/.codex-plugin/plugin.json"
+  "scripts/release.py"
+  "tests/release_contract.py"
+  "Taskfile.pkl"
+}
+
 local testRust: Task = new {
   name = "test:rust"
   description = "Run Rust unit and integration tests"
@@ -115,6 +127,13 @@ local testCodexPluginWorkflow: Task = new {
   deps { testRust }
 }
 
+local testRelease: Task = new {
+  name = "test:release"
+  description = "Validate synchronized release versions and safe version updates"
+  cmd = "UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" uv run --python-preference only-system python tests/release_contract.py"
+  inputs = releaseSources
+}
+
 local formatCheck: Task = new {
   name = "format:check"
   description = "Check Rust formatting"
@@ -145,7 +164,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow }
+  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease }
 }
 
 local default: Task = new {
@@ -154,4 +173,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
