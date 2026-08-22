@@ -71,6 +71,25 @@ Review version/schema mutations, privacy boundaries, archive allowlists,
 workflow permissions, failure preservation, and the generated checksums. Commit
 the reviewed release preparation on a pull request and merge it before tagging.
 
+Build the release assets from the reviewed tree with the commit timestamp as the
+reproducible archive epoch. The output directory must not already exist:
+
+```sh
+epoch="$(git show -s --format=%ct HEAD)"
+nix develop --no-update-lock-file --command \
+  uv run --python-preference only-system python scripts/release.py build-artifacts \
+  --version 0.1.0 --epoch "$epoch" --output-dir dist
+(cd dist && shasum -a 256 --check SHA256SUMS)
+```
+
+`release.py build-artifacts` resolves one Git `HEAD` commit, disables replacement
+objects, and reads the five inert Codex plugin files from that immutable object
+database. It requires the plugin working tree to match that commit, normalizes
+an uncompressed USTAR archive, and atomically publishes the complete versioned
+archive plus `SHA256SUMS` without replacing an existing output directory. It
+never packages the CLI, Neovim collector, private logs, reports, local
+configuration, repository metadata, or build outputs.
+
 ## Create and publish the tag
 
 Create an annotated tag on the reviewed merge commit:

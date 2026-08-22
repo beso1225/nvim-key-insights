@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
+import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 from collections import Counter
@@ -24,6 +30,16 @@ CANONICAL_MANIFEST = Path("crates/key-insights-cli/Cargo.toml")
 LOCK_FILE = Path("Cargo.lock")
 FLAKE_FILE = Path("flake.nix")
 PLUGIN_MANIFEST = Path("plugins/nvim-key-insights/.codex-plugin/plugin.json")
+PLUGIN_ROOT = Path("plugins/nvim-key-insights")
+PLUGIN_ARTIFACT_FILES = (
+    Path(".codex-plugin/plugin.json"),
+    Path("skills/analyze-neovim-usage/SKILL.md"),
+    Path("skills/analyze-neovim-usage/agents/openai.yaml"),
+    Path("skills/analyze-neovim-usage/references/payload.schema.json"),
+    Path("skills/analyze-neovim-usage/references/suggestions.schema.json"),
+)
+MAX_PLUGIN_ARTIFACT_SOURCE_BYTES = 2 * 1024 * 1024
+MAX_GIT_METADATA_BYTES = 4 * 1024 * 1024
 MARKETPLACE = Path(".agents/plugins/marketplace.json")
 REQUIRED_FILES = (
     CANONICAL_MANIFEST,
@@ -765,6 +781,7 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
     normalized_releasing = " ".join(releasing.split())
     required_release_phrases = (
         "release.py prepare-changelog",
+        "release.py build-artifacts",
         "pkf run --no-cache check",
         "nix flake check --no-update-lock-file",
         "git tag -a",
@@ -772,6 +789,7 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
         "rollback",
         "existing GitHub release",
         "contents: write",
+        "SHA256SUMS",
     )
     for phrase in required_release_phrases:
         if phrase not in normalized_releasing:
@@ -995,6 +1013,343 @@ def prepare_changelog(root: Path, version: str, date_value: str) -> None:
     write_single_update(root, CHANGELOG_FILE, original, updated.encode("utf-8"))
 
 
+def git_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return environment
+
+
+def git_output(
+    root: Path,
+    arguments: list[str],
+    field: str,
+    max_output_bytes: int = MAX_GIT_METADATA_BYTES,
+) -> bytes:
+    try:
+        with tempfile.TemporaryFile() as diagnostic:
+            process = subprocess.Popen(
+                ["git", *arguments],
+                cwd=root,
+                env=git_environment(),
+                stdout=subprocess.PIPE,
+                stderr=diagnostic,
+            )
+            if process.stdout is None:
+                process.kill()
+                process.wait()
+                fail(f"cannot inspect {field} in Git: stdout pipe is unavailable")
+            try:
+                output = process.stdout.read(max_output_bytes + 1)
+                if len(output) > max_output_bytes:
+                    process.kill()
+                    process.wait()
+                    fail(f"Git output for {field} exceeds the size limit")
+                return_code = process.wait()
+            finally:
+                process.stdout.close()
+            diagnostic.seek(0)
+            error_output = diagnostic.read(4097)
+    except OSError as error:
+        fail(f"cannot inspect {field} in Git: {error}")
+    if return_code != 0:
+        error_text = error_output.decode("utf-8", errors="replace").strip()
+        if len(error_output) > 4096:
+            error_text += "…"
+        fail(f"cannot inspect {field} in Git: {error_text or 'git command failed'}")
+    return output
+
+
+def require_clean_git_path(root: Path, commit: str, relative: Path) -> None:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--quiet",
+                "--no-ext-diff",
+                commit,
+                "--",
+                relative.as_posix(),
+            ],
+            cwd=root,
+            env=git_environment(),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        fail(f"cannot compare {relative} with Git commit {commit}: {error}")
+    if result.returncode == 1:
+        fail("plugin artifact working tree must match the resolved Git commit")
+    if result.returncode != 0:
+        fail(f"cannot compare {relative} with Git commit {commit}")
+    untracked = git_output(
+        root,
+        [
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            relative.as_posix(),
+        ],
+        f"untracked {relative}",
+    )
+    if untracked:
+        fail("plugin artifact working tree must match the resolved Git commit")
+
+
+def git_commit(root: Path) -> str:
+    output = git_output(
+        root,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        "release commit",
+        max_output_bytes=65,
+    )
+    try:
+        commit = output.decode("ascii").strip()
+    except UnicodeDecodeError:
+        fail("Git returned a non-ASCII release commit")
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) is None:
+        fail("Git returned an invalid release commit")
+    return commit
+
+
+def git_blob(root: Path, object_id: str, size: int, field: str) -> bytes:
+    if size < 0 or size > MAX_PLUGIN_ARTIFACT_SOURCE_BYTES:
+        fail(f"{field} exceeds the plugin artifact source size limit")
+    data = git_output(
+        root,
+        ["cat-file", "blob", object_id],
+        field,
+        max_output_bytes=size,
+    )
+    if len(data) != size:
+        fail(f"{field} Git blob size changed unexpectedly")
+    return data
+
+
+def git_path_blob(root: Path, commit: str, relative: Path) -> bytes:
+    output = git_output(
+        root,
+        ["ls-tree", "-z", "--full-tree", commit, "--", relative.as_posix()],
+        str(relative),
+    )
+    entries = [entry for entry in output.split(b"\0") if entry]
+    if len(entries) != 1:
+        fail(f"Git HEAD must contain exactly one {relative}")
+    metadata, path_bytes = entries[0].split(b"\t", 1)
+    mode, object_type, object_id = metadata.decode("ascii").split(" ")
+    if path_bytes.decode("utf-8") != relative.as_posix():
+        fail(f"Git returned an unexpected path for {relative}")
+    if mode != "100644" or object_type != "blob":
+        fail(f"Git {relative} must be a non-executable regular file")
+    size_output = git_output(root, ["cat-file", "-s", object_id], str(relative))
+    try:
+        size = int(size_output)
+    except ValueError:
+        fail(f"Git returned an invalid size for {relative}")
+    return git_blob(root, object_id, size, str(relative))
+
+
+def collect_plugin_artifact_files(root: Path, commit: str) -> dict[Path, bytes]:
+    require_clean_git_path(root, commit, PLUGIN_ROOT)
+
+    output = git_output(
+        root,
+        ["ls-tree", "-r", "-z", "--full-tree", commit, "--", str(PLUGIN_ROOT)],
+        str(PLUGIN_ROOT),
+    )
+    entries = [entry for entry in output.split(b"\0") if entry]
+    objects: dict[Path, tuple[str, int]] = {}
+    total = 0
+    for entry in entries:
+        try:
+            metadata, path_bytes = entry.split(b"\t", 1)
+            mode, object_type, object_id = metadata.decode("ascii").split(" ")
+            path = Path(path_bytes.decode("utf-8"))
+            relative = path.relative_to(PLUGIN_ROOT)
+        except (UnicodeDecodeError, ValueError):
+            fail("Git returned a malformed plugin artifact tree entry")
+        if mode == "120000":
+            fail(f"plugin artifact contains symlink {relative}")
+        if mode != "100644" or object_type != "blob":
+            fail(f"plugin artifact contains executable or non-regular file {relative}")
+        size_output = git_output(root, ["cat-file", "-s", object_id], str(path))
+        try:
+            size = int(size_output)
+        except ValueError:
+            fail(f"Git returned an invalid size for {path}")
+        total += size
+        if total > MAX_PLUGIN_ARTIFACT_SOURCE_BYTES:
+            fail("plugin artifact sources exceed the size limit")
+        objects[relative] = (object_id, size)
+
+    expected = set(PLUGIN_ARTIFACT_FILES)
+    actual = set(objects)
+    if actual != expected:
+        missing = sorted(str(path) for path in expected - actual)
+        unexpected = sorted(str(path) for path in actual - expected)
+        fail(
+            "plugin artifact allowlist mismatch: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return {
+        relative: git_blob(
+            root,
+            objects[relative][0],
+            objects[relative][1],
+            str(PLUGIN_ROOT / relative),
+        )
+        for relative in PLUGIN_ARTIFACT_FILES
+    }
+
+
+def validate_plugin_artifact_files(
+    root: Path, commit: str, files: dict[Path, bytes], version: str
+) -> None:
+    manifest = parse_json(files[Path(".codex-plugin/plugin.json")], "artifact plugin manifest")
+    if not isinstance(manifest, dict) or manifest.get("name") != "nvim-key-insights":
+        fail("artifact plugin manifest identity is invalid")
+    if manifest.get("version") != version:
+        fail("artifact plugin manifest version does not match the release version")
+    schema_pairs = (
+        (
+            Path("skills/analyze-neovim-usage/references/payload.schema.json"),
+            Path("codex/payload.schema.json"),
+        ),
+        (
+            Path("skills/analyze-neovim-usage/references/suggestions.schema.json"),
+            Path("codex/suggestions.schema.json"),
+        ),
+    )
+    for bundled, canonical in schema_pairs:
+        if files[bundled] != git_path_blob(root, commit, canonical):
+            fail(f"artifact schema {bundled} does not match {canonical}")
+
+
+def git_release_version(root: Path, commit: str) -> str:
+    cargo = parse_toml(
+        git_path_blob(root, commit, CANONICAL_MANIFEST),
+        f"Git HEAD {CANONICAL_MANIFEST}",
+    )
+    package = cargo.get("package")
+    if not isinstance(package, dict) or package.get("name") != "key-insights":
+        fail("Git HEAD canonical Cargo package must be named key-insights")
+    return stable_version(package.get("version"), "Git HEAD Cargo package version")
+
+
+def render_plugin_archive(
+    files: dict[Path, bytes], version: str, epoch: int
+) -> bytes:
+    prefix = f"nvim-key-insights-codex-plugin-v{version}/"
+    uncompressed = io.BytesIO()
+    with tarfile.open(
+        fileobj=uncompressed,
+        mode="w",
+        format=tarfile.USTAR_FORMAT,
+    ) as archive:
+        for relative in PLUGIN_ARTIFACT_FILES:
+            data = files[relative]
+            entry = tarfile.TarInfo(prefix + relative.as_posix())
+            entry.size = len(data)
+            entry.mode = 0o644
+            entry.uid = 0
+            entry.gid = 0
+            entry.uname = ""
+            entry.gname = ""
+            entry.mtime = epoch
+            archive.addfile(entry, io.BytesIO(data))
+
+    return uncompressed.getvalue()
+
+
+def rename_directory_noreplace(source: Path, destination: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "linux":
+        try:
+            rename = libc.renameat2
+        except AttributeError:
+            fail("atomic no-replace directory publication is unavailable")
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+    elif sys.platform == "darwin":
+        try:
+            rename = libc.renamex_np
+        except AttributeError:
+            fail("atomic no-replace directory publication is unavailable")
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(source_bytes, destination_bytes, 0x00000004)
+    else:
+        fail("atomic no-replace directory publication is unsupported on this platform")
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in (errno.EEXIST, errno.ENOTEMPTY):
+        fail(f"artifact output {destination} already exists")
+    fail(f"cannot publish artifact output {destination}: {os.strerror(error_number)}")
+
+
+def build_artifacts(root: Path, output_dir: Path, version: str, epoch: int) -> None:
+    stable_version(version, "--version")
+    if epoch < 0 or epoch > 0xFFFFFFFF:
+        fail("--epoch must be between 0 and 4294967295")
+    commit = git_commit(root)
+    current_version = git_release_version(root, commit)
+    if version != current_version:
+        fail(f"--version {version} does not match Git HEAD version {current_version}")
+    files = collect_plugin_artifact_files(root, commit)
+    validate_plugin_artifact_files(root, commit, files, version)
+
+    destination = output_dir if output_dir.is_absolute() else root / output_dir
+    try:
+        destination.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        fail(f"cannot inspect artifact output {destination}: {error}")
+    else:
+        fail(f"artifact output {destination} already exists")
+
+    parent = destination.parent
+    try:
+        parent_metadata = parent.lstat()
+    except OSError as error:
+        fail(f"cannot inspect artifact output parent {parent}: {error}")
+    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
+        fail("artifact output parent must be a directory and not a symlink")
+
+    archive_name = f"nvim-key-insights-codex-plugin-v{version}.tar"
+    archive_bytes = render_plugin_archive(files, version, epoch)
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    checksums = f"{digest}  {archive_name}\n".encode("ascii")
+
+    staged = Path(tempfile.mkdtemp(prefix=".release-artifacts-", dir=parent))
+    installed = False
+    try:
+        archive_path = staged / archive_name
+        checksum_path = staged / "SHA256SUMS"
+        archive_path.write_bytes(archive_bytes)
+        checksum_path.write_bytes(checksums)
+        os.chmod(archive_path, 0o644)
+        os.chmod(checksum_path, 0o644)
+        rename_directory_noreplace(staged, destination)
+        installed = True
+    finally:
+        if not installed:
+            shutil.rmtree(staged, ignore_errors=True)
+
+
 def validate_nix_versions(root: Path, version: str, systems: list[str]) -> None:
     for system in systems:
         if not system or any(character.isspace() for character in system):
@@ -1050,6 +1405,14 @@ def parser() -> argparse.ArgumentParser:
     )
     changelog.add_argument("--version", required=True)
     changelog.add_argument("--date", required=True)
+
+    artifacts = subcommands.add_parser(
+        "build-artifacts",
+        help="build the deterministic Codex plugin release archive",
+    )
+    artifacts.add_argument("--version", required=True)
+    artifacts.add_argument("--epoch", required=True, type=int)
+    artifacts.add_argument("--output-dir", required=True, type=Path)
     return command
 
 
@@ -1066,9 +1429,12 @@ def main() -> int:
         elif arguments.command == "bump":
             bump(root, arguments.old_version, arguments.new_version)
             print(f"release version {arguments.old_version} -> {arguments.new_version}: updated")
-        else:
+        elif arguments.command == "prepare-changelog":
             prepare_changelog(root, arguments.version, arguments.date)
             print(f"changelog release {arguments.version} ({arguments.date}): prepared")
+        else:
+            build_artifacts(root, arguments.output_dir, arguments.version, arguments.epoch)
+            print(f"release artifacts {arguments.version}: built in {arguments.output_dir}")
     except (ContractError, OSError) as error:
         print(f"release: {error}", file=sys.stderr)
         return 1

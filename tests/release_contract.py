@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import json
+import hashlib
 import importlib.util
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -84,6 +86,69 @@ def copy_schema_contract(destination: Path) -> None:
 def write_test_license(root: Path) -> None:
     (root / "LICENSE").write_text(
         "Test-only license fixture selected by the repository owner.\n"
+    )
+
+
+def copy_artifact_contract(destination: Path) -> None:
+    copy_version_contract(destination)
+    for relative in ("codex/payload.schema.json", "codex/suggestions.schema.json"):
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+    source = ROOT / "plugins/nvim-key-insights"
+    shutil.copytree(
+        source,
+        destination / "plugins/nvim-key-insights",
+        dirs_exist_ok=True,
+    )
+    subprocess.run(["git", "init", "-q"], cwd=destination, check=True)
+    subprocess.run(["git", "add", "."], cwd=destination, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Release Contract",
+            "-c",
+            "user.email=release-contract@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        cwd=destination,
+        check=True,
+    )
+
+
+def commit_artifact_mutation(root: Path) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Release Contract",
+            "-c",
+            "user.email=release-contract@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "mutate fixture",
+        ],
+        cwd=root,
+        check=True,
+    )
+
+
+def build_artifacts(root: Path, output: Path, epoch: int = 1_700_000_000):
+    return run_release(
+        "build-artifacts",
+        "--version",
+        "0.1.0",
+        "--epoch",
+        str(epoch),
+        "--output-dir",
+        str(output),
+        root=root,
     )
 
 
@@ -268,12 +333,14 @@ class ReleaseContractTest(unittest.TestCase):
         self.assertIn("## [Unreleased]", changelog)
         for phrase in (
             "release.py prepare-changelog",
+            "release.py build-artifacts",
             "pkf run --no-cache check",
             "nix flake check --no-update-lock-file",
             "git tag -a",
             "does not publish to crates.io",
             "rollback",
             "existing GitHub release",
+            "SHA256SUMS",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized_releasing)
@@ -473,6 +540,205 @@ class ReleaseContractTest(unittest.TestCase):
                     result = run_release("check", "--tag", "v0.1.0", root=root)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(diagnostic, result.stderr)
+
+    def test_codex_plugin_artifact_is_reproducible_and_canonical(self) -> None:
+        expected_files = [
+            ".codex-plugin/plugin.json",
+            "skills/analyze-neovim-usage/SKILL.md",
+            "skills/analyze-neovim-usage/agents/openai.yaml",
+            "skills/analyze-neovim-usage/references/payload.schema.json",
+            "skills/analyze-neovim-usage/references/suggestions.schema.json",
+        ]
+        epoch = 1_700_000_000
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            roots = [temporary / "source-a", temporary / "source-b"]
+            outputs = [temporary / "artifacts-a", temporary / "artifacts-b"]
+            for root in roots:
+                root.mkdir()
+                copy_artifact_contract(root)
+            skill_path = "plugins/nvim-key-insights/skills/analyze-neovim-usage/SKILL.md"
+            original_object = subprocess.run(
+                ["git", "rev-parse", f"HEAD:{skill_path}"],
+                cwd=roots[1],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            replacement_object = subprocess.run(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=roots[1],
+                check=True,
+                input=b"private replacement canary\n",
+                capture_output=True,
+            ).stdout.decode().strip()
+            subprocess.run(
+                ["git", "replace", original_object, replacement_object],
+                cwd=roots[1],
+                check=True,
+            )
+            for root, output in zip(roots, outputs):
+                result = build_artifacts(root, output, epoch)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            archive_name = "nvim-key-insights-codex-plugin-v0.1.0.tar"
+            first = (outputs[0] / archive_name).read_bytes()
+            second = (outputs[1] / archive_name).read_bytes()
+            self.assertEqual(first, second)
+            checksum = hashlib.sha256(first).hexdigest()
+            self.assertEqual(
+                (outputs[0] / "SHA256SUMS").read_text(),
+                f"{checksum}  {archive_name}\n",
+            )
+            with tarfile.open(outputs[0] / archive_name, "r:") as archive:
+                entries = archive.getmembers()
+                prefix = "nvim-key-insights-codex-plugin-v0.1.0/"
+                self.assertEqual([entry.name for entry in entries], [prefix + path for path in expected_files])
+                for entry in entries:
+                    self.assertTrue(entry.isfile())
+                    self.assertEqual(entry.mode, 0o644)
+                    self.assertEqual(entry.uid, 0)
+                    self.assertEqual(entry.gid, 0)
+                    self.assertEqual(entry.uname, "")
+                    self.assertEqual(entry.gname, "")
+                    self.assertEqual(entry.mtime, epoch)
+                    relative = entry.name.removeprefix(prefix)
+                    extracted = archive.extractfile(entry)
+                    self.assertIsNotNone(extracted)
+                    self.assertEqual(
+                        extracted.read(),
+                        (roots[0] / "plugins/nvim-key-insights" / relative).read_bytes(),
+                    )
+
+    def test_canonical_ustar_fixture_has_a_stable_digest(self) -> None:
+        release = load_release_module()
+        files = {
+            path: f"fixture:{path.as_posix()}\n".encode()
+            for path in release.PLUGIN_ARTIFACT_FILES
+        }
+        archive = release.render_plugin_archive(files, "0.1.0", 1_700_000_000)
+        self.assertEqual(len(archive), 10_240)
+        self.assertEqual(
+            hashlib.sha256(archive).hexdigest(),
+            "29c6a22bcebcfde5e10119dcde2db2f8eb8890f2c78cf1b34473d7631c843c33",
+        )
+
+    def test_artifact_builder_rejects_non_allowlisted_plugin_trees(self) -> None:
+        mutations = ("unexpected", "symlink", "executable", "size", "schema", "dirty")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory) / "source"
+                root.mkdir()
+                copy_artifact_contract(root)
+                plugin = root / "plugins/nvim-key-insights"
+                if mutation == "unexpected":
+                    (plugin / "private-report.jsonl").write_text("secret\n")
+                elif mutation == "symlink":
+                    skill = plugin / "skills/analyze-neovim-usage/SKILL.md"
+                    target = plugin / "skill-target"
+                    target.write_bytes(skill.read_bytes())
+                    skill.unlink()
+                    skill.symlink_to(target)
+                else:
+                    if mutation == "executable":
+                        manifest = plugin / ".codex-plugin/plugin.json"
+                        manifest.chmod(0o755)
+                    elif mutation == "size":
+                        skill = plugin / "skills/analyze-neovim-usage/SKILL.md"
+                        skill.write_bytes(b"x" * (2 * 1024 * 1024))
+                    else:
+                        schema = (
+                            plugin
+                            / "skills/analyze-neovim-usage/references/payload.schema.json"
+                        )
+                        schema.write_text("{}\n")
+                if mutation == "dirty":
+                    skill = plugin / "skills/analyze-neovim-usage/SKILL.md"
+                    skill.write_text(skill.read_text() + "\nDirty.\n")
+                else:
+                    commit_artifact_mutation(root)
+                output = Path(temporary_directory) / "artifacts"
+                result = build_artifacts(root, output)
+                self.assertNotEqual(result.returncode, 0)
+                expected = "working tree" if mutation == "dirty" else mutation
+                self.assertIn(expected, result.stderr.lower())
+                self.assertFalse(output.exists())
+
+    def test_artifact_builder_rejects_version_epoch_and_existing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            root = temporary / "source"
+            root.mkdir()
+            copy_artifact_contract(root)
+            output = temporary / "artifacts"
+            mismatch = run_release(
+                "build-artifacts",
+                "--version",
+                "0.2.0",
+                "--epoch",
+                "1700000000",
+                "--output-dir",
+                str(output),
+                root=root,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("does not match", mismatch.stderr)
+            self.assertFalse(output.exists())
+            invalid_epoch = build_artifacts(root, output, -1)
+            self.assertNotEqual(invalid_epoch.returncode, 0)
+            self.assertIn("epoch", invalid_epoch.stderr)
+            self.assertFalse(output.exists())
+
+            output.mkdir()
+            sentinel = output / "keep"
+            sentinel.write_text("preserve me\n")
+            existing = build_artifacts(root, output)
+            self.assertNotEqual(existing.returncode, 0)
+            self.assertIn("already exists", existing.stderr)
+            self.assertEqual(sentinel.read_text(), "preserve me\n")
+            self.assertEqual(list(output.iterdir()), [sentinel])
+
+    def test_atomic_artifact_publication_preserves_a_concurrent_directory(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            root = temporary / "source"
+            root.mkdir()
+            copy_artifact_contract(root)
+            output = temporary / "artifacts"
+            real_rename = release.rename_directory_noreplace
+
+            def competing_rename(source, destination):
+                destination.mkdir()
+                (destination / "competitor").write_text("preserve me\n")
+                real_rename(source, destination)
+
+            with mock.patch.object(
+                release,
+                "rename_directory_noreplace",
+                side_effect=competing_rename,
+            ):
+                with self.assertRaises(release.ContractError):
+                    release.build_artifacts(root, output, "0.1.0", 1_700_000_000)
+
+            self.assertEqual((output / "competitor").read_text(), "preserve me\n")
+            self.assertEqual(list(output.iterdir()), [output / "competitor"])
+
+    def test_artifact_build_resolves_one_commit_for_every_source(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            root = temporary / "source"
+            root.mkdir()
+            copy_artifact_contract(root)
+            output = temporary / "artifacts"
+            with mock.patch.object(
+                release,
+                "git_commit",
+                wraps=release.git_commit,
+            ) as resolve:
+                release.build_artifacts(root, output, "0.1.0", 1_700_000_000)
+            self.assertEqual(resolve.call_count, 1)
 
     def test_version_bump_updates_only_the_explicit_mirrors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
