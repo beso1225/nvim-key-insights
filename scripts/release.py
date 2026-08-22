@@ -911,10 +911,69 @@ def remove_if_present(path: Path) -> None:
         pass
 
 
+def path_exists_nofollow(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
 def assert_originals_unchanged(root: Path, updates: dict[Path, VersionUpdate]) -> None:
     for relative, update in updates.items():
         if read_regular_file(root, relative) != update.original:
             fail(f"{relative} changed while preparing the version update")
+
+
+def restore_backup_noreplace(backup: Path, destination: Path) -> None:
+    try:
+        os.link(backup, destination, follow_symlinks=False)
+    except FileExistsError:
+        fail(
+            f"cannot restore {destination}; preserve recovery backup {backup}"
+        )
+    except OSError as error:
+        fail(
+            f"cannot restore {destination}; preserve recovery backup {backup}: {error}"
+        )
+    backup.unlink()
+
+
+def install_staged_update(
+    destination: Path, replacement: Path, backup: Path, expected: bytes
+) -> None:
+    backup.unlink()
+    try:
+        os.replace(destination, backup)
+    except OSError as error:
+        fail(f"cannot reserve {destination} for update: {error}")
+
+    try:
+        if read_regular_file(backup.parent, Path(backup.name)) != expected:
+            restore_backup_noreplace(backup, destination)
+            fail(f"{destination} changed while installing the update")
+        os.link(replacement, destination, follow_symlinks=False)
+    except BaseException:
+        if not path_exists_nofollow(destination) and path_exists_nofollow(backup):
+            restore_backup_noreplace(backup, destination)
+        raise
+
+
+def rollback_staged_update(
+    destination: Path, replacement: Path, backup: Path, expected: bytes
+) -> str | None:
+    quarantine = stage_file(backup, b"", "recovery")
+    quarantine.unlink()
+    try:
+        os.replace(destination, quarantine)
+        if (
+            not os.path.samefile(quarantine, replacement)
+            or read_regular_file(quarantine.parent, Path(quarantine.name)) != expected
+        ):
+            restore_backup_noreplace(backup, destination)
+            return f"{destination} changed; preserve recovery file {quarantine}"
+        restore_backup_noreplace(backup, destination)
+        remove_if_present(quarantine)
+        remove_if_present(replacement)
+        return None
+    except BaseException as error:
+        return f"{destination}: {error}; preserve {quarantine} and {backup}"
 
 
 def write_updates_transactionally(
@@ -939,39 +998,53 @@ def write_updates_transactionally(
             remove_if_present(backup)
         raise
 
-    installed: list[tuple[Path, Path]] = []
+    installed: list[tuple[Path, Path, Path, bytes]] = []
     try:
         assert_originals_unchanged(root, updates)
         for relative, destination, replacement, backup in staged:
-            if read_regular_file(root, relative) != updates[relative].original:
-                fail(f"{relative} changed while installing the version update")
-            os.replace(replacement, destination)
-            installed.append((destination, backup))
-    except BaseException as error:
-        rollback_errors: list[tuple[Path, str]] = []
-        for destination, backup in reversed(installed):
-            try:
-                os.replace(backup, destination)
-            except BaseException as rollback_error:
-                rollback_errors.append(
-                    (backup, f"{destination}: {rollback_error}")
-                )
-        failed_backups = {backup for backup, _ in rollback_errors}
-        for _, _, replacement, backup in staged:
-            remove_if_present(replacement)
-            if backup not in failed_backups:
-                remove_if_present(backup)
-        if rollback_errors:
+            install_staged_update(
+                destination, replacement, backup, updates[relative].original
+            )
+            installed.append(
+                (destination, replacement, backup, updates[relative].replacement)
+            )
+    except BaseException:
+        rollback_errors: list[str] = []
+        for destination, replacement, backup, expected in reversed(installed):
+            rollback_error = rollback_staged_update(
+                destination, replacement, backup, expected
+            )
+            if rollback_error is not None:
+                rollback_errors.append(rollback_error)
+        recovery_files: list[str] = []
+        for relative, destination, replacement, backup in staged:
+            if path_exists_nofollow(backup):
+                destination_is_original = False
+                try:
+                    destination_is_original = (
+                        read_regular_file(root, relative) == updates[relative].original
+                    )
+                except ContractError:
+                    pass
+                if destination_is_original and not any(
+                    installed_backup == backup
+                    for _, _, installed_backup, _ in installed
+                ):
+                    remove_if_present(backup)
+                else:
+                    recovery_files.append(str(backup))
+            if not path_exists_nofollow(backup):
+                remove_if_present(replacement)
+        if rollback_errors or recovery_files:
             fail(
                 "version update failed and rollback was incomplete; preserve "
-                "these recovery backups: "
-                + "; ".join(
-                    f"{backup} ({message})" for backup, message in rollback_errors
-                )
+                "these recovery files: "
+                + "; ".join(rollback_errors + recovery_files)
             )
         raise
 
-    for _, _, _, backup in staged:
+    for _, _, replacement, backup in staged:
+        remove_if_present(replacement)
         remove_if_present(backup)
 
 
@@ -981,12 +1054,17 @@ def write_single_update(root: Path, relative: Path, original: bytes, replacement
     destination = root / relative
     staged = stage_file(destination, replacement, "new")
     try:
-        if read_regular_file(root, relative) != original:
-            fail(f"{relative} changed while installing the update")
-        os.replace(staged, destination)
+        backup = stage_file(destination, original, "old")
     except BaseException:
         remove_if_present(staged)
         raise
+    try:
+        install_staged_update(destination, staged, backup, original)
+    except BaseException:
+        remove_if_present(staged)
+        raise
+    remove_if_present(staged)
+    remove_if_present(backup)
 
 
 def bump(root: Path, old_version: str, new_version: str) -> None:

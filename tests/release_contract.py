@@ -454,6 +454,35 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertNotIn("## [0.1.0]", changelog_path.read_text())
             self.assertEqual(list(root.rglob(".release-new-CHANGELOG.md-*")), [])
 
+    def test_changelog_edit_at_atomic_reservation_is_preserved(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            changelog_path = root / "CHANGELOG.md"
+            real_replace = release.os.replace
+            edited = False
+
+            def edit_at_atomic_reservation(source, destination):
+                nonlocal edited
+                if Path(source) == changelog_path and not edited:
+                    edited = True
+                    changelog_path.write_text(
+                        changelog_path.read_text() + "\n<!-- concurrent edit -->\n"
+                    )
+                return real_replace(source, destination)
+
+            with mock.patch.object(
+                release.os, "replace", side_effect=edit_at_atomic_reservation
+            ):
+                with self.assertRaises(release.ContractError):
+                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+
+            self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
+            self.assertNotIn("## [0.1.0]", changelog_path.read_text())
+            self.assertEqual(list(root.rglob(".release-*-CHANGELOG.md-*")), [])
+
     def test_tag_requires_an_owner_supplied_regular_license(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -894,18 +923,20 @@ class ReleaseContractTest(unittest.TestCase):
                 root / "plugins/nvim-key-insights/.codex-plugin/plugin.json",
             ]
             before = {path: path.read_bytes() for path in tracked}
-            real_replace = release.os.replace
+            real_install = release.install_staged_update
             replacement_count = 0
 
-            def fail_second_install(source, destination):
+            def fail_second_install(destination, replacement, backup, expected):
                 nonlocal replacement_count
-                if Path(destination) in tracked and ".release-new-" in Path(source).name:
+                if Path(destination) in tracked:
                     replacement_count += 1
                     if replacement_count == 2:
                         raise OSError("injected replacement failure")
-                return real_replace(source, destination)
+                return real_install(destination, replacement, backup, expected)
 
-            with mock.patch.object(release.os, "replace", side_effect=fail_second_install):
+            with mock.patch.object(
+                release, "install_staged_update", side_effect=fail_second_install
+            ):
                 with self.assertRaises(OSError):
                     release.bump(root, "0.1.0", "0.2.0")
 
@@ -922,19 +953,19 @@ class ReleaseContractTest(unittest.TestCase):
                 root / "plugins/nvim-key-insights/.codex-plugin/plugin.json",
             ]
             before = {path: path.read_bytes() for path in tracked}
-            real_replace = release.os.replace
+            real_install = release.install_staged_update
             replacement_count = 0
 
-            def interrupt_second_install(source, destination):
+            def interrupt_second_install(destination, replacement, backup, expected):
                 nonlocal replacement_count
-                if Path(destination) in tracked and ".release-new-" in Path(source).name:
+                if Path(destination) in tracked:
                     replacement_count += 1
                     if replacement_count == 2:
                         raise KeyboardInterrupt()
-                return real_replace(source, destination)
+                return real_install(destination, replacement, backup, expected)
 
             with mock.patch.object(
-                release.os, "replace", side_effect=interrupt_second_install
+                release, "install_staged_update", side_effect=interrupt_second_install
             ):
                 with self.assertRaises(KeyboardInterrupt):
                     release.bump(root, "0.1.0", "0.2.0")
@@ -947,14 +978,18 @@ class ReleaseContractTest(unittest.TestCase):
             root = Path(temporary_directory)
             copy_version_contract(root)
             cargo_path = root / "crates/key-insights-cli/Cargo.toml"
-            original_validate = release.validate_candidates
+            real_replace = release.os.replace
+            edited = False
 
-            def edit_after_validation(candidate_root, updates, new_version):
-                original_validate(candidate_root, updates, new_version)
-                cargo_path.write_text(cargo_path.read_text() + "\n# concurrent edit\n")
+            def edit_at_atomic_reservation(source, destination):
+                nonlocal edited
+                if Path(source) == cargo_path and not edited:
+                    edited = True
+                    cargo_path.write_text(cargo_path.read_text() + "\n# concurrent edit\n")
+                return real_replace(source, destination)
 
             with mock.patch.object(
-                release, "validate_candidates", side_effect=edit_after_validation
+                release.os, "replace", side_effect=edit_at_atomic_reservation
             ):
                 with self.assertRaises(release.ContractError):
                     release.bump(root, "0.1.0", "0.2.0")
@@ -971,19 +1006,16 @@ class ReleaseContractTest(unittest.TestCase):
             cargo_path = root / "crates/key-insights-cli/Cargo.toml"
             lock_path = root / "Cargo.lock"
             original_cargo = cargo_path.read_bytes()
-            real_replace = release.os.replace
+            real_install = release.install_staged_update
 
-            def edit_lock_after_cargo_install(source, destination):
-                result = real_replace(source, destination)
-                if (
-                    Path(destination) == cargo_path
-                    and ".release-new-" in Path(source).name
-                ):
+            def edit_lock_after_cargo_install(destination, replacement, backup, expected):
+                result = real_install(destination, replacement, backup, expected)
+                if Path(destination) == cargo_path:
                     lock_path.write_text(lock_path.read_text() + "\n# concurrent lock edit\n")
                 return result
 
             with mock.patch.object(
-                release.os, "replace", side_effect=edit_lock_after_cargo_install
+                release, "install_staged_update", side_effect=edit_lock_after_cargo_install
             ):
                 with self.assertRaises(release.ContractError):
                     release.bump(root, "0.1.0", "0.2.0")
@@ -993,6 +1025,41 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertIn('version = "0.1.0"', lock_path.read_text())
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
+    def test_in_place_edit_of_installed_file_is_preserved_as_recovery(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            cargo_path = root / "crates/key-insights-cli/Cargo.toml"
+            lock_path = root / "Cargo.lock"
+            original_cargo = cargo_path.read_bytes()
+            real_install = release.install_staged_update
+
+            def edit_then_fail(destination, replacement, backup, expected):
+                if Path(destination) == lock_path:
+                    raise OSError("injected install failure")
+                result = real_install(destination, replacement, backup, expected)
+                if Path(destination) == cargo_path:
+                    with cargo_path.open("a") as stream:
+                        stream.write("\n# concurrent in-place edit\n")
+                return result
+
+            with mock.patch.object(
+                release, "install_staged_update", side_effect=edit_then_fail
+            ):
+                with self.assertRaises(release.ContractError) as raised:
+                    release.bump(root, "0.1.0", "0.2.0")
+
+            self.assertEqual(cargo_path.read_bytes(), original_cargo)
+            recoveries = list(
+                cargo_path.parent.glob(".release-recovery-*-Cargo.toml-*")
+            )
+            self.assertEqual(len(recoveries), 1)
+            self.assertTrue(
+                recoveries[0].read_text().endswith("# concurrent in-place edit\n")
+            )
+            self.assertIn(str(recoveries[0]), str(raised.exception))
+
     def test_failed_rollback_preserves_the_recovery_backup(self) -> None:
         release = load_release_module()
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1001,27 +1068,20 @@ class ReleaseContractTest(unittest.TestCase):
             cargo_path = root / "crates/key-insights-cli/Cargo.toml"
             lock_path = root / "Cargo.lock"
             original_cargo = cargo_path.read_bytes()
-            real_replace = release.os.replace
-            installed_cargo = False
+            real_install = release.install_staged_update
 
-            def fail_install_and_rollback(source, destination):
-                nonlocal installed_cargo
-                source_path = Path(source)
-                destination_path = Path(destination)
-                if destination_path == cargo_path and ".release-new-" in source_path.name:
-                    installed_cargo = True
-                elif destination_path == lock_path and ".release-new-" in source_path.name:
+            def fail_second_install(destination, replacement, backup, expected):
+                if Path(destination) == lock_path:
                     raise OSError("injected install failure")
-                elif (
-                    installed_cargo
-                    and destination_path == cargo_path
-                    and ".release-old-" in source_path.name
-                ):
-                    raise OSError("injected rollback failure")
-                return real_replace(source, destination)
+                return real_install(destination, replacement, backup, expected)
+
+            def fail_rollback(destination, replacement, backup, expected):
+                return f"injected rollback failure; preserve {backup}"
 
             with mock.patch.object(
-                release.os, "replace", side_effect=fail_install_and_rollback
+                release, "install_staged_update", side_effect=fail_second_install
+            ), mock.patch.object(
+                release, "rollback_staged_update", side_effect=fail_rollback
             ):
                 with self.assertRaises(release.ContractError) as raised:
                     release.bump(root, "0.1.0", "0.2.0")
@@ -1053,6 +1113,27 @@ class ReleaseContractTest(unittest.TestCase):
                     release.bump(root, "0.1.0", "0.2.0")
 
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
+            self.assertEqual(list(root.rglob(".release-*-*")), [])
+
+    def test_single_update_backup_staging_failure_removes_replacement(self) -> None:
+        release = load_release_module()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            real_stage = release.stage_file
+
+            def fail_backup_stage(path, data, label):
+                if label == "old":
+                    raise OSError("injected backup staging failure")
+                return real_stage(path, data, label)
+
+            with mock.patch.object(
+                release, "stage_file", side_effect=fail_backup_stage
+            ):
+                with self.assertRaises(OSError):
+                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
     def test_duplicate_json_version_key_is_rejected(self) -> None:
