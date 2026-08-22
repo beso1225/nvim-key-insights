@@ -1,6 +1,8 @@
+local contract_versions = require("key-insights.contract_versions")
+
 local M = {}
 
-M.VERSION = 1
+M.VERSION = contract_versions.event_log
 M.MAX_EVENT_LINE_BYTES = 64 * 1024
 
 local sequence_modes = {

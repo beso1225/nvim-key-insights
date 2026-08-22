@@ -25,6 +25,11 @@ pkf run test
 collector-to-report workflow in headless Neovim without network access.
 Individual tasks are available through `pkf list`.
 
+Release history, schema upgrades, and the non-publishing maintainer workflow are
+documented in the [changelog](CHANGELOG.md),
+[schema compatibility policy](docs/schema-compatibility.md), and
+[release procedure](docs/releasing.md).
+
 ## Deterministic analyzer
 
 Analyze a complete finalized JSONL stream without an AI service:

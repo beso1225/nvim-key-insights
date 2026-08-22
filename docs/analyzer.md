@@ -55,7 +55,9 @@ be selected explicitly.
 
 Every analysis emits summary schema v3. Collector events remain schema v1 and
 the optional snapshot document remains version 1; these are independent
-contracts. With a snapshot, the summary joins every observed and snapshotted
+contracts. The supported versions and regeneration paths are defined in the
+[schema compatibility policy](schema-compatibility.md). With a snapshot, the
+summary joins every observed and snapshotted
 mapping as `observed`, `observed_not_in_snapshot`, or
 `unobserved_in_sample`. It reports only potential global/buffer shadowing for an
 exact mode and canonical LHS match; it does not claim that a buffer-local entry
