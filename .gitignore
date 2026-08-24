@@ -4,3 +4,5 @@
 /.key-insights/
 *.log
 /.nvimlog
+__pycache__/
+*.py[cod]

@@ -228,12 +228,16 @@ output while the local analyzer remains independent of Codex.
 
 ## Milestone 5: packaging and integration surfaces
 
-Status: in progress. The first packaging and installation slice is tracked in
-the [Milestone 5 packaging plan](milestone-5-packaging-plan.md).
-The installable Codex plugin slice is tracked in the
-[Milestone 5 Codex plugin plan](milestone-5-codex-plugin-plan.md) and is
-complete. Release artifacts, versioning, changelog, and schema upgrade policy
-remain the final Milestone 5 slice.
+Status: complete. The packaging and installation surface is recorded in the
+[Milestone 5 packaging plan](milestone-5-packaging-plan.md), the installable
+Codex plugin in the
+[Milestone 5 Codex plugin plan](milestone-5-codex-plugin-plan.md), and the
+deterministic artifact, version, changelog, workflow, and schema lifecycle in
+the [Milestone 5 release contract plan](milestone-5-release-plan.md).
+
+This milestone completes the release contract but does not create the first
+tag or GitHub release. Forward testing and explicit release approval remain in
+Milestone 7.
 
 - Export the Rust CLI as a flake package and app for supported systems.
 - Document lazy.nvim installation and all user-facing configuration.

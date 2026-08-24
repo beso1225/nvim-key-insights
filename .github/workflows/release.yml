@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release and build handoff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      handoff_digest: ${{ steps.upload.outputs.artifact-digest }}
+      handoff_id: ${{ steps.upload.outputs.artifact-id }}
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+
+      - name: Validate the exact tag and package contracts
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          nix develop --no-update-lock-file --command uv run --python-preference only-system python scripts/release.py check --tag "$RELEASE_TAG" --nix-system aarch64-darwin --nix-system aarch64-linux --nix-system x86_64-linux
+          nix flake check --no-update-lock-file --print-build-logs
+          nix develop --no-update-lock-file --command pkf run --no-cache check
+
+      - name: Build the immutable release handoff
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          nix develop --no-update-lock-file --command uv run --python-preference only-system python scripts/release.py build-artifacts --version "$version" --epoch "$epoch" --output-dir release-handoff
+          nix develop --no-update-lock-file --command uv run --python-preference only-system python scripts/release.py release-notes --tag "$RELEASE_TAG" --output release-handoff/release-notes.md
+          archive="nvim-key-insights-codex-plugin-${RELEASE_TAG}.tar"
+          test -f "release-handoff/$archive"
+          test -f release-handoff/SHA256SUMS
+          test -s release-handoff/release-notes.md
+          test "$(find release-handoff -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find release-handoff -mindepth 1 -maxdepth 1 | wc -l)" -eq 3
+          (cd release-handoff && sha256sum --check SHA256SUMS)
+
+      - name: Upload the validated handoff
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-handoff-${{ github.sha }}-${{ github.run_attempt }}
+          path: release-handoff/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+
+  ruleset:
+    name: Verify immutable release tags
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    environment: release
+    permissions:
+      contents: read
+
+    steps:
+      - name: Verify the no-bypass release tag ruleset
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_RULESET_TOKEN }}
+        run: |
+          ruleset_ids="$(gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[] | select(.name == "immutable-release-tags" and .target == "tag" and .enforcement == "active") | .id')"
+          if [[ "$(wc -w <<<"$ruleset_ids")" -ne 1 ]]; then
+            echo "one active immutable-release-tags ruleset is required" >&2
+            exit 1
+          fi
+          ruleset="$(gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_ids")"
+          jq --exit-status '
+            has("bypass_actors") and
+            (.bypass_actors | type) == "array" and
+            (.bypass_actors | length) == 0 and
+            (.conditions.ref_name.include | index("refs/tags/v*.*.*")) != null and
+            (.conditions.ref_name.exclude | length) == 0 and
+            ([.rules[].type] | index("deletion")) != null and
+            ([.rules[].type] | index("non_fast_forward")) != null
+          ' <<<"$ruleset" >/dev/null
+
+  publish:
+    name: Publish GitHub release
+    needs:
+      - validate
+      - ruleset
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download, verify, and publish the validated handoff
+        env:
+          EXPECTED_HANDOFF_DIGEST: ${{ needs.validate.outputs.handoff_digest }}
+          EXPECTED_HANDOFF_ID: ${{ needs.validate.outputs.handoff_id }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          remote_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "tag $RELEASE_TAG no longer identifies validated commit $GITHUB_SHA" >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $RELEASE_TAG already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+
+          handoff_name="release-handoff-$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+          artifact="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_HANDOFF_ID")"
+          jq --exit-status --arg name "$handoff_name" --argjson id "$EXPECTED_HANDOFF_ID" --argjson run "$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" '
+            .id == $id and
+            .name == $name and
+            .expired == false and
+            .workflow_run.id == $run and
+            .workflow_run.head_sha == $sha
+          ' <<<"$artifact" >/dev/null
+          handoff_zip="$RUNNER_TEMP/release-handoff.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_HANDOFF_ID/zip" >"$handoff_zip"
+          digest="${EXPECTED_HANDOFF_DIGEST#sha256:}"
+          echo "$digest  $handoff_zip" | sha256sum --check
+
+          mkdir "$RUNNER_TEMP/release-handoff"
+          unzip -q "$handoff_zip" -d "$RUNNER_TEMP/release-handoff"
+          cd "$RUNNER_TEMP/release-handoff"
+          archive="nvim-key-insights-codex-plugin-${RELEASE_TAG}.tar"
+          test -f "$archive"
+          test -f SHA256SUMS
+          test -s release-notes.md
+          test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find . -mindepth 1 -maxdepth 1 | wc -l)" -eq 3
+          sha256sum --check SHA256SUMS
+
+          gh release create "$RELEASE_TAG" "$archive" SHA256SUMS --repo "$GITHUB_REPOSITORY" --verify-tag --title "nvim-key-insights $RELEASE_TAG" --notes-file release-notes.md

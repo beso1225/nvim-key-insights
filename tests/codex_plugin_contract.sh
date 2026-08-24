@@ -95,14 +95,12 @@ if interface["category"] != "Productivity" or interface["capabilities"] != []:
     raise SystemExit("plugin must remain an inert skill-only package")
 
 cargo = (root / "crates/key-insights-cli/Cargo.toml").read_text()
-flake = (root / "flake.nix").read_text()
 cargo_version = re.search(r'^version = "([^"]+)"$', cargo, re.MULTILINE)
-flake_version = re.search(r'^\s*version = "([^"]+)";$', flake, re.MULTILINE)
-if not cargo_version or not flake_version:
+if not cargo_version:
     raise SystemExit("could not read repository versions")
-versions = {manifest["version"], cargo_version.group(1), flake_version.group(1)}
+versions = {manifest["version"], cargo_version.group(1)}
 if len(versions) != 1:
-    raise SystemExit("plugin, Cargo, and flake versions must match")
+    raise SystemExit("plugin and Cargo versions must match")
 
 actual_files = set()
 for path in plugin_path.rglob("*"):

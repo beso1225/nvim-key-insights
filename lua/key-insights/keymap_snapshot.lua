@@ -1,9 +1,10 @@
 local config = require("key-insights.config")
+local contract_versions = require("key-insights.contract_versions")
 local key_tokens = require("key-insights.key_tokens")
 
 local M = {}
 
-M.VERSION = 1
+M.VERSION = contract_versions.keymap_snapshot
 local DEFAULT_LIMITS = {
   max_api_entries = 4096,
   max_buffers = 256,

@@ -1,3 +1,4 @@
+local contract_versions = require("key-insights.contract_versions")
 local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
 local snapshot_payload = require("key-insights.snapshot_payload")
@@ -198,7 +199,7 @@ local function validate_preview(contents)
       return false, "preview output has an unexpected field"
     end
   end
-  if decoded.payload_schema_version ~= 1
+  if decoded.payload_schema_version ~= contract_versions.codex_payload
     or decoded.purpose ~= PREVIEW_PURPOSE
     or not validate_analysis_summary(decoded.summary)
   then
@@ -213,7 +214,7 @@ local function validate_preview(contents)
   if decoded.keymap_snapshot ~= nil then
     local attribution = decoded.summary.mapping_attribution
     if type(decoded.keymap_snapshot) ~= "table"
-      or decoded.keymap_snapshot.snapshot_version ~= 1
+      or decoded.keymap_snapshot.snapshot_version ~= contract_versions.keymap_snapshot
       or not is_array(decoded.keymap_snapshot.mappings, 4096)
       or type(attribution) ~= "table"
       or attribution.snapshot_version ~= decoded.keymap_snapshot.snapshot_version
@@ -397,7 +398,10 @@ local function valid_summary_mode(value)
 end
 
 validate_analysis_summary = function(summary)
-  if type(summary) ~= "table" or summary.schema_version ~= 3 or summary.ranking_limit ~= 100 then
+  if type(summary) ~= "table"
+    or summary.schema_version ~= contract_versions.analysis_summary
+    or summary.ranking_limit ~= 100
+  then
     return false
   end
   for _, field in ipairs({
@@ -475,7 +479,7 @@ validate_analysis_summary = function(summary)
       mapping_coverage = true,
       candidates = true,
     })
-    or ergonomics.contract_version ~= 1 or ergonomics.candidate_limit ~= 100
+    or ergonomics.contract_version ~= contract_versions.ergonomics or ergonomics.candidate_limit ~= 100
     or not has_only_fields(ergonomics.thresholds, {
       minimum_candidate_sessions = true,
       minimum_candidate_sequence_keys = true,
@@ -495,7 +499,7 @@ validate_analysis_summary = function(summary)
       sequence_length_keys = true,
       average_inter_key_latency_ms = true,
     })
-    or distributions.histogram_version ~= 1
+    or distributions.histogram_version ~= contract_versions.histogram
     or not validate_histogram(distributions.session_duration_ms, { "0-1s", "1-10s", "10-60s", "1-5m", "over-5m" })
     or not validate_histogram(distributions.sequence_length_keys, { "1", "2", "3-4", "5-8", "9-16", "17-32", "33-plus" })
     or not validate_histogram(distributions.average_inter_key_latency_ms, { "0-50ms", "50-100ms", "100-250ms", "250-500ms", "over-500ms" })
@@ -511,12 +515,12 @@ validate_analysis_summary = function(summary)
       ["repeat"] = true,
       search_start = true,
       search_navigation = true,
-    }) or operations.token_set_version ~= 1
+    }) or operations.token_set_version ~= contract_versions.operation_token_set
     or not has_only_fields(count_prefixes, {
       token_set_version = true,
       occurrences = true,
       digit_presses = true,
-    }) or count_prefixes.token_set_version ~= 1
+    }) or count_prefixes.token_set_version ~= contract_versions.count_prefix_token_set
   then
     return false
   end
@@ -528,7 +532,7 @@ validate_analysis_summary = function(summary)
   if not is_counter(count_prefixes.occurrences) or not is_counter(count_prefixes.digit_presses)
     or not is_array(ergonomics.mode_transitions, 100)
     or type(ergonomics.repeated_motions) ~= "table"
-    or ergonomics.repeated_motions.token_set_version ~= 1
+    or ergonomics.repeated_motions.token_set_version ~= contract_versions.directional_motion_token_set
     or not is_array(ergonomics.repeated_motions.items, 100)
     or type(ergonomics.mapping_coverage) ~= "table"
   then
@@ -571,7 +575,7 @@ validate_analysis_summary = function(summary)
         required_sequence_keys = true,
         required_observations = true,
       })
-      or candidate.kind_version ~= 1
+      or candidate.kind_version ~= contract_versions.candidate_kind
       or not is_counter(candidate.observations)
       or not is_counter(guard.observed_sessions)
       or not is_counter(guard.observed_sequence_keys)
@@ -617,7 +621,7 @@ validate_analysis_summary = function(summary)
       unobserved_mappings = true,
     })
     or (ergonomics.mapping_coverage.snapshot_version ~= nil
-      and ergonomics.mapping_coverage.snapshot_version ~= 1)
+      and ergonomics.mapping_coverage.snapshot_version ~= contract_versions.keymap_snapshot)
   then
     return false
   end
@@ -748,7 +752,7 @@ validate_snapshot_context = function(summary, snapshot)
   end
   if type(snapshot) ~= "table"
     or not has_only_fields(snapshot, { snapshot_version = true, mappings = true })
-    or snapshot.snapshot_version ~= 1
+    or snapshot.snapshot_version ~= contract_versions.keymap_snapshot
     or not is_array(snapshot.mappings, 4096)
     or type(summary.mapping_attribution) ~= "table"
   then
@@ -784,7 +788,7 @@ validate_snapshot_context = function(summary, snapshot)
   end
   local attribution = summary.mapping_attribution
   if not has_only_fields(attribution, { snapshot_version = true, mappings = true, collisions = true })
-    or attribution.snapshot_version ~= 1
+    or attribution.snapshot_version ~= contract_versions.keymap_snapshot
     or not is_array(attribution.mappings, 4096)
     or #attribution.mappings < #snapshot.mappings
     or not is_array(attribution.collisions, 4096)
@@ -901,7 +905,7 @@ local function validate_codex_suggestions(contents, preview_payload)
     return false, "Codex output exceeds the size limit"
   end
   local document = strict_json.decode(contents)
-  if type(document) ~= "table" or document.schema_version ~= 1 then
+  if type(document) ~= "table" or document.schema_version ~= contract_versions.codex_suggestions then
     return false, "Codex returned invalid structured suggestions"
   end
   if type(preview_payload) ~= "table" or not validate_analysis_summary(preview_payload.summary) then
@@ -1033,7 +1037,7 @@ local function validate_codex_suggestions(contents, preview_payload)
     local snapshot_ids = {}
     local snapshot_by_id = {}
     if type(snapshot) == "table" then
-      if snapshot.snapshot_version ~= 1 or not is_array(snapshot.mappings, 4096) then
+      if snapshot.snapshot_version ~= contract_versions.keymap_snapshot or not is_array(snapshot.mappings, 4096) then
         return false, "Codex collision evidence has an invalid snapshot"
       end
       for _, mapping in ipairs(snapshot.mappings) do
@@ -1065,7 +1069,7 @@ local function validate_codex_suggestions(contents, preview_payload)
       return false, "Codex collision evidence has no valid attribution"
     end
     if type(attribution) == "table" then
-      if attribution.snapshot_version ~= 1
+      if attribution.snapshot_version ~= contract_versions.keymap_snapshot
         or not is_array(attribution.mappings, 4096)
         or #attribution.mappings < (snapshot and #snapshot.mappings or 0)
       then
@@ -1267,7 +1271,7 @@ local function validate_outputs(fs, summary_path, report_path, previous)
   local decoded_ok, summary = pcall(vim.json.decode, contents)
   if not decoded_ok
     or type(summary) ~= "table"
-    or (summary.schema_version ~= 1 and summary.schema_version ~= 2 and summary.schema_version ~= 3)
+    or contract_versions.report_summary_versions[summary.schema_version] ~= true
     or type(summary.sessions) ~= "number"
     or type(summary.events) ~= "number"
   then
