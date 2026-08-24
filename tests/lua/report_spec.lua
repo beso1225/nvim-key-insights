@@ -824,6 +824,9 @@ local invalid_environment_codex = report.new({
       OPENAI_API_KEY = "must-not-cross",
     }
   end,
+  resolve_codex_binary = function()
+    return "/mock/codex"
+  end,
   prepare_codex_directory = function()
     return true
   end,
