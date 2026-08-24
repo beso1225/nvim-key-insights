@@ -20,6 +20,7 @@ PUBLIC_CANARIES = (
     "PUBLIC_COMMAND_TEXT_SECRET",
     "PUBLIC_SEARCH_TEXT_SECRET",
     "PUBLIC_MAPPING_RHS_SECRET",
+    'PUBLIC_UNICODE_雪_\\"_SECRET',
 )
 CODEX_CANARIES = (
     "CODEX_BUFFER_PATH_SECRET",
@@ -31,6 +32,7 @@ CODEX_CANARIES = (
     "CODEX_ADJACENT_FILE_SECRET",
     "CODEX_PARENT_ENV_SECRET",
     "CODEX_FILE_AUTH_SECRET",
+    'CODEX_UNICODE_雪_\\"_SECRET',
 )
 
 
@@ -127,7 +129,25 @@ class PublicWorkflowE2E(unittest.TestCase):
 
     def assert_canaries_absent(self, boundary: str, contents: str) -> None:
         for canary in PUBLIC_CANARIES:
-            self.assertNotIn(canary, contents, f"{boundary} leaked {canary}")
+            for representation in (canary, json.dumps(canary, ensure_ascii=True)[1:-1]):
+                self.assertNotIn(representation, contents, f"{boundary} leaked {canary}")
+
+    def assert_json_canaries_absent(
+        self, boundary: str, document: object, canaries: tuple[str, ...]
+    ) -> None:
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    visit(key)
+                    visit(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    visit(nested)
+            elif isinstance(value, str):
+                for canary in canaries:
+                    self.assertNotIn(canary, value, f"{boundary} semantically leaked {canary}")
+
+        visit(document)
 
     def test_public_commands_preserve_pause_and_restart_boundaries(self) -> None:
         sessions = self.root / "command-sessions"
@@ -149,6 +169,8 @@ class PublicWorkflowE2E(unittest.TestCase):
         self.assertEqual(list(sessions.glob("*.lock")), [])
         combined_jsonl = "\n".join(log.read_text() for log in logs)
         self.assert_canaries_absent("public collector JSONL", combined_jsonl)
+        for log in logs:
+            self.assert_json_canaries_absent("public collector JSONL", self.events(log), PUBLIC_CANARIES)
         for log in logs:
             self.assert_mode(log, 0o600)
         trace_document = json.loads(trace.read_text())
@@ -172,7 +194,7 @@ class PublicWorkflowE2E(unittest.TestCase):
             if event["event_type"] == "key_sequence"
             for key in event["keys"]
         ]
-        self.assertEqual(first_keys, ["j", "j", "i", ":", "/", "l", "l"])
+        self.assertEqual(first_keys, ["j", "j", "i", "i", ":", "/", "l", "l", "z", "9"])
         self.assertNotIn("k", first_keys)
         self.assertEqual(sum(event["event_type"] == "session_start" for event in first), 1)
         self.assertEqual(sum(event["event_type"] == "session_end" for event in first), 1)
@@ -196,6 +218,7 @@ class PublicWorkflowE2E(unittest.TestCase):
         self.assertTrue(report_contents.startswith("# Neovim Key Insights"))
         self.assert_canaries_absent("public summary", summary_contents)
         self.assert_canaries_absent("public report", report_contents)
+        self.assert_json_canaries_absent("public summary", public_summary, PUBLIC_CANARIES)
         notification_text = "\n".join(trace_document["notifications"])
         self.assert_canaries_absent("public notifications", notification_text)
         for session_id in (trace_document["first_session"], trace_document["second_session"]):
@@ -492,7 +515,10 @@ class PublicWorkflowE2E(unittest.TestCase):
         combined_jsonl = "\n".join(path.read_text() for path in sessions.glob("*.jsonl"))
         self.assertIn(trace_document["session_id"], combined_jsonl)
         for canary in CODEX_CANARIES:
-            self.assertNotIn(canary, combined_jsonl, f"collector JSONL leaked {canary}")
+            for representation in (canary, json.dumps(canary, ensure_ascii=True)[1:-1]):
+                self.assertNotIn(representation, combined_jsonl, f"collector JSONL leaked {canary}")
+        for path in sessions.glob("*.jsonl"):
+            self.assert_json_canaries_absent("collector JSONL", self.events(path), CODEX_CANARIES)
         boundaries = {
             "summary": summary_contents,
             "preview": preview_bytes.decode(),
@@ -503,8 +529,16 @@ class PublicWorkflowE2E(unittest.TestCase):
         }
         for boundary, contents in boundaries.items():
             for canary in CODEX_CANARIES:
-                self.assertNotIn(canary, contents, f"{boundary} leaked {canary}")
+                for representation in (canary, json.dumps(canary, ensure_ascii=True)[1:-1]):
+                    self.assertNotIn(representation, contents, f"{boundary} leaked {canary}")
             self.assertNotIn(trace_document["session_id"], contents, f"{boundary} leaked session ID")
+        for boundary, document in {
+            "summary": json.loads(summary_contents),
+            "preview": payload,
+            "Codex stdin": json.loads(stdin_bytes),
+            "Codex output": json.loads(output_contents),
+        }.items():
+            self.assert_json_canaries_absent(boundary, document, CODEX_CANARIES)
         self.assertIn("CODEX_REPORT_ONLY_SECRET", report_contents)
         for canary in CODEX_CANARIES:
             if canary != "CODEX_REPORT_ONLY_SECRET":

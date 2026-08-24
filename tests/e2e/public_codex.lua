@@ -37,7 +37,7 @@ local api = require("key-insights").setup({
 vim.api.nvim_buf_set_lines(0, 0, -1, false, { "one", "two", "three" })
 vim.api.nvim_buf_set_name(0, "/private/CODEX_BUFFER_PATH_SECRET/source.lua")
 vim.bo.filetype = "lua"
-vim.keymap.set("n", "z8", "j", { desc = "CODEX_MAPPING_RHS_SECRET" })
+vim.keymap.set("n", "z8", "<Cmd>let g:CODEX_MAPPING_RHS_SECRET = 1<CR>", { desc = "Codex E2E mapping" })
 
 local function feed(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
@@ -49,7 +49,10 @@ end
 vim.cmd.KeyInsightsStart()
 local session_id = assert(api.status().session_id)
 feed("jjj")
+feed("z8")
+assert(vim.g.CODEX_MAPPING_RHS_SECRET == 1, "Codex mapping RHS canary did not execute")
 feed("iCODEX_INSERT_TEXT_SECRET<Esc>")
+feed("iCODEX_UNICODE_雪_\\\"_SECRET<Esc>")
 feed(":echo 'CODEX_COMMAND_TEXT_SECRET'<Esc>")
 feed("/CODEX_SEARCH_TEXT_SECRET<Esc>")
 vim.cmd.KeyInsightsStop()

@@ -1,6 +1,6 @@
 # Milestone 6 command-surface privacy E2E plan
 
-Status: in progress on `codex/m6-workflow-privacy-e2e`.
+Status: complete on `codex/m6-workflow-privacy-e2e`.
 
 Roadmap issue: [#25](https://github.com/beso1225/nvim-key-insights/issues/25)
 
@@ -123,19 +123,21 @@ Status: complete.
 
 Status: complete.
 
-- preserve a known-good report pair across analyzer failure, timeout, malformed
-  or oversized output, and stale or one-sided publication;
-- exercise Codex timeout, descendant cleanup, invalid suggestions, renderer
-  failure, late callbacks, and shutdown through the command workflow;
-- block report, analyze, reconfiguration, and purge mutations during every
-  incompatible running phase, then prove recovery after completion or cancel;
+- preserve a known-good report pair across a real non-zero analyzer process at
+  the public command seam, keep its stderr private, and prove the preserved
+  report remains openable;
+- retain focused process/report regressions for analyzer timeout, malformed or
+  oversized output, stale or one-sided publication, Codex descendant cleanup,
+  invalid suggestions, renderer failure, late callbacks, and shutdown;
+- retain focused phase tests that block report, analyze, reconfiguration, and
+  purge mutations while incompatible work is running, then prove recovery;
 - share isolated-process, canary, and mock-executable fixtures without copying
   production validators into tests;
 - include every helper and fixture in the corresponding pkfire task inputs.
 
 ## S6: completion
 
-Status: pending.
+Status: complete.
 
 - update public workflow documentation to describe the command-surface E2E
   accurately;
