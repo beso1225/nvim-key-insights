@@ -20,7 +20,12 @@ fn temp_script(name: &str, body: &str) -> (PathBuf, PathBuf) {
     let directory = std::env::temp_dir().join(format!("key-insights-codex-{name}-{unique}"));
     fs::create_dir(&directory).expect("create test directory");
     let script = directory.join("mock-codex");
-    fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("write mock executable");
+    let shell = std::env::var("KEY_INSIGHTS_TEST_SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    assert!(
+        Path::new(&shell).is_absolute(),
+        "test shell must be absolute"
+    );
+    fs::write(&script, format!("#!{shell}\n{body}\n")).expect("write mock executable");
     fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).expect("make mock executable");
     (directory, script)
 }
@@ -43,7 +48,8 @@ fn config(binary: &Path) -> CodexExecConfig {
         binary: binary.to_owned(),
         codex_home: binary.parent().expect("binary parent").join("codex-home"),
         output_schema: PathBuf::from("/private/schema with spaces.json"),
-        path_environment: OsString::from("/usr/bin:/bin"),
+        path_environment: std::env::var_os("KEY_INSIGHTS_TEST_PATH")
+            .unwrap_or_else(|| OsString::from("/usr/bin:/bin")),
         working_directory,
         timeout: Duration::from_secs(2),
         max_output_bytes: MAX_CODEX_OUTPUT_BYTES,
@@ -64,7 +70,11 @@ test -z "${DBUS_SESSION_BUS_ADDRESS+x}" || exit 25
 printf '%s\n%s' "$CODEX_HOME" "$PATH""#,
     );
     let options = config(&script);
-    let expected = format!("{}\n/usr/bin:/bin", options.codex_home.display());
+    let expected = format!(
+        "{}\n{}",
+        options.codex_home.display(),
+        options.path_environment.to_string_lossy()
+    );
     let result = run_codex_exec(&options, b"payload").expect("isolated environment succeeds");
     assert_eq!(result.stdout, expected.as_bytes());
     fs::remove_dir_all(directory).expect("remove test directory");

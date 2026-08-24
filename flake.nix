@@ -47,6 +47,9 @@
           inherit version;
           src = cliSource pkgs.lib;
           cargoLock.lockFile = ./Cargo.lock;
+          nativeCheckInputs = [ pkgs.bash pkgs.coreutils ];
+          KEY_INSIGHTS_TEST_SHELL = "${pkgs.bash}/bin/bash";
+          KEY_INSIGHTS_TEST_PATH = pkgs.lib.makeBinPath [ pkgs.bash pkgs.coreutils ];
           meta = {
             description = "Deterministic local analyzer for nvim-key-insights";
             homepage = "https://github.com/beso1225/nvim-key-insights";
