@@ -13,6 +13,7 @@ end
 
 local confirmation_count = 0
 local confirmation_prompt = nil
+local consented_path = nil
 local preview_contents = nil
 local approve = true
 vim.ui.select = function(_, options, callback)
@@ -21,6 +22,7 @@ vim.ui.select = function(_, options, callback)
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   preview_contents = table.concat(lines, "\n")
   if approve then
+    consented_path = assert(vim.env.PATH)
     vim.fn.writefile({ "confirmed" }, vim.fs.joinpath(vim.fs.dirname(codex_binary), "confirmation-marker"))
   end
   callback(approve and "Run Codex analysis" or "Cancel")
@@ -81,6 +83,7 @@ end), "cancelled Codex analysis did not settle")
 assert(confirmation_count == 2)
 vim.keymap.del("n", "z8")
 vim.fn.writefile({ vim.json.encode({
+  codex_path = assert(consented_path),
   confirmation_count = confirmation_count,
   confirmation_prompt = confirmation_prompt,
   notifications = notifications,

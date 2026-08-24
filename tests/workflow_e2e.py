@@ -474,7 +474,7 @@ class PublicWorkflowE2E(unittest.TestCase):
         )
         self.assertEqual(set(codex_environment), {"CODEX_HOME", "PATH"})
         self.assertEqual(codex_environment["CODEX_HOME"], str(codex_home))
-        self.assertEqual(codex_environment["PATH"], environment["PATH"])
+        self.assertEqual(codex_environment["PATH"], trace_document["codex_path"])
         for removed in ("HOME", "OPENAI_API_KEY", "HTTPS_PROXY", "SSL_CERT_FILE"):
             self.assertNotIn(removed, codex_environment)
         serialized_codex_environment = json.dumps(codex_environment, sort_keys=True)
