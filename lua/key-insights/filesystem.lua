@@ -1,6 +1,19 @@
 local M = {}
 local artifacts = require("key-insights.artifacts")
 
+function M.is_absolute_path(path, separator)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  local platform_separator = separator or string.sub(package.config, 1, 1)
+  if platform_separator == "\\" then
+    return string.match(path, "^%a:[/\\]") ~= nil
+      or string.sub(path, 1, 2) == "\\\\"
+      or string.sub(path, 1, 2) == "//"
+  end
+  return string.sub(path, 1, 1) == "/"
+end
+
 local native_ffi = nil
 local native_unlinkat = nil
 local native_rename_child_noreplace = nil

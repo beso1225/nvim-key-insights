@@ -1,5 +1,11 @@
 local filesystem = require("key-insights.filesystem")
 
+assert(filesystem.is_absolute_path("/private/work"))
+assert(not filesystem.is_absolute_path("relative/work"))
+assert(filesystem.is_absolute_path([[C:\work]], "\\"))
+assert(filesystem.is_absolute_path([[\\server\share]], "\\"))
+assert(not filesystem.is_absolute_path([[C:relative]], "\\"))
+
 local function stat(size)
   return {
     dev = 1,

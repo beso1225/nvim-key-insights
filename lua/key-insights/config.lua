@@ -1,3 +1,5 @@
+local filesystem = require("key-insights.filesystem")
+
 local M = {}
 local MAX_SEQUENCE_KEYS = 65536
 
@@ -164,7 +166,7 @@ function M.resolve(options)
     resolved.report.codex.working_directory == nil
       or (type(resolved.report.codex.working_directory) == "string"
         and resolved.report.codex.working_directory ~= ""
-        and vim.fn.isabsolutepath(resolved.report.codex.working_directory) == 1),
+        and filesystem.is_absolute_path(resolved.report.codex.working_directory)),
     "report.codex.working_directory must be nil or an absolute path"
   )
   return resolved

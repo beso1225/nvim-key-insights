@@ -46,7 +46,12 @@ process.run({ "isolated" }, function() end, nil, {
 })
 vim.system = original_system
 assert(isolated_system_options.clear_env == true)
-assert(vim.deep_equal(isolated_system_options.env, { KEY_INSIGHTS_ALLOWED = "allowed" }))
+local runtime_version = vim.version()
+if runtime_version.major == 0 and runtime_version.minor == 10 then
+  assert(vim.deep_equal(isolated_system_options.env, { "KEY_INSIGHTS_ALLOWED=allowed" }))
+else
+  assert(vim.deep_equal(isolated_system_options.env, { KEY_INSIGHTS_ALLOWED = "allowed" }))
+end
 
 vim.system = function(_, options, callback)
   isolated_system_options = options
@@ -56,7 +61,31 @@ end
 process.run({ "clear-only" }, function() end, nil, { clear_env = true })
 vim.system = original_system
 assert(isolated_system_options.clear_env == true)
-assert(isolated_system_options.env == nil)
+if runtime_version.major == 0 and runtime_version.minor == 10 then
+  assert(vim.deep_equal(isolated_system_options.env, {}))
+else
+  assert(isolated_system_options.env == nil)
+end
+
+local original_version = vim.version
+vim.version = function()
+  return { major = 0, minor = 10, patch = 4 }
+end
+vim.system = function(_, options, callback)
+  isolated_system_options = options
+  callback({ code = 0 })
+  return { pid = 10 }
+end
+process.run({ "neovim-0.10-environment" }, function() end, nil, {
+  clear_env = true,
+  env = { PATH = "/usr/bin:/bin", CODEX_HOME = "/private/codex" },
+})
+vim.system = original_system
+vim.version = original_version
+assert(vim.deep_equal(isolated_system_options.env, {
+  "CODEX_HOME=/private/codex",
+  "PATH=/usr/bin:/bin",
+}), "Neovim 0.10 requires a serialized clear environment")
 
 if process.supports_process_groups() then
   local inherited = {

@@ -1314,7 +1314,7 @@ local function valid_codex_process_environment(environment)
   if type(environment) ~= "table"
     or type(environment.CODEX_HOME) ~= "string"
     or environment.CODEX_HOME == ""
-    or vim.fn.isabsolutepath(environment.CODEX_HOME) ~= 1
+    or not filesystem.is_absolute_path(environment.CODEX_HOME)
     or type(environment.PATH) ~= "string"
     or environment.PATH == ""
   then
@@ -1335,11 +1335,11 @@ local function valid_codex_process_environment(environment)
 end
 
 local function resolve_codex_binary(binary)
-  if vim.fn.isabsolutepath(binary) == 1 then
+  if filesystem.is_absolute_path(binary) then
     return vim.fn.executable(binary) == 1 and binary or nil
   end
   local resolved = vim.fn.exepath(binary)
-  if type(resolved) ~= "string" or resolved == "" or vim.fn.isabsolutepath(resolved) ~= 1 then
+  if type(resolved) ~= "string" or resolved == "" or not filesystem.is_absolute_path(resolved) then
     return nil
   end
   return resolved
