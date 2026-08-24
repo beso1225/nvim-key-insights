@@ -139,6 +139,82 @@ assert(changed_leaf_result.removed == 0 and changed_leaf_result.failed == 1)
 assert(exists(changed_leaf_path), "a replacement leaf must never be unlinked")
 vim.fn.delete(changed_leaf_directory, "rf")
 
+local final_swap_directory = vim.fn.tempname()
+vim.fn.mkdir(final_swap_directory, "p", 448)
+local final_swap_name = PREFIX .. "final-swap.jsonl"
+local final_swap_path = path(final_swap_directory, final_swap_name)
+write_private(final_swap_path, "original")
+local final_swap_purge = purge.new({ directory = final_swap_directory }, {
+  notify = function() end,
+  unlink_child = function(descriptor, name, expected_identity, target_path)
+    return filesystem.unlink_child_if_identity(
+      vim.uv,
+      descriptor,
+      target_path,
+      name,
+      expected_identity,
+      artifacts.identity,
+      {
+        quarantine_name = ".purge-final-swap",
+        rename_child = function(_, source, destination)
+          assert(vim.uv.fs_rename(path(final_swap_directory, source), path(final_swap_directory, destination)))
+          if source == final_swap_name then
+            write_private(target_path, "replacement")
+          end
+          return true
+        end,
+      }
+    )
+  end,
+})
+local final_swap_result = final_swap_purge:apply(final_swap_purge:preview())
+assert(final_swap_result.removed == 1 and final_swap_result.failed == 0)
+assert(vim.fn.readfile(final_swap_path)[1] == "replacement", "purge must preserve a final-check replacement")
+vim.fn.delete(final_swap_directory, "rf")
+
+local quarantine_directory = vim.fn.tempname()
+vim.fn.mkdir(quarantine_directory, "p", 448)
+local quarantine_original = PREFIX .. "crash-quarantine.jsonl.part"
+local quarantine_original_path = path(quarantine_directory, quarantine_original)
+write_private(quarantine_original_path, "private raw artifact")
+local quarantine_identity = artifacts.identity(assert(vim.uv.fs_lstat(quarantine_original_path)))
+local quarantine_name = artifacts.quarantine_name(quarantine_original, quarantine_identity, string.rep("a", 16))
+local quarantine_path = path(quarantine_directory, quarantine_name)
+assert(vim.uv.fs_rename(quarantine_original_path, quarantine_path))
+local quarantine_purge = purge.new({ directory = quarantine_directory }, { notify = function() end })
+local quarantine_preview = quarantine_purge:preview()
+assert(#quarantine_preview.targets == 1 and quarantine_preview.targets[1].name == quarantine_name)
+assert(quarantine_purge:apply(quarantine_preview).removed == 1)
+assert(not exists(quarantine_path), "public purge recovery must remove an interrupted matching quarantine")
+
+local legacy_original = string.rep("d", 32) .. ".jsonl"
+local legacy_original_path = path(quarantine_directory, legacy_original)
+write_private(legacy_original_path, "legacy private raw artifact")
+local legacy_identity = artifacts.identity(assert(vim.uv.fs_lstat(legacy_original_path)))
+local legacy_quarantine = artifacts.quarantine_name(legacy_original, legacy_identity, string.rep("d", 16))
+local legacy_quarantine_path = path(quarantine_directory, legacy_quarantine)
+assert(vim.uv.fs_rename(legacy_original_path, legacy_quarantine_path))
+assert(#quarantine_purge:preview().targets == 0, "custom-directory purge must not recover legacy quarantines")
+local legacy_quarantine_purge = purge.new({ directory = quarantine_directory, include_legacy = true }, {
+  notify = function() end,
+})
+local legacy_preview = legacy_quarantine_purge:preview()
+assert(#legacy_preview.targets == 1 and legacy_preview.targets[1].name == legacy_quarantine)
+assert(legacy_quarantine_purge:apply(legacy_preview).removed == 1)
+assert(not exists(legacy_quarantine_path), "default-directory purge must recover legacy quarantines")
+
+write_private(quarantine_original_path, "original")
+local mismatch_identity = artifacts.identity(assert(vim.uv.fs_lstat(quarantine_original_path)))
+local mismatch_name = artifacts.quarantine_name(quarantine_original, mismatch_identity, string.rep("b", 16))
+local mismatch_path = path(quarantine_directory, mismatch_name)
+assert(vim.uv.fs_rename(quarantine_original_path, mismatch_path))
+vim.fn.writefile({ "changed after quarantine" }, mismatch_path)
+assert(vim.uv.fs_chmod(mismatch_path, 384))
+local mismatch_preview = quarantine_purge:preview()
+assert(#mismatch_preview.targets == 0 and mismatch_preview.skipped == 1)
+assert(exists(mismatch_path), "identity-mismatched quarantine must remain fail-closed")
+vim.fn.delete(quarantine_directory, "rf")
+
 local late_lock_directory = vim.fn.tempname()
 vim.fn.mkdir(late_lock_directory, "p", 448)
 local late_target = path(late_lock_directory, PREFIX .. "claimed.jsonl.part")

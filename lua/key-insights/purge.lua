@@ -68,7 +68,16 @@ function M.new(options, dependencies)
     _max_entries = max_entries,
     _max_targets = max_targets,
     _notify_fn = deps.notify or default_notify,
-    _unlink_child = deps.unlink_child or filesystem.unlink_child,
+    _unlink_child = deps.unlink_child or function(descriptor, name, expected_identity, path)
+      return filesystem.unlink_child_if_identity(
+        deps.fs or vim.uv,
+        descriptor,
+        path,
+        name,
+        expected_identity,
+        artifacts.identity
+      )
+    end,
     _user_id = deps.user_id == nil and artifacts.current_user_id(vim.uv) or deps.user_id,
   }, Purge)
 end
@@ -163,6 +172,13 @@ function Purge:_scan()
     scanned = scanned + 1
     assert(scanned <= self._max_entries, "collector directory exceeds the purge scan limit")
     local parsed = artifacts.parse(name, self._include_legacy)
+    local quarantine = artifacts.parse_quarantine(name)
+    if parsed == nil and quarantine ~= nil and (not quarantine.legacy or self._include_legacy) then
+      parsed = {
+        kind = "quarantine",
+        session_id = quarantine.session_id,
+      }
+    end
     if parsed == nil then
       skipped = skipped + 1
     else
@@ -172,7 +188,9 @@ function Purge:_scan()
         if not is_enoent(stat_error) then
           error("failed to inspect collector artifact")
         end
-      elseif not artifacts.is_private_file(stat, self._user_id) then
+      elseif not artifacts.is_private_file(stat, self._user_id)
+        or (parsed.kind == "quarantine" and not artifacts.is_recoverable_quarantine(name, stat))
+      then
         skipped = skipped + 1
       else
         local entry = {
@@ -300,7 +318,12 @@ function Purge:_apply_targets(preview, current, directory_descriptor)
     then
       result.failed = result.failed + 1
     else
-      local unlinked, unlink_error = self._unlink_child(directory_descriptor, current_entry.name)
+      local unlinked, unlink_error = self._unlink_child(
+        directory_descriptor,
+        current_entry.name,
+        current_entry.identity,
+        current_entry.path
+      )
       if unlinked then
         result.removed = result.removed + 1
       else

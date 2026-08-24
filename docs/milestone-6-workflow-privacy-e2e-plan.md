@@ -90,7 +90,7 @@ Status: complete.
 
 ## S3: crash, retention, and public purge recovery
 
-Status: pending.
+Status: complete.
 
 - terminate a child collector without `VimLeavePre` and retain its private
   partial artifact and stale lock;
@@ -105,7 +105,7 @@ Status: pending.
 
 ## S4: mocked Codex command E2E and canary matrix
 
-Status: pending.
+Status: complete.
 
 - generate the source sessions through the public lifecycle from S2;
 - run real `:KeyInsightsReport` and `:KeyInsightsAnalyze` commands;
@@ -121,7 +121,7 @@ Status: pending.
 
 ## S5: failure publication and fixture refactor
 
-Status: pending.
+Status: complete.
 
 - preserve a known-good report pair across analyzer failure, timeout, malformed
   or oversized output, and stale or one-sided publication;

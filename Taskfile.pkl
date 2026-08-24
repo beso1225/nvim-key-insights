@@ -29,7 +29,7 @@ local e2eSources: Listing<String> = new {
   ...rustSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
-  "tests/e2e/**/*.lua"
+  "tests/e2e/**/*"
   "tests/lua/e2e_spec.lua"
   "tests/lua/minimal_init.lua"
   "tests/workflow_e2e.py"

@@ -76,4 +76,102 @@ local invalid, invalid_error = filesystem.unlink_child(0, "../outside")
 assert(invalid == nil and invalid_error:find("invalid", 1, true))
 vim.fn.delete(root, "rf")
 
+local identity = filesystem.stat_identity(stat(3))
+local rename_calls = {}
+local collision_attempts = 0
+local collision_removed = assert(filesystem.unlink_child_if_identity(
+  fake_reader({}),
+  7,
+  "/sessions/nvim-key-insights-race.jsonl",
+  "nvim-key-insights-race.jsonl",
+  identity,
+  filesystem.stat_identity,
+  {
+    rename_child = function(_, source, destination)
+      table.insert(rename_calls, { source, destination })
+      collision_attempts = collision_attempts + 1
+      if collision_attempts == 1 then
+        return nil, "EEXIST: injected collision"
+      end
+      return true
+    end,
+    unlink_child = function(_, name)
+      assert(name:find("quarantine", 1, true))
+      return true
+    end,
+  }
+))
+assert(collision_removed and #rename_calls == 2, "quarantine collisions must retry with a fresh name")
+
+local mismatch_stat = stat(4)
+local restored = {}
+local mismatch, mismatch_error = filesystem.unlink_child_if_identity(
+  { fs_lstat = function() return mismatch_stat end },
+  7,
+  "/sessions/nvim-key-insights-race.jsonl",
+  "nvim-key-insights-race.jsonl",
+  identity,
+  filesystem.stat_identity,
+  {
+    quarantine_name = ".mismatch-quarantine",
+    rename_child = function(_, source, destination)
+      table.insert(restored, { source, destination })
+      return true
+    end,
+  }
+)
+assert(mismatch == nil and mismatch_error:find("changed", 1, true) and #restored == 2)
+assert(vim.deep_equal(restored[2], { ".mismatch-quarantine", "nvim-key-insights-race.jsonl" }))
+
+local preserved, preserved_error = filesystem.unlink_child_if_identity(
+  { fs_lstat = function() return mismatch_stat end },
+  7,
+  "/sessions/nvim-key-insights-race.jsonl",
+  "nvim-key-insights-race.jsonl",
+  identity,
+  filesystem.stat_identity,
+  {
+    quarantine_name = ".preserved-quarantine",
+    rename_child = function(_, source)
+      if source == ".preserved-quarantine" then
+        return nil, "EEXIST: replacement owns the original name"
+      end
+      return true
+    end,
+  }
+)
+assert(preserved == nil and preserved_error:find("preserved", 1, true))
+
+local unlink_restores = 0
+local unlink_failed, unlink_error = filesystem.unlink_child_if_identity(
+  fake_reader({}),
+  7,
+  "/sessions/nvim-key-insights-race.jsonl",
+  "nvim-key-insights-race.jsonl",
+  identity,
+  filesystem.stat_identity,
+  {
+    quarantine_name = ".unlink-failure-quarantine",
+    rename_child = function()
+      unlink_restores = unlink_restores + 1
+      return true
+    end,
+    unlink_child = function()
+      return nil, "injected unlink failure"
+    end,
+  }
+)
+assert(unlink_failed == nil and unlink_error == "injected unlink failure" and unlink_restores == 2)
+
+local unavailable, unavailable_error = filesystem.unlink_child_if_identity(
+  fake_reader({}),
+  7,
+  "/sessions/nvim-key-insights-race.jsonl",
+  "nvim-key-insights-race.jsonl",
+  identity,
+  filesystem.stat_identity,
+  { rename_child = function() return nil, "ENOSYS: unavailable" end }
+)
+assert(unavailable == nil and unavailable_error:find("ENOSYS", 1, true))
+
 print("Lua filesystem contract: ok")
