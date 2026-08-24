@@ -60,7 +60,7 @@ canaries. Exact-string scanning alone is not the semantic privacy oracle.
 
 ## S1: subprocess environment boundary
 
-Status: pending.
+Status: complete.
 
 - add a failing real-process test that seeds an unrelated credential-like
   environment canary and records the environment received by a mock Codex

@@ -1,6 +1,15 @@
 local report = require("key-insights.report")
 local process = require("key-insights.process")
 
+local test_codex_home = vim.fn.tempname()
+assert(vim.fn.mkdir(test_codex_home, "p", 448) >= 0)
+local function isolated_codex_environment()
+  return {
+    CODEX_HOME = test_codex_home,
+    PATH = "/usr/bin:/bin",
+  }
+end
+
 local original_system = vim.system
 local system_argv = nil
 local system_options = nil
@@ -24,6 +33,82 @@ assert(system_options.detach == true, "subprocesses must run in a dedicated proc
 assert(type(system_options.stdout) == "function")
 assert(type(system_options.stderr) == "function")
 assert(system_result.code == 0)
+
+local isolated_system_options = nil
+vim.system = function(_, options, callback)
+  isolated_system_options = options
+  callback({ code = 0 })
+  return { pid = 8 }
+end
+process.run({ "isolated" }, function() end, nil, {
+  clear_env = true,
+  env = { KEY_INSIGHTS_ALLOWED = "allowed" },
+})
+vim.system = original_system
+assert(isolated_system_options.clear_env == true)
+assert(vim.deep_equal(isolated_system_options.env, { KEY_INSIGHTS_ALLOWED = "allowed" }))
+
+vim.system = function(_, options, callback)
+  isolated_system_options = options
+  callback({ code = 0 })
+  return { pid = 9 }
+end
+process.run({ "clear-only" }, function() end, nil, { clear_env = true })
+vim.system = original_system
+assert(isolated_system_options.clear_env == true)
+assert(isolated_system_options.env == nil)
+
+if process.supports_process_groups() then
+  local inherited = {
+    KEY_INSIGHTS_UNRELATED_ENV_CANARY = "unrelated-environment-value-7f31",
+    OPENAI_API_KEY = "api-key-environment-value-13a2",
+    HTTPS_PROXY = "proxy-environment-value-4c18",
+    SSL_CERT_FILE = "/private/custom-ca-environment-value-92df",
+    DBUS_SESSION_BUS_ADDRESS = "dbus-environment-value-a741",
+  }
+  local previous_inherited = {}
+  for name, value in pairs(inherited) do
+    previous_inherited[name] = vim.env[name] or false
+    vim.env[name] = value
+  end
+  local environment_result = nil
+  process.run({ "/usr/bin/env" }, function(result)
+    environment_result = result
+  end, nil, {
+    clear_env = true,
+    env = { KEY_INSIGHTS_ALLOWED = "allowed" },
+  })
+  assert(vim.wait(1000, function()
+    return environment_result ~= nil
+  end), "isolated environment subprocess did not finish")
+  for name, value in pairs(previous_inherited) do
+    vim.env[name] = value == false and nil or value
+  end
+  assert(environment_result.code == 0)
+  assert(string.find(environment_result.stdout, "KEY_INSIGHTS_ALLOWED=allowed", 1, true) ~= nil)
+  for name, value in pairs(inherited) do
+    assert(string.find(environment_result.stdout, name, 1, true) == nil)
+    assert(string.find(environment_result.stdout, value, 1, true) == nil)
+  end
+
+  local shebang_directory = vim.fn.tempname()
+  assert(vim.fn.mkdir(shebang_directory, "p", 448) >= 0)
+  local shebang_script = vim.fs.joinpath(shebang_directory, "mock-codex")
+  vim.fn.writefile({ "#!/usr/bin/env sh", "printf shebang-ok" }, shebang_script)
+  assert(vim.uv.fs_chmod(shebang_script, 448))
+  local shebang_result = nil
+  process.run({ shebang_script }, function(result)
+    shebang_result = result
+  end, nil, {
+    clear_env = true,
+    env = { PATH = "/usr/bin:/bin" },
+  })
+  assert(vim.wait(1000, function()
+    return shebang_result ~= nil
+  end), "env shebang subprocess did not finish")
+  assert(shebang_result.code == 0 and shebang_result.stdout == "shebang-ok")
+  vim.fn.delete(shebang_directory, "rf")
+end
 
 local group_kills = {}
 local group_callback = nil
@@ -443,6 +528,283 @@ local unsupported_codex = report.new({
 assert(unsupported_codex:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
 assert(string.find(unsupported_notification, "requires Unix process-group isolation", 1, true) ~= nil)
 
+local unsupported_confirmed = false
+local unsupported_resolved = false
+local unsupported_analysis = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/unsupported-analysis-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  supports_process_groups = function()
+    return false
+  end,
+  resolve_codex_binary = function()
+    unsupported_resolved = true
+    return "/mock/codex"
+  end,
+  confirm = function()
+    unsupported_confirmed = true
+  end,
+  open_preview = function() end,
+  run = function(_, callback)
+    callback({ code = 0, signal = 0, stdout = valid_preview, stderr = "" })
+    return { pid = 79 }
+  end,
+})
+assert(unsupported_analysis:analyze())
+assert(not unsupported_resolved and not unsupported_confirmed)
+
+local resolver_error_notification = nil
+local resolver_error_analysis = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/resolver-error-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    resolver_error_notification = message
+  end,
+  resolve_codex_binary = function()
+    error("resolver detail must be contained")
+  end,
+  open_preview = function() end,
+  run = function(_, callback)
+    callback({ code = 0, signal = 0, stdout = valid_preview, stderr = "" })
+    return { pid = 80 }
+  end,
+})
+assert(resolver_error_analysis:analyze())
+assert(resolver_error_analysis:status().running == false)
+assert(string.find(resolver_error_notification, "failed to resolve", 1, true) ~= nil)
+assert(string.find(resolver_error_notification, "resolver detail", 1, true) == nil)
+
+local resolved_binary_directory = vim.fn.tempname()
+assert(vim.fn.mkdir(resolved_binary_directory, "p", 448) >= 0)
+local resolved_binary_path = vim.fs.joinpath(resolved_binary_directory, "mock-codex")
+vim.fn.writefile({ "#!/bin/sh", "exit 0" }, resolved_binary_path)
+assert(vim.uv.fs_chmod(resolved_binary_path, 448))
+local previous_path = vim.env.PATH
+vim.env.PATH = resolved_binary_directory .. ":" .. previous_path
+local resolved_binary_argv = nil
+local resolved_binary_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/resolved-binary-reports",
+  session_directory = "/state/sessions",
+  codex = { binary = "mock-codex" },
+}, {
+  notify = function() end,
+  codex_environment = isolated_codex_environment,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function(argv)
+    resolved_binary_argv = vim.deepcopy(argv)
+    return { pid = 81, kill = function() end }
+  end,
+})
+assert(resolved_binary_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)))
+assert(resolved_binary_argv[1] == resolved_binary_path)
+assert(resolved_binary_report:shutdown())
+vim.env.PATH = previous_path
+vim.fn.delete(resolved_binary_directory, "rf")
+
+local consent_directory = vim.fn.tempname()
+assert(vim.fn.mkdir(consent_directory, "p", 448) >= 0)
+local consent_binary = vim.fs.joinpath(consent_directory, "consented-codex")
+vim.fn.writefile({ "#!/bin/sh", "exit 0" }, consent_binary)
+assert(vim.uv.fs_chmod(consent_binary, 448))
+local consent_previous_path = vim.env.PATH
+vim.env.PATH = consent_directory .. ":" .. consent_previous_path
+local consent_callback = nil
+local consent_path = nil
+local consent_launched = nil
+local consent_environment = {
+  CODEX_HOME = test_codex_home,
+  PATH = consent_directory .. ":/usr/bin:/bin",
+}
+local consent_launch_options = nil
+local consent_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/consent-reports",
+  session_directory = "/state/sessions",
+  codex = { binary = "consented-codex" },
+}, {
+  notify = function() end,
+  open_preview = function() end,
+  confirm = function(callback, binary)
+    consent_callback = callback
+    consent_path = binary
+  end,
+  codex_environment = function()
+    return vim.deepcopy(consent_environment)
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run = function(_, callback)
+    callback({ code = 0, signal = 0, stdout = valid_preview, stderr = "" })
+    return { pid = 82 }
+  end,
+  run_codex = function(argv, _, _, options)
+    consent_launched = argv[1]
+    consent_launch_options = vim.deepcopy(options)
+    return { pid = 83, kill = function() end }
+  end,
+})
+assert(consent_report:analyze())
+assert(consent_path == consent_binary)
+vim.env.PATH = consent_previous_path
+consent_environment.CODEX_HOME = consent_directory
+consent_environment.PATH = "/changed/after/consent"
+consent_callback(true)
+assert(consent_launched == consent_binary)
+assert(consent_launch_options.env.CODEX_HOME == test_codex_home)
+assert(consent_launch_options.env.PATH == consent_directory .. ":/usr/bin:/bin")
+assert(consent_report._resolved_codex_binary == nil)
+assert(consent_report._resolved_codex_environment == nil)
+assert(consent_report:shutdown())
+vim.fn.delete(consent_directory, "rf")
+
+local original_codex_home = vim.env.CODEX_HOME
+local original_home = vim.env.HOME
+local original_environment_path = vim.env.PATH
+local environment_home = vim.fn.tempname()
+local fallback_codex_home = vim.fs.joinpath(environment_home, ".codex")
+assert(vim.fn.mkdir(fallback_codex_home, "p", 448) >= 0)
+vim.env.CODEX_HOME = nil
+vim.env.HOME = environment_home
+vim.env.PATH = "/usr/bin:/bin"
+local fallback_options = nil
+local fallback_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/fallback-environment-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  resolve_codex_binary = function()
+    return "/mock/codex"
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function(_, _, _, options)
+    fallback_options = vim.deepcopy(options)
+    return { pid = 84, kill = function() end }
+  end,
+})
+assert(fallback_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)))
+assert(fallback_options.env.CODEX_HOME == fallback_codex_home)
+assert(fallback_options.env.PATH == "/usr/bin:/bin")
+assert(fallback_report:shutdown())
+
+vim.env.CODEX_HOME = test_codex_home
+local explicit_options = nil
+local explicit_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/explicit-environment-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  resolve_codex_binary = function()
+    return "/mock/codex"
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function(_, _, _, options)
+    explicit_options = vim.deepcopy(options)
+    return { pid = 85, kill = function() end }
+  end,
+})
+assert(explicit_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)))
+assert(explicit_options.env.CODEX_HOME == test_codex_home)
+assert(explicit_report:shutdown())
+
+vim.env.CODEX_HOME = nil
+vim.env.HOME = nil
+local missing_home_notification = nil
+local missing_home_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/missing-home-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    missing_home_notification = message
+  end,
+  resolve_codex_binary = function()
+    return "/mock/codex"
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function()
+    error("missing environment must not launch")
+  end,
+})
+assert(missing_home_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+assert(string.find(missing_home_notification, "isolated Codex environment", 1, true) ~= nil)
+
+vim.env.CODEX_HOME = vim.fs.joinpath(environment_home, "missing-codex-home")
+vim.env.HOME = environment_home
+assert(missing_home_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+
+local linked_codex_home = vim.fs.joinpath(environment_home, "linked-codex-home")
+assert(vim.uv.fs_symlink(test_codex_home, linked_codex_home))
+vim.env.CODEX_HOME = linked_codex_home
+vim.env.HOME = environment_home
+local live_invalid_launches = 0
+local live_invalid_report = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/live-invalid-environment-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function() end,
+  resolve_codex_binary = function()
+    return "/mock/codex"
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function()
+    live_invalid_launches = live_invalid_launches + 1
+  end,
+})
+assert(live_invalid_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+vim.env.CODEX_HOME = test_codex_home
+vim.env.PATH = ""
+assert(live_invalid_report:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+assert(live_invalid_launches == 0)
+vim.env.CODEX_HOME = original_codex_home
+vim.env.HOME = original_home
+vim.env.PATH = original_environment_path
+vim.fn.delete(environment_home, "rf")
+
+local invalid_environment_notification = nil
+local invalid_environment_codex = report.new({
+  analyzer = "key-insights",
+  output_directory = "/state/invalid-environment-reports",
+  session_directory = "/state/sessions",
+}, {
+  notify = function(message)
+    invalid_environment_notification = message
+  end,
+  codex_environment = function()
+    return {
+      CODEX_HOME = "relative-home",
+      PATH = "/usr/bin:/bin",
+      OPENAI_API_KEY = "must-not-cross",
+    }
+  end,
+  prepare_codex_directory = function()
+    return true
+  end,
+  run_codex = function()
+    error("invalid environments must never launch Codex")
+  end,
+})
+assert(invalid_environment_codex:_start_codex(valid_preview, 0, vim.json.decode(valid_preview)) == false)
+assert(string.find(invalid_environment_notification, "isolated Codex environment", 1, true) ~= nil)
+
 local preview = report.new({
   analyzer = "/tools/key insights;$analyzer",
   output_directory = "/state/preview-reports",
@@ -527,7 +889,9 @@ local analysis_codex_callback = nil
 local analysis_render_callback = nil
 local analysis_render_stdin = nil
 local analysis_render_options = nil
+local analysis_codex_options = nil
 local analysis_confirm_callback = nil
+local analysis_confirm_binary = nil
 local analysis_invocations = {}
 local analysis_opened = {}
 local analysis_markdown_opened = false
@@ -551,21 +915,27 @@ local analysis = report.new({
     analysis_markdown_opened = true
     table.insert(analysis_opened, payload)
   end,
-  confirm = function(callback)
+  confirm = function(callback, binary)
     analysis_confirm_callback = callback
+    analysis_confirm_binary = binary
   end,
   prepare_codex_directory = function(path)
     assert(path == "/state/empty-codex-workspace")
     return true
   end,
+  resolve_codex_binary = function(binary)
+    return binary
+  end,
+  codex_environment = isolated_codex_environment,
   run = function(argv, callback)
     table.insert(analysis_invocations, vim.deepcopy(argv))
     analysis_preview_callback = callback
     return { pid = 50, kill = function() end }
   end,
-  run_codex = function(argv, callback, stdin)
+  run_codex = function(argv, callback, stdin, options)
     table.insert(analysis_invocations, vim.deepcopy(argv))
     assert(stdin == shown_preview)
+    analysis_codex_options = vim.deepcopy(options)
     analysis_codex_callback = callback
     return { pid = 51, kill = function() end }
   end,
@@ -588,6 +958,7 @@ local analysis = report.new({
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
 assert(analysis:status().phase == "awaiting_confirmation")
+assert(analysis_confirm_binary == "/tools/codex;$")
 assert(#analysis_invocations == 1, "Codex must wait for explicit confirmation")
 assert(analysis:preview() == false, "a pending confirmation must block another preview")
 assert(analysis:start() == false, "a pending confirmation must block report generation")
@@ -598,6 +969,11 @@ assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
 analysis_confirm_callback(true)
 assert(analysis:status().phase == "codex")
+assert(analysis_codex_options.clear_env == true)
+assert(type(analysis_codex_options.env.CODEX_HOME) == "string")
+assert(analysis_codex_options.env.CODEX_HOME ~= "")
+assert(type(analysis_codex_options.env.PATH) == "string")
+assert(analysis_codex_options.env.OPENAI_API_KEY == nil)
 assert(vim.deep_equal(analysis_invocations[3], {
   "/tools/codex;$",
   "exec",
@@ -757,6 +1133,10 @@ local function run_prefix_case(conflicting_mapping_ids, should_render, proposal_
     end,
     prepare_codex_directory = function()
       return true
+    end,
+    codex_environment = isolated_codex_environment,
+    resolve_codex_binary = function()
+      return "/mock/codex"
     end,
     run = function(_, callback)
       callback({ code = 0, signal = 0, stdout = preview_payload or prefix_preview, stderr = "" })
@@ -1047,3 +1427,4 @@ assert(
 )
 
 print("Lua report workflow contract: ok")
+vim.fn.delete(test_codex_home, "rf")

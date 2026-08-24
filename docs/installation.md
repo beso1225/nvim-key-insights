@@ -231,6 +231,31 @@ Collection starts only after `:KeyInsightsStart`. Codex starts only after
 `:KeyInsightsAnalyze` displays the exact sanitized payload and the user confirms
 the subprocess launch.
 
+Before confirmation, the configured Codex executable is resolved to an absolute
+path. That exact path and the allowlisted environment described below are held
+as one consent snapshot, and the path is shown in the prompt. Treat this
+executable as a trusted local boundary: environment clearing does not sandbox a
+malicious program or prevent it from inspecting its parent process through
+platform APIs.
+
+The confirmed Codex subprocess receives a cleared environment containing only
+`CODEX_HOME` and `PATH`. `CODEX_HOME` is taken from the existing variable or
+derived as `$HOME/.codex` before clearing, and must identify an existing absolute
+directory. This is a preflight sanity check at launch time, not a race-resistant
+filesystem confinement guarantee; the Codex home and its ancestors remain a
+trusted same-user boundary. This supports file-based saved authentication in
+`$CODEX_HOME/auth.json`. OS keyring authentication that requires a session bus is
+not guaranteed on Linux because D-Bus and runtime-directory variables are not
+forwarded. API keys, editor variables, proxy settings, custom-CA variables, and
+unrelated credentials are also not inherited; installations that require a
+proxy or custom CA are not supported by this strict subprocess profile yet.
+
+The deterministic analyzer is a separate trusted local executable and continues
+to inherit the editor environment; it never sends data to an AI service.
+The exported Rust runner accepts an already resolved absolute executable, while
+the Neovim workflow resolves a configured bare executable before confirmation;
+both launch only the resulting absolute path.
+
 ## Upgrade and rollback
 
 Pin one reviewed Git tag across lazy.nvim, Nix, and the optional Codex

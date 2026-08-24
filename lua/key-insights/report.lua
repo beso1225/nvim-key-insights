@@ -159,9 +159,9 @@ local function default_open_suggestions(contents)
   default_open_contents(contents, "markdown")
 end
 
-local function default_confirm(callback)
+local function default_confirm(callback, codex_binary)
   vim.ui.select({ "Run Codex analysis", "Cancel" }, {
-    prompt = "Run Codex with this sanitized payload?",
+    prompt = "Run " .. vim.inspect(codex_binary) .. " with this sanitized payload?",
   }, function(choice)
     callback(choice == "Run Codex analysis")
   end)
@@ -1297,6 +1297,54 @@ local function assert_nonempty(value, name)
   assert(type(value) == "string" and value ~= "", name .. " must be a non-empty string")
 end
 
+local function codex_process_environment()
+  local codex_home = vim.env.CODEX_HOME
+  if type(codex_home) ~= "string" or codex_home == "" then
+    local home = vim.env.HOME
+    assert(type(home) == "string" and home ~= "", "HOME is unavailable")
+    codex_home = vim.fs.joinpath(home, ".codex")
+  end
+  return {
+    CODEX_HOME = codex_home,
+    PATH = type(vim.env.PATH) == "string" and vim.env.PATH or "",
+  }
+end
+
+local function valid_codex_process_environment(environment)
+  if type(environment) ~= "table"
+    or type(environment.CODEX_HOME) ~= "string"
+    or environment.CODEX_HOME == ""
+    or vim.fn.isabsolutepath(environment.CODEX_HOME) ~= 1
+    or type(environment.PATH) ~= "string"
+    or environment.PATH == ""
+  then
+    return false
+  end
+  local stat = vim.uv.fs_lstat(environment.CODEX_HOME)
+  if stat == nil or stat.type ~= "directory" then
+    return false
+  end
+  local count = 0
+  for key, value in pairs(environment) do
+    if (key ~= "CODEX_HOME" and key ~= "PATH") or type(value) ~= "string" then
+      return false
+    end
+    count = count + 1
+  end
+  return count == 2
+end
+
+local function resolve_codex_binary(binary)
+  if vim.fn.isabsolutepath(binary) == 1 then
+    return vim.fn.executable(binary) == 1 and binary or nil
+  end
+  local resolved = vim.fn.exepath(binary)
+  if type(resolved) ~= "string" or resolved == "" or vim.fn.isabsolutepath(resolved) ~= 1 then
+    return nil
+  end
+  return resolved
+end
+
 function M.new(options, dependencies)
   local config = options or {}
   assert_nonempty(config.analyzer, "report analyzer")
@@ -1339,12 +1387,16 @@ function M.new(options, dependencies)
     _run_suggestions = deps.run_suggestions or process.run,
     _supports_process_groups = deps.supports_process_groups or process.supports_process_groups,
     _codex_binary = (config.codex and config.codex.binary) or "codex",
+    _resolved_codex_binary = nil,
+    _resolved_codex_environment = nil,
+    _resolve_codex_binary = deps.resolve_codex_binary or resolve_codex_binary,
     _codex_output_schema = (config.codex and config.codex.output_schema) or default_codex_schema(),
     _codex_working_directory = (config.codex and config.codex.working_directory)
       or vim.fs.joinpath(vim.fn.stdpath("cache"), "key-insights", "codex-empty"),
     _prepare_codex_directory = deps.prepare_codex_directory or function(path)
       return prepare_codex_directory(fs, deps.mkdir or vim.fn.mkdir, path)
     end,
+    _codex_environment = deps.codex_environment or codex_process_environment,
     _session_directory = config.session_directory,
     _summary_path = vim.fs.joinpath(config.output_directory, "summary.json"),
     _validate_outputs = deps.validate_outputs or function(summary_path, report_path, previous)
@@ -1432,20 +1484,42 @@ function Report:_complete_preview(result, generation)
   end
   if self._await_confirmation then
     self._await_confirmation = false
+    if not self._supports_process_groups() then
+      self:_notify("Codex analysis requires Unix process-group isolation", vim.log.levels.ERROR)
+      return
+    end
     self._phase = "awaiting_confirmation"
+    local resolve_ok, resolved_binary = pcall(self._resolve_codex_binary, self._codex_binary)
+    if not resolve_ok or resolved_binary == nil then
+      self._phase = nil
+      self:_notify("failed to resolve the configured Codex executable", vim.log.levels.ERROR)
+      return
+    end
+    local environment_ok, environment = pcall(self._codex_environment)
+    if not environment_ok or not valid_codex_process_environment(environment) then
+      self._phase = nil
+      self:_notify("failed to prepare the isolated Codex environment", vim.log.levels.ERROR)
+      return
+    end
+    self._resolved_codex_binary = resolved_binary
+    self._resolved_codex_environment = vim.deepcopy(environment)
     local confirm_ok, confirm_error = pcall(self._confirm, function(confirmed)
       if generation ~= self._generation or self._phase ~= "awaiting_confirmation" then
         return
       end
       self._phase = nil
       if not confirmed then
+        self._resolved_codex_binary = nil
+        self._resolved_codex_environment = nil
         self:_notify("Codex analysis cancelled", vim.log.levels.INFO)
         return
       end
       self:_start_codex(result.stdout, generation, preview_payload)
-    end)
+    end, resolved_binary)
     if not confirm_ok then
       self._phase = nil
+      self._resolved_codex_binary = nil
+      self._resolved_codex_environment = nil
       self:_notify("failed to request Codex confirmation: " .. tostring(confirm_error), vim.log.levels.ERROR)
       return
     end
@@ -1462,13 +1536,36 @@ function Report:_start_codex(payload, generation, preview_payload)
     self:_notify("Codex analysis requires Unix process-group isolation", vim.log.levels.ERROR)
     return false
   end
+  local codex_binary = self._resolved_codex_binary
+  local environment = self._resolved_codex_environment
+  self._resolved_codex_binary = nil
+  self._resolved_codex_environment = nil
+  if codex_binary == nil then
+    local resolve_ok
+    resolve_ok, codex_binary = pcall(self._resolve_codex_binary, self._codex_binary)
+    if not resolve_ok then
+      codex_binary = nil
+    end
+  end
+  if codex_binary == nil then
+    self:_notify("failed to resolve the configured Codex executable", vim.log.levels.ERROR)
+    return false
+  end
   local prepare_ok, prepared = pcall(self._prepare_codex_directory, self._codex_working_directory)
   if not prepare_ok or not prepared then
     self:_notify("failed to prepare the isolated Codex working directory", vim.log.levels.ERROR)
     return false
   end
+  if environment == nil then
+    local environment_ok
+    environment_ok, environment = pcall(self._codex_environment)
+    if not environment_ok or not valid_codex_process_environment(environment) then
+      self:_notify("failed to prepare the isolated Codex environment", vim.log.levels.ERROR)
+      return false
+    end
+  end
   local argv = {
-    self._codex_binary,
+    codex_binary,
     "exec",
     "--ephemeral",
     "--ignore-user-config",
@@ -1521,7 +1618,10 @@ function Report:_start_codex(payload, generation, preview_payload)
       return
     end
     self:_start_suggestion_render(codex_result.stdout, generation)
-  end, payload)
+  end, payload, {
+    clear_env = true,
+    env = environment,
+  })
   if not run_ok or (not job and not completed) then
     self._job = nil
     self._phase = nil
@@ -1702,6 +1802,8 @@ function Report:shutdown()
   self._job = nil
   self._phase = nil
   self._await_confirmation = false
+  self._resolved_codex_binary = nil
+  self._resolved_codex_environment = nil
   if type(job) == "table" and type(job.kill) == "function" then
     pcall(job.kill, job, 9)
   end

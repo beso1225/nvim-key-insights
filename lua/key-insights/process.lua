@@ -81,11 +81,20 @@ function M.run(argv, callback, stdin, run_options)
     result.stderr = stderr()
     callback(result)
   end
-  handle = vim.system(
-    argv,
-    { text = true, stdin = stdin, stdout = capture_stdout, stderr = capture_stderr, detach = true },
-    vim.schedule_wrap(complete)
-  )
+  local system_options = {
+    text = true,
+    stdin = stdin,
+    stdout = capture_stdout,
+    stderr = capture_stderr,
+    detach = true,
+  }
+  if run_options ~= nil then
+    system_options.clear_env = run_options.clear_env == true
+    if run_options.env ~= nil then
+      system_options.env = run_options.env
+    end
+  end
+  handle = vim.system(argv, system_options, vim.schedule_wrap(complete))
   if not finished and type(timeout_ms) == "number" and timeout_ms > 0 and timeout_ms < math.huge then
     timer = vim.uv.new_timer()
     timer:start(math.floor(timeout_ms), 0, function()

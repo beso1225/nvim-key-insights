@@ -2,6 +2,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 #[cfg(unix)]
 use std::{
     io::{self, Read, Write},
+    path::Path,
     process::{Command, Stdio},
     sync::{
         Arc,
@@ -21,7 +22,9 @@ pub const MAX_CODEX_TIMEOUT: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone)]
 pub struct CodexExecConfig {
     pub binary: PathBuf,
+    pub codex_home: PathBuf,
     pub output_schema: PathBuf,
+    pub path_environment: OsString,
     pub working_directory: PathBuf,
     pub timeout: Duration,
     pub max_output_bytes: usize,
@@ -117,6 +120,9 @@ pub fn run_codex_exec(
         || config.timeout > MAX_CODEX_TIMEOUT
         || config.max_output_bytes == 0
         || config.max_output_bytes > MAX_CODEX_OUTPUT_BYTES
+        || !config.binary.is_absolute()
+        || !valid_codex_home(&config.codex_home)
+        || config.path_environment.is_empty()
         || !valid_working_directory(&config.working_directory)
     {
         return Err(CodexExecError::InvalidConfig);
@@ -130,6 +136,9 @@ pub fn run_codex_exec(
     command
         .args(build_codex_exec_argv(config))
         .current_dir(&config.working_directory)
+        .env_clear()
+        .env("CODEX_HOME", &config.codex_home)
+        .env("PATH", &config.path_environment)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -222,6 +231,15 @@ pub fn run_codex_exec(
         });
     }
     Ok(CodexExecResult { stdout })
+}
+
+#[cfg(unix)]
+fn valid_codex_home(path: &Path) -> bool {
+    path.is_absolute()
+        && path
+            .symlink_metadata()
+            .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+            .unwrap_or(false)
 }
 
 #[cfg(unix)]
