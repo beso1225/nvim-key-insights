@@ -76,7 +76,7 @@ Status: complete.
 
 ## S2: public command lifecycle and normal shutdown
 
-Status: pending.
+Status: complete.
 
 - load the plugin with `require("key-insights").setup` in an isolated child
   Neovim;
