@@ -32,7 +32,17 @@ the inventory before any retention mutation. One finalization performs at most
 512 identity-safe deletions across quarantine recovery, age pruning, and count
 pruning. These are internal safety budgets rather than user configuration.
 
-The session being finalized is always protected. A finalized log whose versioned lock identifies a live owner process is also protected so concurrent Neovim processes cannot delete one another's in-progress publications. Live locks or the per-pass deletion budget can temporarily exceed `max_sessions`; a later successful finalization retries and converges to the configured bound. A directory above the scan budget requires explicit purge or external removal of unrelated entries before automatic retention can resume. Stale, empty, or malformed locks do not exempt a finalized log from retention. A reused process ID can conservatively delay pruning until that process exits, but it cannot cause an unrelated file to be deleted.
+The session being finalized is always protected. A finalized log whose versioned
+lock identifies a live owner process is also protected so concurrent Neovim
+processes cannot delete one another's in-progress publications. Live locks or
+the per-pass deletion budget can temporarily exceed `max_sessions`; a later
+successful finalization retries and converges to the configured bound. A
+directory above the scan budget requires external inspection and removal of
+entries before automatic retention can resume; the separately bounded public
+purge also refuses an over-budget scan. Stale, empty, or malformed locks do not
+exempt a finalized log from retention. A reused process ID can conservatively
+delay pruning until that process exits, but it cannot cause an unrelated file to
+be deleted.
 
 Retention never removes `.jsonl.part`, `.lock`, symlinks, non-regular entries, or files outside the collector namespace. In the collector-owned default directory only, it also recognizes the previous 32-character lowercase hexadecimal filename format so upgrades do not exempt historical logs from the privacy boundary. Legacy-shaped files in a custom directory remain untouched. If a filesystem does not report directory-entry types, the collector uses `lstat` rather than following links. Incomplete artifacts require explicit recovery or purge handling rather than age-based deletion.
 

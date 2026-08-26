@@ -61,7 +61,7 @@ Status: complete.
 
 ## S3: bounded retention and large directories
 
-Status: pending.
+Status: complete.
 
 - add Red tests for a hard directory-entry scan budget and a per-finalization
   mutation budget;
