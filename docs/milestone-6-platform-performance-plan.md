@@ -101,7 +101,7 @@ microsecond measurements as the sole correctness oracle.
 
 ## S5: collector callback budgets
 
-Status: pending.
+Status: complete.
 
 - replace the queue-overflow benchmark with warmups and measured batches that
   remain in the recording state and process every intended event;
@@ -112,6 +112,10 @@ Status: pending.
 - retain only generous batch-level timing smoke gates and print timing telemetry
   for Linux and macOS without relying on per-callback tail latency under shared
   runner preemption.
+
+Callback dependency failures and violations of the deferred-scheduler contract
+now fail closed with categorical diagnostics. Typed input and scheduler error
+details never enter collector status.
 
 ## S6: completion gate and documentation
 
