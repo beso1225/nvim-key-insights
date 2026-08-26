@@ -35,12 +35,24 @@ local e2eSources: Listing<String> = new {
   "tests/workflow_e2e.py"
 }
 
+local resourceSources: Listing<String> = new {
+  ...rustSources
+  "lua/**/*.lua"
+  "plugin/**/*.lua"
+  "tests/lua/callback_performance_spec.lua"
+  "tests/lua/minimal_init.lua"
+  "tests/lua/resource_run.lua"
+  "tests/lua/retention_spec.lua"
+  "Taskfile.pkl"
+}
+
 local workflowSources: Listing<String> = new {
   ...toolchainSources
   ".github/workflows/*.yml"
   ".github/workflows/*.yaml"
   "Taskfile.pkl"
   "tests/ci_contract.sh"
+  "tests/ci_platform_contract.py"
   "tests/release_workflow_contract.py"
 }
 
@@ -114,6 +126,26 @@ local testE2e: Task = new {
   deps { testRust }
 }
 
+local testResourceRust: Task = new {
+  name = "test:resource:rust"
+  description = "Run deterministic Rust analyzer resource contracts"
+  cmd = "cargo test --workspace"
+  inputs = resourceSources
+}
+
+local testResourceLua: Task = new {
+  name = "test:resource:lua"
+  description = "Run collector callback and retention resource contracts"
+  cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua"
+  inputs = resourceSources
+}
+
+local testResource: Task = new {
+  name = "test:resource"
+  description = "Run deterministic analyzer and collector resource contracts"
+  deps { testResourceRust; testResourceLua }
+}
+
 local testPackaging: Task = new {
   name = "test:packaging"
   description = "Validate Nix package, app, and overlay outputs"
@@ -167,7 +199,7 @@ local lintRust: Task = new {
 local lintActions: Task = new {
   name = "lint:actions"
   description = "Lint GitHub Actions workflows"
-  cmd = "actionlint && bash tests/ci_contract.sh && python3 tests/release_workflow_contract.py"
+  cmd = "actionlint && bash tests/ci_contract.sh && python3 tests/ci_platform_contract.py && python3 tests/release_workflow_contract.py"
   inputs = workflowSources
 }
 
@@ -180,7 +212,7 @@ local test: Task = new {
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease }
+  deps { formatCheck; lintRust; lintActions; test; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease }
 }
 
 local default: Task = new {
@@ -189,4 +221,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }

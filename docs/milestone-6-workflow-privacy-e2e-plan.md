@@ -1,4 +1,4 @@
-# Milestone 6 command-surface privacy E2E plan
+# Milestone 6-A command-surface privacy E2E plan
 
 Status: complete on `codex/m6-workflow-privacy-e2e`.
 
@@ -31,9 +31,9 @@ environment inherited by tools that Codex starts; it does not sanitize the
 environment delivered to the Codex process itself. M6-A must close that boundary
 before adding a happy-path subprocess E2E.
 
-Cross-platform CI expansion and performance or resource budgets remain the
-second Milestone 6 slice. Real usage, threshold tuning, and release approval
-remain Milestone 7 work.
+Cross-platform CI expansion and performance or resource budgets are tracked in
+the [Milestone 6-B platform and performance plan](milestone-6-platform-performance-plan.md).
+Real usage, threshold tuning, and release approval remain Milestone 7 work.
 
 ## Boundary model
 

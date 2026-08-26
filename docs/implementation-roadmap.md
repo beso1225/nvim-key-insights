@@ -252,8 +252,10 @@ The package must not auto-start collection, auto-send data, or add raw capture.
 
 ## Milestone 6: end-to-end and privacy regression coverage
 
-Status: in progress. The command-surface workflow and privacy slice is tracked
-in the [Milestone 6 command-surface privacy E2E plan](milestone-6-workflow-privacy-e2e-plan.md).
+Status: in progress. The command-surface workflow and privacy slice is complete
+under the [Milestone 6-A command-surface privacy E2E plan](milestone-6-workflow-privacy-e2e-plan.md).
+Native platform execution and deterministic resource budgets are tracked in the
+[Milestone 6-B platform and performance plan](milestone-6-platform-performance-plan.md).
 
 - Run a headless Neovim collection session through finalization and Rust analysis
   in a temporary isolated state directory.
