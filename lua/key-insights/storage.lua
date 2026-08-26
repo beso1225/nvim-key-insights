@@ -12,6 +12,8 @@ local OWNER_DIRECTORY = 448 -- 0700
 local DAY_SECONDS = 24 * 60 * 60
 local LOCK_METADATA_VERSION = 1
 local MAX_LOCK_METADATA_BYTES = 1024
+local MAX_RETENTION_SCAN_ENTRIES = 8192
+local MAX_RETENTION_DELETIONS_PER_PASS = 512
 local DEFAULT_RETENTION = {
   max_age_days = 30,
   max_sessions = 100,
@@ -74,6 +76,11 @@ function M.new(options)
   assert(type(directory) == "string" and directory ~= "", "storage directory must be a non-empty string")
   validate_positive_integer(retention.max_sessions, "storage.retention.max_sessions")
   validate_positive_integer(retention.max_age_days, "storage.retention.max_age_days")
+  local max_retention_scan_entries = config.max_retention_scan_entries or MAX_RETENTION_SCAN_ENTRIES
+  local max_retention_deletions_per_pass =
+    config.max_retention_deletions_per_pass or MAX_RETENTION_DELETIONS_PER_PASS
+  validate_positive_integer(max_retention_scan_entries, "retention scan entry limit")
+  validate_positive_integer(max_retention_deletions_per_pass, "retention deletion limit")
   local process_id = config.process_id or vim.fn.getpid()
   validate_positive_integer(process_id, "collector process ID")
   local on_retention_error = config.on_retention_error or function()
@@ -85,6 +92,8 @@ function M.new(options)
     _fs = config.fs or vim.uv,
     _include_legacy_logs = uses_default_directory,
     _is_process_alive = config.is_process_alive or default_is_process_alive,
+    _max_retention_deletions_per_pass = max_retention_deletions_per_pass,
+    _max_retention_scan_entries = max_retention_scan_entries,
     _mkdir = config.mkdir or vim.fn.mkdir,
     _now_seconds = config.now_seconds or os.time,
     _on_retention_error = on_retention_error,
@@ -170,20 +179,33 @@ function Storage:_lock_owner_alive(path)
   return self._is_process_alive(metadata.pid) == true
 end
 
-function Storage:_finalized_logs()
+function Storage:_retention_inventory()
   local request, scan_error = self._fs.fs_scandir(self.directory)
   assert(request ~= nil, scan_error or "failed to scan collector log directory")
 
   local logs = {}
   local lock_paths = {}
+  local quarantines = {}
+  local scanned_entries = 0
   while true do
     local name, entry_type = self._fs.fs_scandir_next(request)
     if name == nil then
       break
     end
+    scanned_entries = scanned_entries + 1
+    if scanned_entries > self._max_retention_scan_entries then
+      error("collector retention scan entry limit exceeded")
+    end
     entry_type = self:_entry_type(name, entry_type)
+    local quarantine = entry_type == "file" and artifacts.parse_quarantine(name) or nil
     local parsed = entry_type == "file" and artifacts.parse(name, self._include_legacy_logs) or nil
-    if parsed ~= nil and parsed.kind == "lock" then
+    if quarantine ~= nil and (not quarantine.legacy or self._include_legacy_logs) then
+      local path = vim.fs.joinpath(self.directory, name)
+      local stat = self._fs.fs_lstat(path)
+      if artifacts.is_private_file(stat, self._user_id) and artifacts.is_recoverable_quarantine(name, stat) then
+        table.insert(quarantines, { identity = artifacts.identity(stat), name = name, path = path })
+      end
+    elseif parsed ~= nil and parsed.kind == "lock" then
       lock_paths[parsed.session_id] = vim.fs.joinpath(self.directory, name)
     elseif parsed ~= nil and parsed.kind == "finalized" then
       local path = vim.fs.joinpath(self.directory, name)
@@ -206,7 +228,12 @@ function Storage:_finalized_logs()
     local lock_path = lock_paths[log.session_id]
     log.locked = lock_path ~= nil and self:_lock_owner_alive(lock_path)
   end
-  return logs
+  table.sort(quarantines, function(left, right) return left.name < right.name end)
+  return { logs = logs, quarantines = quarantines }
+end
+
+function Storage:_finalized_logs()
+  return self:_retention_inventory().logs
 end
 
 function Storage:_unlink_log(log)
@@ -243,46 +270,50 @@ function Storage:_unlink_log(log)
   end
 end
 
-function Storage:_recover_quarantines()
-  local request, scan_error = self._fs.fs_scandir(self.directory)
-  assert(request ~= nil, scan_error or "failed to scan collector quarantine artifacts")
-  while true do
-    local name, entry_type = self._fs.fs_scandir_next(request)
-    if name == nil then
+function Storage:_recover_quarantines(deletions_remaining, candidates)
+  local deferred = false
+  for _, candidate in ipairs(candidates) do
+    if deletions_remaining == 0 then
+      deferred = true
       break
     end
-    local quarantine = artifacts.parse_quarantine(name)
-    if self:_entry_type(name, entry_type) == "file"
-      and quarantine ~= nil
-      and (not quarantine.legacy or self._include_legacy_logs)
-    then
-      local path = vim.fs.joinpath(self.directory, name)
-      local stat = self._fs.fs_lstat(path)
-      if artifacts.is_private_file(stat, self._user_id) and artifacts.is_recoverable_quarantine(name, stat) then
-        self:_unlink_log({ identity = artifacts.identity(stat), name = name, path = path })
-      end
-    end
+    self:_unlink_log(candidate)
+    deletions_remaining = deletions_remaining - 1
   end
+  return deletions_remaining, deferred
 end
 
 function Storage:_prune(protected_path)
-  self:_recover_quarantines()
+  local inventory = self:_retention_inventory()
+  local deletions_remaining, deferred = self:_recover_quarantines(
+    self._max_retention_deletions_per_pass,
+    inventory.quarantines
+  )
+  if deferred then
+    error("collector retention deletion limit exceeded")
+  end
   local cutoff = self._now_seconds() - self._retention.max_age_days * DAY_SECONDS
   local retained = {}
-  for _, log in ipairs(self:_finalized_logs()) do
-    if log.path ~= protected_path and not log.locked and log.modified_at < cutoff then
-      self:_unlink_log(log)
-    else
-      table.insert(retained, log)
-    end
-  end
-
-  table.sort(retained, function(left, right)
+  local logs = inventory.logs
+  table.sort(logs, function(left, right)
     if left.modified_at == right.modified_at then
       return left.name < right.name
     end
     return left.modified_at < right.modified_at
   end)
+  for _, log in ipairs(logs) do
+    if log.path ~= protected_path and not log.locked and log.modified_at < cutoff then
+      if deletions_remaining > 0 then
+        self:_unlink_log(log)
+        deletions_remaining = deletions_remaining - 1
+      else
+        deferred = true
+        table.insert(retained, log)
+      end
+    else
+      table.insert(retained, log)
+    end
+  end
 
   while #retained > self._retention.max_sessions do
     local delete_index = nil
@@ -295,8 +326,16 @@ function Storage:_prune(protected_path)
     if delete_index == nil then
       break
     end
+    if deletions_remaining == 0 then
+      deferred = true
+      break
+    end
     self:_unlink_log(retained[delete_index])
+    deletions_remaining = deletions_remaining - 1
     table.remove(retained, delete_index)
+  end
+  if deferred then
+    error("collector retention deletion limit exceeded")
   end
 end
 
