@@ -406,8 +406,9 @@ end
 local retry_directory = vim.fn.tempname()
 vim.fn.mkdir(retry_directory, "p", 448)
 local retry_old_path = vim.fs.joinpath(retry_directory, log_name("old"))
-write_at(retry_old_path, "old", NOW_SECONDS - DAY_SECONDS)
+write_at(retry_old_path, "old", NOW_SECONDS - 31 * DAY_SECONDS)
 local fail_prune_once = true
+local retention_errors = {}
 local retry_fs = setmetatable({}, { __index = vim.uv })
 local function retry_unlink_child(descriptor, name, expected_identity, target_path)
   if target_path == retry_old_path and fail_prune_once then
@@ -429,6 +430,9 @@ local retry_store = storage.new({
   now_seconds = function()
     return NOW_SECONDS
   end,
+  on_retention_error = function(error_message)
+    table.insert(retention_errors, error_message)
+  end,
   unlink_child = retry_unlink_child,
   retention = {
     max_age_days = 30,
@@ -440,12 +444,57 @@ retry_session:write({
   schema.encode(schema.session_start("current")),
   schema.encode(schema.session_end("current", 1)),
 })
-assert(not pcall(retry_session.finish, retry_session), "retention failure must be reported")
+assert(pcall(retry_session.finish, retry_session), "retention failure must not interrupt finalization")
 assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, log_name("current"))) ~= nil)
-assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) ~= nil)
-retry_session:finish()
-assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { log_name("current") }))
 assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) == nil)
+assert(#retention_errors == 1, "retention failure must be reported once")
+assert(vim.uv.fs_stat(retry_old_path) ~= nil, "failed retention must preserve its target")
+finalize(retry_store, "later")
+assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { log_name("later") }))
 vim.fn.delete(retry_directory, "rf")
+
+local unavailable_directory = vim.fn.tempname()
+vim.fn.mkdir(unavailable_directory, "p", 448)
+write_at(
+  vim.fs.joinpath(unavailable_directory, log_name("expired")),
+  "expired",
+  NOW_SECONDS - 31 * DAY_SECONDS
+)
+local unavailable_notifications = {}
+local original_notify = vim.notify
+vim.notify = function(message, level)
+  table.insert(unavailable_notifications, { level = level, message = tostring(message) })
+end
+local unavailable_store = storage.new({
+  directory = unavailable_directory,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  unlink_child = function()
+    return nil, "atomic descriptor-relative rename is unavailable: /private/retention-canary"
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 100,
+  },
+})
+finalize(unavailable_store, "portable-a")
+finalize(unavailable_store, "portable-b")
+vim.notify = original_notify
+assert(#unavailable_notifications == 2, "each deferred retention pass must be reported")
+for _, notification in ipairs(unavailable_notifications) do
+  assert(notification.level == vim.log.levels.WARN)
+  assert(notification.message == "key-insights: retention cleanup was deferred")
+  assert(not notification.message:find("retention-canary", 1, true), "raw retention errors must stay private")
+end
+for _, session_id in ipairs({ "portable-a", "portable-b" }) do
+  assert(vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, log_name(session_id))) ~= nil)
+  assert(vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, lock_name(session_id))) == nil)
+end
+assert(
+  vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, log_name("expired"))) ~= nil,
+  "unsupported cleanup must preserve the retention candidate"
+)
+vim.fn.delete(unavailable_directory, "rf")
 
 print("Lua retention contract: ok")

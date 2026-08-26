@@ -21,6 +21,8 @@ stdpath("state")/key-insights/sessions/
 
 Each Neovim session first reserves its opaque ID with an exclusively created `nvim-key-insights-<session_id>.lock`, then writes `nvim-key-insights-<session_id>.jsonl.part` as mode `0600`. The lock contains versioned owner-process metadata and is flushed before collection starts. A clean stop flushes `session_end`, closes the file, atomically renames it to `nvim-key-insights-<session_id>.jsonl`, releases the reservation, and fsyncs the parent directory before reporting success. Concurrent Neovim processes therefore cannot interleave session boundaries, and a finalized ID cannot be reused through the collector. A crash can leave namespaced `.lock` and `.jsonl.part` files, which analyzers must ignore.
 
+Retention cleanup remains best-effort so platform limitations cannot leave a cleanly published session half-finalized. If identity-safe atomic quarantine is unavailable or a retention pass fails, the current session lock is still released, the directory is synchronized, and Neovim emits the categorical warning `key-insights: retention cleanup was deferred`. A pre-mutation failure preserves its candidate; a later failure may leave an already completed subset of the cleanup in place. A later session finalization retries the remaining work. The collector never falls back to a pathname unlink that could delete a concurrently replaced file.
+
 A custom directory can be supplied through `setup`:
 
 ```lua

@@ -76,6 +76,10 @@ function M.new(options)
   validate_positive_integer(retention.max_age_days, "storage.retention.max_age_days")
   local process_id = config.process_id or vim.fn.getpid()
   validate_positive_integer(process_id, "collector process ID")
+  local on_retention_error = config.on_retention_error or function()
+    vim.notify("key-insights: retention cleanup was deferred", vim.log.levels.WARN)
+  end
+  assert(type(on_retention_error) == "function", "storage retention error handler must be a function")
   return setmetatable({
     directory = directory,
     _fs = config.fs or vim.uv,
@@ -83,6 +87,7 @@ function M.new(options)
     _is_process_alive = config.is_process_alive or default_is_process_alive,
     _mkdir = config.mkdir or vim.fn.mkdir,
     _now_seconds = config.now_seconds or os.time,
+    _on_retention_error = on_retention_error,
     _process_id = process_id,
     _retention = retention,
     _unlink_child = config.unlink_child or function(descriptor, name, expected_identity, path)
@@ -354,6 +359,7 @@ function Storage:open_session(session_id)
     _fs = self._fs,
     _lock_path = lock_path,
     _offset = 0,
+    _on_retention_error = self._on_retention_error,
     _partial_path = partial_path,
     _published = false,
     _retention_done = false,
@@ -411,7 +417,7 @@ end
 
 function SessionStorage:finish()
   if self._finished then
-    return
+    return true
   end
 
   if self._descriptor ~= nil then
@@ -428,9 +434,14 @@ function SessionStorage:finish()
     self._published = true
   end
 
+  local retention_error = nil
   if not self._retention_done then
-    self._prune()
-    self._retention_done = true
+    local retention_ok, prune_error = pcall(self._prune)
+    if retention_ok then
+      self._retention_done = true
+    else
+      retention_error = tostring(prune_error)
+    end
   end
 
   if not self._unlocked then
@@ -444,6 +455,10 @@ function SessionStorage:finish()
     self._directory_synced = true
   end
   self._finished = true
+  if retention_error ~= nil then
+    pcall(self._on_retention_error, retention_error)
+  end
+  return true
 end
 
 function SessionStorage:abort()
