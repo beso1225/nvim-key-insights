@@ -21,15 +21,12 @@ Milestone 7 work.
 
 Milestone 6-A exercises the public Neovim commands, shutdown, crash recovery,
 retention and purge, local reporting, and a mocked Codex workflow. The flake
-already publishes `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`, but CI
-currently executes only on `x86_64-linux`.
+already publishes `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. Before
+this slice, CI executed only on `x86_64-linux`; the native matrix added here now
+executes all three existing systems. The analyzer has deterministic cardinality
+and byte limits, discovery and purge have scan limits, and the collector pending
+queue is bounded. The remaining implementation gaps are:
 
-Before this slice, CI executed only on `x86_64-linux`. The analyzer has
-deterministic cardinality and byte limits, discovery and purge have scan limits,
-and the collector pending queue is bounded. The remaining implementation gaps
-after adding the native CI matrix are:
-
-- Darwin-specific filesystem and process-group branches do not run in CI;
 - retention scans and deletions are unbounded per finalization;
 - CLI discovery can retain one open file descriptor per accepted session;
 - analyzer resource bounds are not exercised together at the supported limit;

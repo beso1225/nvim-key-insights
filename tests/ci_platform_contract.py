@@ -40,6 +40,12 @@ if "check" not in jobs or jobs["check"].get("name") != "Project checks":
     fail("the existing Project checks job must remain stable")
 if jobs["check"].get("runs-on") != "ubuntu-24.04":
     fail("Project checks must remain the x86_64-linux native gate")
+check_steps = jobs["check"].get("steps", [])
+project_gate = [step for step in check_steps if step.get("name") == "Run project checks"]
+if len(project_gate) != 1 or project_gate[0].get("run") != (
+    "nix develop --no-update-lock-file --command pkf run --no-cache check"
+):
+    fail("Project checks must run the same uncached lock-preserving project gate")
 
 native_job = jobs.get("native-platforms")
 if not isinstance(native_job, dict):
@@ -92,15 +98,17 @@ for step in all_steps:
         if step.get("with", {}).get("persist-credentials") != "false":
             fail("checkout credentials must not persist")
 
-native_steps = {step.get("name"): step for step in native_job["steps"]}
-if set(native_steps) != {
+expected_native_step_names = [
     "Check out repository",
     "Install Nix",
     "Verify native Nix system",
     "Validate Nix flake",
     "Run uncached project checks",
-}:
+]
+actual_native_step_names = [step.get("name") for step in native_job["steps"]]
+if actual_native_step_names != expected_native_step_names:
     fail("native platform job must contain only the reviewed gate steps")
+native_steps = {step["name"]: step for step in native_job["steps"]}
 expected_commands = {
     "Verify native Nix system": (
         "actual_system=$(nix eval --raw --impure --expr builtins.currentSystem)\n"
