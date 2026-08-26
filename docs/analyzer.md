@@ -38,9 +38,10 @@ rejects a symlink in the final path component, and rechecks identity, owner,
 mode, link count, and regular-file type. A replacement or policy change observed
 at that read boundary fails before output recovery or publication. Ancestor-path
 stability remains a trusted same-user filesystem precondition; the identity
-check still prevents a retargeted ancestor from substituting different bytes.
-An empty discovery set is an error. Legacy filenames can still be selected
-explicitly.
+check still rejects a retargeted ancestor that resolves to a different
+filesystem object. Concurrent in-place content mutation and inode reuse remain
+within that trusted same-user precondition. An empty discovery set is an error.
+Legacy filenames can still be selected explicitly.
 
 ## Current metrics
 

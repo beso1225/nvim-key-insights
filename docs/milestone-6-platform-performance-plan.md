@@ -81,7 +81,7 @@ scanned entries and 512 deletions in one retention pass. Temporarily exceeding
 
 ## S4: analyzer resource contracts
 
-Status: pending.
+Status: complete.
 
 - add a low-file-descriptor Red test proving that thousands of accepted inputs
   do not require one simultaneously open file per session;
