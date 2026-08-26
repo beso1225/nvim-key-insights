@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -90,26 +92,72 @@ for step in all_steps:
         if step.get("with", {}).get("persist-credentials") != "false":
             fail("checkout credentials must not persist")
 
-native_script = "\n".join(step.get("run", "") for step in native_job["steps"])
-for required in (
-    "builtins.currentSystem",
-    "${{ matrix.system }}",
-    "nix flake check --no-update-lock-file --print-build-logs",
-    "nix develop --no-update-lock-file --command pkf run --no-cache check",
-):
-    if required not in native_script:
-        fail(f"native platform gate is missing {required!r}")
-if re.search(r"nix (?:develop|flake check)(?![^\n]*--no-update-lock-file)", native_script):
-    fail("native platform gates must reject implicit flake.lock updates")
+native_steps = {step.get("name"): step for step in native_job["steps"]}
+if set(native_steps) != {
+    "Check out repository",
+    "Install Nix",
+    "Verify native Nix system",
+    "Validate Nix flake",
+    "Run uncached project checks",
+}:
+    fail("native platform job must contain only the reviewed gate steps")
+expected_commands = {
+    "Verify native Nix system": (
+        "actual_system=$(nix eval --raw --impure --expr builtins.currentSystem)\n"
+        'test "$actual_system" = "${{ matrix.system }}"'
+    ),
+    "Validate Nix flake": "nix flake check --no-update-lock-file --print-build-logs",
+    "Run uncached project checks": (
+        "nix develop --no-update-lock-file --command pkf run --no-cache check"
+    ),
+}
+for name, command in expected_commands.items():
+    if native_steps[name].get("run", "").strip() != command:
+        fail(f"native platform step {name!r} must run the reviewed command exactly")
 
-taskfile = TASKFILE.read_text()
-for required in (
-    'name = "test:resource:rust"',
-    'name = "test:resource:lua"',
-    'name = "test:resource"',
-    "testResource",
+pkfire = json.loads(
+    subprocess.run(
+        ["pkf", "info", "--json", "--all"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+)
+tasks = {task["name"]: task for task in pkfire.get("tasks", [])}
+resource_rust = tasks.get("test:resource:rust")
+resource_lua = tasks.get("test:resource:lua")
+resource = tasks.get("test:resource")
+check = tasks.get("check")
+if not all(isinstance(task, dict) for task in (resource_rust, resource_lua, resource, check)):
+    fail("pkfire must evaluate all resource tasks and the project check")
+if resource.get("deps") != ["test:resource:rust", "test:resource:lua"]:
+    fail("the resource aggregate must depend on both language contracts")
+if "test:resource" not in check.get("deps", []):
+    fail("the project check must execute the resource aggregate")
+if resource_rust.get("cmd") != (
+    "cargo test -p key-insights --test deterministic_reporting --test jsonl_validation"
 ):
-    if required not in taskfile:
-        fail(f"pkfire resource contract is missing {required!r}")
+    fail("the Rust resource task must run only the dedicated resource suites")
+if resource_lua.get("cmd") != (
+    "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua"
+):
+    fail("the Lua resource task must run the dedicated resource suite")
+rust_inputs = set(resource_rust.get("inputs", []))
+lua_inputs = set(resource_lua.get("inputs", []))
+if not {"Cargo.toml", "Cargo.lock", "crates/**/*"} <= rust_inputs:
+    fail("the Rust resource task is missing Cargo workspace inputs")
+if any(pattern.startswith(("lua/", "plugin/", "tests/lua/")) for pattern in rust_inputs):
+    fail("Lua changes must not invalidate the Rust resource task")
+if not {
+    "lua/**/*.lua",
+    "plugin/**/*.lua",
+    "tests/lua/callback_performance_spec.lua",
+    "tests/lua/retention_spec.lua",
+    "tests/lua/resource_run.lua",
+} <= lua_inputs:
+    fail("the Lua resource task is missing collector resource inputs")
+if any(pattern.startswith(("crates/", "Cargo")) for pattern in lua_inputs):
+    fail("Rust changes must not invalidate the Lua resource task")
 
 print("CI native-platform and resource contract: ok")

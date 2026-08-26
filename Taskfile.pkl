@@ -35,8 +35,12 @@ local e2eSources: Listing<String> = new {
   "tests/workflow_e2e.py"
 }
 
-local resourceSources: Listing<String> = new {
+local rustResourceSources: Listing<String> = new {
   ...rustSources
+}
+
+local luaResourceSources: Listing<String> = new {
+  ...toolchainSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
   "tests/lua/callback_performance_spec.lua"
@@ -107,7 +111,7 @@ local releaseSources: Listing<String> = new {
 local testRust: Task = new {
   name = "test:rust"
   description = "Run Rust unit and integration tests"
-  cmd = "cargo test --workspace"
+  cmd = "cargo test --workspace --lib --bins && cargo test -p key-insights --test codex_exec --test codex_payload --test codex_suggestions --test keymap_snapshot --test privacy_contract && cargo test --workspace --doc"
   inputs = rustSources
 }
 
@@ -129,15 +133,15 @@ local testE2e: Task = new {
 local testResourceRust: Task = new {
   name = "test:resource:rust"
   description = "Run deterministic Rust analyzer resource contracts"
-  cmd = "cargo test --workspace"
-  inputs = resourceSources
+  cmd = "cargo test -p key-insights --test deterministic_reporting --test jsonl_validation"
+  inputs = rustResourceSources
 }
 
 local testResourceLua: Task = new {
   name = "test:resource:lua"
   description = "Run collector callback and retention resource contracts"
   cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua"
-  inputs = resourceSources
+  inputs = luaResourceSources
 }
 
 local testResource: Task = new {

@@ -24,9 +24,10 @@ retention and purge, local reporting, and a mocked Codex workflow. The flake
 already publishes `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`, but CI
 currently executes only on `x86_64-linux`.
 
-The analyzer has deterministic cardinality and byte limits, discovery and purge
-have scan limits, and the collector pending queue is bounded. The remaining
-gaps are:
+Before this slice, CI executed only on `x86_64-linux`. The analyzer has
+deterministic cardinality and byte limits, discovery and purge have scan limits,
+and the collector pending queue is bounded. The remaining implementation gaps
+after adding the native CI matrix are:
 
 - Darwin-specific filesystem and process-group branches do not run in CI;
 - retention scans and deletions are unbounded per finalization;
@@ -49,7 +50,7 @@ Status: complete.
 
 ## S2: native Linux and macOS execution
 
-Status: pending.
+Status: complete.
 
 - add native `aarch64-linux` and `aarch64-darwin` jobs while preserving the
   existing `x86_64-linux` job;
