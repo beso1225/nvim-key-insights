@@ -29,8 +29,10 @@ local e2eSources: Listing<String> = new {
   ...rustSources
   "lua/**/*.lua"
   "plugin/**/*.lua"
+  "tests/e2e/**/*"
   "tests/lua/e2e_spec.lua"
   "tests/lua/minimal_init.lua"
+  "tests/workflow_e2e.py"
 }
 
 local workflowSources: Listing<String> = new {
@@ -106,8 +108,8 @@ local testLua: Task = new {
 
 local testE2e: Task = new {
   name = "test:e2e"
-  description = "Run the headless collector-to-report privacy workflow"
-  cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/e2e_spec.lua"
+  description = "Run the headless collector and public-command privacy workflows"
+  cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/e2e_spec.lua && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/workflow_e2e.py"
   inputs = e2eSources
   deps { testRust }
 }

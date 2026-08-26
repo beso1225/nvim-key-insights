@@ -106,6 +106,14 @@ reservation files in the collector namespace. The default collector directory
 also recognizes the previous 32-character lowercase hexadecimal `.jsonl`
 namespace. A custom directory does not opt into legacy-name deletion.
 
+Deletion first moves the selected file to a private, identity-bound hidden
+quarantine name under the held collector-directory handle. If Neovim exits
+between that move and deletion, the next purge or retention pass recovers only
+a regular, owner-only, single-linked quarantine whose current identity matches
+the identity encoded in its name. Changed or malformed quarantines are skipped.
+Legacy-name quarantines are recoverable only in the default collector directory,
+under the same rule as their original legacy logs.
+
 The purge engine protects all artifacts for the active session, a live owner
 process, or an unreadable, oversized, empty, malformed, or otherwise unknown
 lock. A valid lock whose process is known to be absent is stale. Symlinks, hard
@@ -151,7 +159,12 @@ Run the complete default-workflow privacy regression with:
 nix develop --command pkf run test:e2e
 ```
 
-The test finalizes two real collector sessions, exercises pause and resume,
-launches the built Rust analyzer through the asynchronous report workflow,
-checks byte-identical repeated output, and searches JSONL, summary, report,
-notifications, and analyzer arguments for seeded private values.
+The suite drives the public Neovim commands in isolated child processes. It
+exercises pause, resume, restart, recording and paused `VimLeavePre`, crash
+artifacts, age-before-count retention, purge cancellation and force mode, and
+known-good report preservation after analyzer failure. It also approves one
+repository-owned mock Codex process and cancels a second request. The tests bind
+the exact preview bytes, process arguments, two-variable child environment,
+structured response, and deterministic Markdown while scanning the applicable
+JSONL, summary, local report, notifications, Codex boundary, and rendered output
+for seeded private values. No real Codex service or network connection is used.

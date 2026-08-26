@@ -23,6 +23,10 @@ assert(pcall(config.resolve, { storage = { directory = "" } }) == false)
 assert(pcall(config.resolve, { report = { analyzer = "" } }) == false)
 assert(pcall(config.resolve, { report = { directory = "" } }) == false)
 assert(pcall(config.resolve, { report = { codex = { working_directory = "relative" } } }) == false)
+assert(
+  config.resolve({ report = { codex = { working_directory = "/private/codex-workspace" } } })
+    .report.codex.working_directory == "/private/codex-workspace"
+)
 assert(pcall(config.resolve, { collection = { exclude_special_buffers = false } }) == false)
 assert(pcall(config.resolve, { privacy = { raw_keylog = true } }) == false)
 assert(pcall(config.resolve, { privacy = { capture_insert_text = true } }) == false)

@@ -1,8 +1,9 @@
 #![cfg(unix)]
 
 use std::{
+    ffi::OsString,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -19,7 +20,12 @@ fn temp_script(name: &str, body: &str) -> (PathBuf, PathBuf) {
     let directory = std::env::temp_dir().join(format!("key-insights-codex-{name}-{unique}"));
     fs::create_dir(&directory).expect("create test directory");
     let script = directory.join("mock-codex");
-    fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("write mock executable");
+    let shell = std::env::var("KEY_INSIGHTS_TEST_SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    assert!(
+        Path::new(&shell).is_absolute(),
+        "test shell must be absolute"
+    );
+    fs::write(&script, format!("#!{shell}\n{body}\n")).expect("write mock executable");
     fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).expect("make mock executable");
     (directory, script)
 }
@@ -33,14 +39,45 @@ fn config(binary: &Path) -> CodexExecConfig {
         fs::create_dir_all(&working_directory).expect("create empty workspace");
         fs::set_permissions(&working_directory, fs::Permissions::from_mode(0o700))
             .expect("protect empty workspace");
+        let codex_home = binary.parent().expect("binary parent").join("codex-home");
+        fs::create_dir_all(&codex_home).expect("create Codex home");
+        fs::set_permissions(&codex_home, fs::Permissions::from_mode(0o700))
+            .expect("protect Codex home");
     }
     CodexExecConfig {
         binary: binary.to_owned(),
+        codex_home: binary.parent().expect("binary parent").join("codex-home"),
         output_schema: PathBuf::from("/private/schema with spaces.json"),
+        path_environment: std::env::var_os("KEY_INSIGHTS_TEST_PATH")
+            .unwrap_or_else(|| OsString::from("/usr/bin:/bin")),
         working_directory,
         timeout: Duration::from_secs(2),
         max_output_bytes: MAX_CODEX_OUTPUT_BYTES,
     }
+}
+
+#[test]
+fn passes_only_the_explicit_codex_environment() {
+    let (directory, script) = temp_script(
+        "environment",
+        r#"cat >/dev/null
+test -z "${HOME+x}" || exit 20
+test -z "${OPENAI_API_KEY+x}" || exit 21
+test -z "${KEY_INSIGHTS_UNRELATED_ENV_CANARY+x}" || exit 22
+test -z "${HTTPS_PROXY+x}" || exit 23
+test -z "${SSL_CERT_FILE+x}" || exit 24
+test -z "${DBUS_SESSION_BUS_ADDRESS+x}" || exit 25
+printf '%s\n%s' "$CODEX_HOME" "$PATH""#,
+    );
+    let options = config(&script);
+    let expected = format!(
+        "{}\n{}",
+        options.codex_home.display(),
+        options.path_environment.to_string_lossy()
+    );
+    let result = run_codex_exec(&options, b"payload").expect("isolated environment succeeds");
+    assert_eq!(result.stdout, expected.as_bytes());
+    fs::remove_dir_all(directory).expect("remove test directory");
 }
 
 #[test]
@@ -89,6 +126,59 @@ fn rejects_a_caller_supplied_output_limit_above_the_global_bound() {
     options.max_output_bytes = MAX_CODEX_OUTPUT_BYTES + 1;
     assert_eq!(
         run_codex_exec(&options, b"payload").expect_err("limit must be rejected"),
+        CodexExecError::InvalidConfig
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn rejects_missing_explicit_codex_environment_values() {
+    let (directory, script) = temp_script("invalid-environment", "cat >/dev/null");
+    let mut options = config(&script);
+    options.codex_home = PathBuf::from("relative-codex-home");
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("relative home must fail"),
+        CodexExecError::InvalidConfig
+    );
+    options.codex_home = directory.join("codex-home");
+    fs::create_dir_all(&options.codex_home).expect("create valid Codex home");
+    options.path_environment = OsString::new();
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("empty PATH must fail"),
+        CodexExecError::InvalidConfig
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn rejects_missing_codex_home_and_relative_binary() {
+    let (directory, script) = temp_script("missing-environment", "cat >/dev/null");
+    let mut options = config(&script);
+    options.codex_home = directory.join("missing-codex-home");
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("missing home must fail"),
+        CodexExecError::InvalidConfig
+    );
+    options.codex_home = directory.join("codex-home");
+    options.binary = PathBuf::from("codex");
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("relative binary must fail"),
+        CodexExecError::InvalidConfig
+    );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn rejects_a_symlinked_codex_home() {
+    let (directory, script) = temp_script("symlinked-home", "cat >/dev/null");
+    let real_home = directory.join("real-codex-home");
+    let linked_home = directory.join("linked-codex-home");
+    fs::create_dir(&real_home).expect("create real Codex home");
+    symlink(&real_home, &linked_home).expect("link Codex home");
+    let mut options = config(&script);
+    options.codex_home = linked_home;
+    assert_eq!(
+        run_codex_exec(&options, b"payload").expect_err("symlinked home must fail"),
         CodexExecError::InvalidConfig
     );
     fs::remove_dir_all(directory).expect("remove test directory");

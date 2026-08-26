@@ -1,4 +1,6 @@
+local artifacts = require("key-insights.artifacts")
 local config = require("key-insights.config")
+local filesystem = require("key-insights.filesystem")
 local schema = require("key-insights.schema")
 local storage = require("key-insights.storage")
 
@@ -287,18 +289,140 @@ assert(not unlinked and tostring(unlink_error):find("changed since retention sca
 assert(vim.fn.readfile(replaced_path)[1] == "replacement", "retention must preserve a replacement artifact")
 vim.fn.delete(replaced_directory, "rf")
 
+local final_swap_directory = vim.fn.tempname()
+vim.fn.mkdir(final_swap_directory, "p", 448)
+local final_swap_path = vim.fs.joinpath(final_swap_directory, log_name("final-swap"))
+write_at(final_swap_path, "original", NOW_SECONDS - DAY_SECONDS)
+local final_swap_store = storage.new({
+  directory = final_swap_directory,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  unlink_child = function(descriptor, name, expected_identity, target_path)
+    return filesystem.unlink_child_if_identity(
+      vim.uv,
+      descriptor,
+      target_path,
+      name,
+      expected_identity,
+      artifacts.identity,
+      {
+        quarantine_name = ".retention-final-swap",
+        rename_child = function(_, source, destination)
+          assert(vim.uv.fs_rename(
+            vim.fs.joinpath(final_swap_directory, source),
+            vim.fs.joinpath(final_swap_directory, destination)
+          ))
+          if source == log_name("final-swap") then
+            write_at(target_path, "replacement", NOW_SECONDS - DAY_SECONDS)
+          end
+          return true
+        end,
+      }
+    )
+  end,
+})
+local final_swap_log = final_swap_store:_finalized_logs()[1]
+local final_swap_ok = pcall(final_swap_store._unlink_log, final_swap_store, final_swap_log)
+assert(final_swap_ok, "retention must delete the quarantined original without touching its replacement")
+assert(vim.fn.readfile(final_swap_path)[1] == "replacement", "retention must preserve a final-check replacement")
+vim.fn.delete(final_swap_directory, "rf")
+
+local quarantine_directory = vim.fn.tempname()
+vim.fn.mkdir(quarantine_directory, "p", 448)
+local quarantine_original = log_name("retention-quarantine")
+local quarantine_original_path = vim.fs.joinpath(quarantine_directory, quarantine_original)
+write_at(quarantine_original_path, "private raw artifact", NOW_SECONDS - DAY_SECONDS)
+local quarantine_identity = artifacts.identity(assert(vim.uv.fs_lstat(quarantine_original_path)))
+local quarantine_name = artifacts.quarantine_name(quarantine_original, quarantine_identity, string.rep("c", 16))
+local quarantine_path = vim.fs.joinpath(quarantine_directory, quarantine_name)
+assert(vim.uv.fs_rename(quarantine_original_path, quarantine_path))
+local quarantine_store = storage.new({
+  directory = quarantine_directory,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+})
+quarantine_store:_prune(nil)
+assert(vim.uv.fs_lstat(quarantine_path) == nil, "retention must recover an interrupted matching quarantine")
+vim.fn.delete(quarantine_directory, "rf")
+
+local legacy_quarantine_directory = vim.fn.tempname()
+vim.fn.mkdir(legacy_quarantine_directory, "p", 448)
+local legacy_quarantine_original = string.rep("c", 32) .. ".jsonl"
+local legacy_quarantine_original_path = vim.fs.joinpath(legacy_quarantine_directory, legacy_quarantine_original)
+write_at(legacy_quarantine_original_path, "legacy private raw artifact", NOW_SECONDS - DAY_SECONDS)
+local legacy_quarantine_identity = artifacts.identity(assert(vim.uv.fs_lstat(legacy_quarantine_original_path)))
+local legacy_quarantine_name =
+  artifacts.quarantine_name(legacy_quarantine_original, legacy_quarantine_identity, string.rep("e", 16))
+local legacy_quarantine_path = vim.fs.joinpath(legacy_quarantine_directory, legacy_quarantine_name)
+assert(vim.uv.fs_rename(legacy_quarantine_original_path, legacy_quarantine_path))
+local custom_legacy_quarantine_store = storage.new({
+  directory = legacy_quarantine_directory,
+  default_directory = function()
+    return legacy_quarantine_directory .. "-default"
+  end,
+})
+custom_legacy_quarantine_store:_prune(nil)
+assert(vim.uv.fs_lstat(legacy_quarantine_path) ~= nil, "custom retention must not recover legacy quarantines")
+local default_legacy_quarantine_store = storage.new({
+  default_directory = function()
+    return legacy_quarantine_directory
+  end,
+})
+default_legacy_quarantine_store:_prune(nil)
+assert(vim.uv.fs_lstat(legacy_quarantine_path) == nil, "default retention must recover legacy quarantines")
+vim.fn.delete(legacy_quarantine_directory, "rf")
+
+for _, failure in ipairs({ "unlink", "fsync" }) do
+  local cleanup_directory = vim.fn.tempname()
+  vim.fn.mkdir(cleanup_directory, "p", 448)
+  local cleanup_path = vim.fs.joinpath(cleanup_directory, log_name("cleanup-" .. failure))
+  write_at(cleanup_path, "original", NOW_SECONDS - DAY_SECONDS)
+  local close_attempts = 0
+  local cleanup_fs = setmetatable({}, { __index = vim.uv })
+  cleanup_fs.fs_close = function(descriptor)
+    close_attempts = close_attempts + 1
+    return vim.uv.fs_close(descriptor)
+  end
+  if failure == "fsync" then
+    cleanup_fs.fs_fsync = function()
+      error("injected fsync failure")
+    end
+  end
+  local cleanup_store = storage.new({
+    directory = cleanup_directory,
+    fs = cleanup_fs,
+    unlink_child = failure == "unlink" and function()
+      error("injected unlink failure")
+    end or nil,
+  })
+  local cleanup_log = cleanup_store:_finalized_logs()[1]
+  assert(not pcall(cleanup_store._unlink_log, cleanup_store, cleanup_log))
+  assert(close_attempts == 1, "retention must close its directory after a throwing " .. failure)
+  vim.fn.delete(cleanup_directory, "rf")
+end
+
 local retry_directory = vim.fn.tempname()
 vim.fn.mkdir(retry_directory, "p", 448)
 local retry_old_path = vim.fs.joinpath(retry_directory, log_name("old"))
-write_at(retry_old_path, "old", NOW_SECONDS - DAY_SECONDS)
+write_at(retry_old_path, "old", NOW_SECONDS - 31 * DAY_SECONDS)
 local fail_prune_once = true
+local retention_errors = {}
 local retry_fs = setmetatable({}, { __index = vim.uv })
-retry_fs.fs_unlink = function(path)
-  if path == retry_old_path and fail_prune_once then
+local function retry_unlink_child(descriptor, name, expected_identity, target_path)
+  if target_path == retry_old_path and fail_prune_once then
     fail_prune_once = false
     return nil, "injected retention failure"
   end
-  return vim.uv.fs_unlink(path)
+  return filesystem.unlink_child_if_identity(
+    retry_fs,
+    descriptor,
+    target_path,
+    name,
+    expected_identity,
+    artifacts.identity
+  )
 end
 local retry_store = storage.new({
   directory = retry_directory,
@@ -306,6 +430,10 @@ local retry_store = storage.new({
   now_seconds = function()
     return NOW_SECONDS
   end,
+  on_retention_error = function(error_message)
+    table.insert(retention_errors, error_message)
+  end,
+  unlink_child = retry_unlink_child,
   retention = {
     max_age_days = 30,
     max_sessions = 1,
@@ -316,12 +444,57 @@ retry_session:write({
   schema.encode(schema.session_start("current")),
   schema.encode(schema.session_end("current", 1)),
 })
-assert(not pcall(retry_session.finish, retry_session), "retention failure must be reported")
+assert(pcall(retry_session.finish, retry_session), "retention failure must not interrupt finalization")
 assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, log_name("current"))) ~= nil)
-assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) ~= nil)
-retry_session:finish()
-assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { log_name("current") }))
 assert(vim.uv.fs_stat(vim.fs.joinpath(retry_directory, lock_name("current"))) == nil)
+assert(#retention_errors == 1, "retention failure must be reported once")
+assert(vim.uv.fs_stat(retry_old_path) ~= nil, "failed retention must preserve its target")
+finalize(retry_store, "later")
+assert(vim.deep_equal(basenames(retry_directory .. "/*.jsonl"), { log_name("later") }))
 vim.fn.delete(retry_directory, "rf")
+
+local unavailable_directory = vim.fn.tempname()
+vim.fn.mkdir(unavailable_directory, "p", 448)
+write_at(
+  vim.fs.joinpath(unavailable_directory, log_name("expired")),
+  "expired",
+  NOW_SECONDS - 31 * DAY_SECONDS
+)
+local unavailable_notifications = {}
+local original_notify = vim.notify
+vim.notify = function(message, level)
+  table.insert(unavailable_notifications, { level = level, message = tostring(message) })
+end
+local unavailable_store = storage.new({
+  directory = unavailable_directory,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  unlink_child = function()
+    return nil, "atomic descriptor-relative rename is unavailable: /private/retention-canary"
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 100,
+  },
+})
+finalize(unavailable_store, "portable-a")
+finalize(unavailable_store, "portable-b")
+vim.notify = original_notify
+assert(#unavailable_notifications == 2, "each deferred retention pass must be reported")
+for _, notification in ipairs(unavailable_notifications) do
+  assert(notification.level == vim.log.levels.WARN)
+  assert(notification.message == "key-insights: retention cleanup was deferred")
+  assert(not notification.message:find("retention-canary", 1, true), "raw retention errors must stay private")
+end
+for _, session_id in ipairs({ "portable-a", "portable-b" }) do
+  assert(vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, log_name(session_id))) ~= nil)
+  assert(vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, lock_name(session_id))) == nil)
+end
+assert(
+  vim.uv.fs_stat(vim.fs.joinpath(unavailable_directory, log_name("expired"))) ~= nil,
+  "unsupported cleanup must preserve the retention candidate"
+)
+vim.fn.delete(unavailable_directory, "rf")
 
 print("Lua retention contract: ok")

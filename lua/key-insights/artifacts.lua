@@ -5,6 +5,7 @@ local FILE_PREFIX_PATTERN = "nvim%-key%-insights%-"
 local MAX_SESSION_ID_BYTES = 128
 local OWNER_READ_WRITE = 384 -- 0600
 local OWNER_DIRECTORY = 448 -- 0700
+local QUARANTINE_PREFIX = ".nvim-key-insights-quarantine-"
 local PERMISSION_AND_SPECIAL_BITS = 4096
 local SUFFIXES = {
   { extension = ".jsonl.part", kind = "partial" },
@@ -48,6 +49,50 @@ end
 function M.name(session_id, suffix)
   M.validate_session_id(session_id)
   return FILE_PREFIX .. session_id .. suffix
+end
+
+function M.identity_digest(identity)
+  assert(type(identity) == "string" and identity ~= "", "artifact identity must be non-empty")
+  return string.sub(vim.fn.sha256(identity), 1, 32)
+end
+
+function M.quarantine_name(original_name, expected_identity, nonce)
+  local nested = M.parse_quarantine(original_name)
+  if nested ~= nil then
+    original_name = nested.original_name
+  end
+  assert(M.parse(original_name, true) ~= nil, "quarantine source must be a collector artifact")
+  assert(type(nonce) == "string" and string.match(nonce, "^[0-9a-f]+$") ~= nil and #nonce == 16)
+  return QUARANTINE_PREFIX .. M.identity_digest(expected_identity) .. "-" .. nonce .. "-" .. original_name
+end
+
+function M.parse_quarantine(name)
+  if type(name) ~= "string" then
+    return nil
+  end
+  local digest, nonce, original_name = string.match(
+    name,
+    "^%.nvim%-key%-insights%-quarantine%-([0-9a-f]+)%-([0-9a-f]+)%-(.+)$"
+  )
+  if digest == nil or #digest ~= 32 or nonce == nil or #nonce ~= 16 then
+    return nil
+  end
+  local original = M.parse(original_name, true)
+  if original == nil then
+    return nil
+  end
+  return {
+    identity_digest = digest,
+    legacy = original.legacy,
+    original_kind = original.kind,
+    original_name = original_name,
+    session_id = original.session_id,
+  }
+end
+
+function M.is_recoverable_quarantine(name, stat)
+  local parsed = M.parse_quarantine(name)
+  return parsed ~= nil and M.identity_digest(M.identity(stat)) == parsed.identity_digest
 end
 
 function M.identity(stat)

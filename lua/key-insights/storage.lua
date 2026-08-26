@@ -76,6 +76,10 @@ function M.new(options)
   validate_positive_integer(retention.max_age_days, "storage.retention.max_age_days")
   local process_id = config.process_id or vim.fn.getpid()
   validate_positive_integer(process_id, "collector process ID")
+  local on_retention_error = config.on_retention_error or function()
+    vim.notify("key-insights: retention cleanup was deferred", vim.log.levels.WARN)
+  end
+  assert(type(on_retention_error) == "function", "storage retention error handler must be a function")
   return setmetatable({
     directory = directory,
     _fs = config.fs or vim.uv,
@@ -83,8 +87,19 @@ function M.new(options)
     _is_process_alive = config.is_process_alive or default_is_process_alive,
     _mkdir = config.mkdir or vim.fn.mkdir,
     _now_seconds = config.now_seconds or os.time,
+    _on_retention_error = on_retention_error,
     _process_id = process_id,
     _retention = retention,
+    _unlink_child = config.unlink_child or function(descriptor, name, expected_identity, path)
+      return filesystem.unlink_child_if_identity(
+        config.fs or vim.uv,
+        descriptor,
+        path,
+        name,
+        expected_identity,
+        artifacts.identity
+      )
+    end,
     _user_id = config.user_id == nil and artifacts.current_user_id(vim.uv) or config.user_id,
   }, Storage)
 end
@@ -195,20 +210,63 @@ function Storage:_finalized_logs()
 end
 
 function Storage:_unlink_log(log)
-  local stat, stat_error = self._fs.fs_lstat(log.path)
-  if stat == nil and is_enoent(stat_error) then
-    return
+  local directory_stat, directory_error = self._fs.fs_lstat(self.directory)
+  assert(
+    artifacts.is_private_directory(directory_stat, self._user_id),
+    directory_error or "collector directory changed since retention scan"
+  )
+  local descriptor, open_error = filesystem.open_read(self._fs, self.directory)
+  assert(descriptor ~= nil, open_error or "failed to open collector directory for retention")
+  local opened, inspect_error = self._fs.fs_fstat(descriptor)
+  if not artifacts.is_private_directory(opened, self._user_id)
+    or artifacts.directory_identity(opened) ~= artifacts.directory_identity(directory_stat)
+  then
+    local closed, close_error = self._fs.fs_close(descriptor)
+    assert(closed, close_error or "failed to close changed collector directory")
+    error(inspect_error or "collector directory changed while opening for retention")
   end
-  if not artifacts.is_private_file(stat, self._user_id) or artifacts.identity(stat) ~= log.identity then
+  local operation_ok, unlinked, unlink_error = pcall(
+    self._unlink_child,
+    descriptor,
+    log.name,
+    log.identity,
+    log.path
+  )
+  local sync_ok, synced, sync_error = pcall(self._fs.fs_fsync, descriptor)
+  local close_ok, closed, close_error = pcall(self._fs.fs_close, descriptor)
+  assert(close_ok and closed, close_error or "failed to close collector directory after retention")
+  assert(operation_ok, "collector retention deletion failed")
+  assert(sync_ok, "failed to synchronize retention deletion")
+  assert(synced == true or synced == 0, sync_error or "failed to synchronize retention deletion")
+  if not unlinked and not is_enoent(unlink_error) then
     error("collector log changed since retention scan")
   end
-  local unlinked, unlink_error = self._fs.fs_unlink(log.path)
-  if not unlinked and not is_enoent(unlink_error) then
-    error(unlink_error or "failed to prune collector log")
+end
+
+function Storage:_recover_quarantines()
+  local request, scan_error = self._fs.fs_scandir(self.directory)
+  assert(request ~= nil, scan_error or "failed to scan collector quarantine artifacts")
+  while true do
+    local name, entry_type = self._fs.fs_scandir_next(request)
+    if name == nil then
+      break
+    end
+    local quarantine = artifacts.parse_quarantine(name)
+    if self:_entry_type(name, entry_type) == "file"
+      and quarantine ~= nil
+      and (not quarantine.legacy or self._include_legacy_logs)
+    then
+      local path = vim.fs.joinpath(self.directory, name)
+      local stat = self._fs.fs_lstat(path)
+      if artifacts.is_private_file(stat, self._user_id) and artifacts.is_recoverable_quarantine(name, stat) then
+        self:_unlink_log({ identity = artifacts.identity(stat), name = name, path = path })
+      end
+    end
   end
 end
 
 function Storage:_prune(protected_path)
+  self:_recover_quarantines()
   local cutoff = self._now_seconds() - self._retention.max_age_days * DAY_SECONDS
   local retained = {}
   for _, log in ipairs(self:_finalized_logs()) do
@@ -301,6 +359,7 @@ function Storage:open_session(session_id)
     _fs = self._fs,
     _lock_path = lock_path,
     _offset = 0,
+    _on_retention_error = self._on_retention_error,
     _partial_path = partial_path,
     _published = false,
     _retention_done = false,
@@ -358,7 +417,7 @@ end
 
 function SessionStorage:finish()
   if self._finished then
-    return
+    return true
   end
 
   if self._descriptor ~= nil then
@@ -375,9 +434,14 @@ function SessionStorage:finish()
     self._published = true
   end
 
+  local retention_error = nil
   if not self._retention_done then
-    self._prune()
-    self._retention_done = true
+    local retention_ok, prune_error = pcall(self._prune)
+    if retention_ok then
+      self._retention_done = true
+    else
+      retention_error = tostring(prune_error)
+    end
   end
 
   if not self._unlocked then
@@ -391,6 +455,10 @@ function SessionStorage:finish()
     self._directory_synced = true
   end
   self._finished = true
+  if retention_error ~= nil then
+    pcall(self._on_retention_error, retention_error)
+  end
+  return true
 end
 
 function SessionStorage:abort()

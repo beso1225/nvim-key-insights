@@ -42,4 +42,4 @@ for the complete selection, race, and result-count contract.
 
 ## Failure behavior
 
-Pruning failures are reported as finalization failures. The completed `.jsonl` and its reservation remain intact, and retrying stop resumes pruning without rewriting or republishing the session. All successful publication, pruning, and reservation changes are covered by the final parent-directory sync.
+Retention is best-effort after the current `.jsonl` has been published. An unavailable identity-safe rename primitive or another pruning failure does not interrupt session finalization: the current reservation is released, the parent directory is synchronized, and Neovim reports the categorical warning `key-insights: retention cleanup was deferred` without exposing filesystem details. A pre-mutation failure preserves that candidate, while a failure after earlier deletions may leave the completed subset in place. The next session finalization retries the remaining eligible logs. The collector never substitutes a race-prone pathname unlink for the identity-safe cleanup protocol.

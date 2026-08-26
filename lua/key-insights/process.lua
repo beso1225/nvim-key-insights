@@ -5,6 +5,20 @@ local MAX_CAPTURED_STDERR = 8 * 1024
 local DEFAULT_TIMEOUT_MS = 120 * 1000
 local IS_WINDOWS = package.config:sub(1, 1) == "\\"
 
+local function compatible_environment(environment, clear_environment)
+  local version = vim.version()
+  if not clear_environment or version.major ~= 0 or version.minor ~= 10 then
+    return environment
+  end
+  local entries = {}
+  for key, value in pairs(environment or {}) do
+    assert(type(key) == "string" and type(value) == "string", "process environment must contain strings")
+    table.insert(entries, key .. "=" .. value)
+  end
+  table.sort(entries)
+  return entries
+end
+
 function M.supports_process_groups()
   return not IS_WINDOWS
 end
@@ -81,11 +95,20 @@ function M.run(argv, callback, stdin, run_options)
     result.stderr = stderr()
     callback(result)
   end
-  handle = vim.system(
-    argv,
-    { text = true, stdin = stdin, stdout = capture_stdout, stderr = capture_stderr, detach = true },
-    vim.schedule_wrap(complete)
-  )
+  local system_options = {
+    text = true,
+    stdin = stdin,
+    stdout = capture_stdout,
+    stderr = capture_stderr,
+    detach = true,
+  }
+  if run_options ~= nil then
+    system_options.clear_env = run_options.clear_env == true
+    if run_options.env ~= nil or system_options.clear_env then
+      system_options.env = compatible_environment(run_options.env, system_options.clear_env)
+    end
+  end
+  handle = vim.system(argv, system_options, vim.schedule_wrap(complete))
   if not finished and type(timeout_ms) == "number" and timeout_ms > 0 and timeout_ms < math.huge then
     timer = vim.uv.new_timer()
     timer:start(math.floor(timeout_ms), 0, function()

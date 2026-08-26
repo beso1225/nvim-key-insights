@@ -51,7 +51,10 @@ local function get_purge_instance()
     local current_writer = get_writer()
     purge_instance = purge.new({
       active_session_id = function()
-        return instance == nil and nil or instance:status().session_id
+        if instance == nil then
+          return nil
+        end
+        return instance:status().session_id
       end,
       directory = current_writer.directory,
       include_legacy = current_writer:includes_legacy_logs(),
