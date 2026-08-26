@@ -32,11 +32,15 @@ files must be owner-only (`0600`), owned by the current user, regular, and
 single-linked. Unsafe matching entries, `.jsonl.part`, locks, legacy names,
 outputs, and unrelated entries are ignored. Discovery verifies the directory
 and each accepted leaf through anchored handles without following symlinks, then
-closes each accepted leaf while retaining its filesystem identity. Analysis
-reopens one leaf at a time without following symlinks and rechecks its identity,
-owner, mode, link count, and regular-file type. Replacement or policy changes
-fail before output recovery or publication. An empty discovery set is an error.
-Legacy filenames can still be selected explicitly.
+closes each accepted leaf while retaining its filesystem identity. Immediately
+before reading each source, analysis opens its canonical pathname one at a time,
+rejects a symlink in the final path component, and rechecks identity, owner,
+mode, link count, and regular-file type. A replacement or policy change observed
+at that read boundary fails before output recovery or publication. Ancestor-path
+stability remains a trusted same-user filesystem precondition; the identity
+check still prevents a retargeted ancestor from substituting different bytes.
+An empty discovery set is an error. Legacy filenames can still be selected
+explicitly.
 
 ## Current metrics
 

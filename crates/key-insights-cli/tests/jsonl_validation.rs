@@ -228,7 +228,7 @@ fn rejects_empty_mapping_ids() {
 }
 
 #[test]
-fn bounds_memory_used_for_retained_session_ids() {
+fn bounds_retained_session_ids_with_a_chunked_generated_fixture() {
     let long_id = "x".repeat(MAX_SESSION_ID_BYTES + 1);
     let input = format!(
         r#"{{"schema_version":1,"event_type":"session_start","session_id":"{long_id}","elapsed_ms":0}}"#
@@ -245,7 +245,7 @@ fn bounds_memory_used_for_retained_session_ids() {
     assert_eq!(error.kind, ValidationErrorKind::TooManySessions);
     assert!(
         maximum_generated.get() < 512,
-        "the supported-limit generator must retain only one small session chunk"
+        "the generated fixture must retain only one small session chunk"
     );
 }
 

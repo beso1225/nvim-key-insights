@@ -1,8 +1,10 @@
 use std::{
+    cell::Cell,
     fs,
-    io::{BufReader, Cursor, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -532,14 +534,20 @@ fn multi_input_analysis_applies_the_session_limit_across_sources() {
 
 #[test]
 fn multi_input_analysis_accepts_the_supported_session_limit_streamingly() {
+    let live_inputs = Rc::new(Cell::new(0));
+    let maximum_live_inputs = Rc::new(Cell::new(0));
     let inputs = (0..MAX_SESSIONS_PER_LOG).map(|index| {
-        Cursor::new(format!(
-            concat!(
-                "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":0}}\n",
-                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":1}}\n",
+        GuardedInput::new(
+            format!(
+                concat!(
+                    "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":0}}\n",
+                    "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":1}}\n",
+                ),
+                index
             ),
-            index
-        ))
+            Rc::clone(&live_inputs),
+            Rc::clone(&maximum_live_inputs),
+        )
     });
 
     let summary = analyze_jsonl_inputs(inputs).expect("the supported session limit is valid");
@@ -556,6 +564,16 @@ fn multi_input_analysis_accepts_the_supported_session_limit_streamingly() {
 
     assert_eq!(summary.sessions, MAX_SESSIONS_PER_LOG as u64);
     assert_eq!(summary.events, (MAX_SESSIONS_PER_LOG * 2) as u64);
+    assert_eq!(
+        live_inputs.get(),
+        0,
+        "every consumed source must be dropped"
+    );
+    assert_eq!(
+        maximum_live_inputs.get(),
+        1,
+        "analysis must not retain or eagerly collect input readers"
+    );
     assert_eq!(
         render_summary_json(&summary),
         render_summary_json(&repeated)
@@ -987,8 +1005,8 @@ fn cli_reports_an_empty_session_directory_without_replacing_outputs() {
 
 #[cfg(unix)]
 #[test]
-fn cli_session_directory_does_not_hold_one_descriptor_per_input() {
-    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+fn cli_inputs_do_not_hold_one_descriptor_per_input() {
+    use std::os::unix::fs::PermissionsExt;
 
     let directory = temporary_directory("bounded-session-descriptors");
     let sessions = directory.join("sessions");
@@ -1015,19 +1033,7 @@ fn cli_session_directory_does_not_hold_one_descriptor_per_input() {
         "--report",
         path(&report),
     ]);
-    unsafe {
-        command.pre_exec(|| {
-            let limit = libc::rlimit {
-                rlim_cur: 32,
-                rlim_max: 32,
-            };
-            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
-                Ok(())
-            } else {
-                Err(std::io::Error::last_os_error())
-            }
-        });
-    }
+    apply_low_descriptor_limit(&mut command);
 
     let output = command
         .output()
@@ -1040,6 +1046,36 @@ fn cli_session_directory_does_not_hold_one_descriptor_per_input() {
     let summary: serde_json::Value =
         serde_json::from_slice(&fs::read(&summary).expect("read summary")).expect("parse summary");
     assert_eq!(summary["sessions"], 96);
+
+    let explicit_summary = directory.join("explicit-summary.json");
+    let explicit_report = directory.join("explicit-report.md");
+    let input_paths = (0..96)
+        .map(|index| sessions.join(format!("nvim-key-insights-session-{index:03}.jsonl")))
+        .collect::<Vec<_>>();
+    let mut explicit = Command::new(env!("CARGO_BIN_EXE_key-insights"));
+    explicit.arg("analyze").args(&input_paths).args([
+        "--summary",
+        path(&explicit_summary),
+        "--report",
+        path(&explicit_report),
+    ]);
+    apply_low_descriptor_limit(&mut explicit);
+    let explicit_output = explicit
+        .output()
+        .expect("run explicit analyzer inputs with a low descriptor limit");
+    assert!(
+        explicit_output.status.success(),
+        "explicit analysis must not retain every input descriptor: {}",
+        String::from_utf8_lossy(&explicit_output.stderr)
+    );
+    assert_eq!(
+        fs::read(&explicit_summary).expect("read explicit summary"),
+        fs::read(directory.join("summary.json")).expect("read discovered summary")
+    );
+    assert_eq!(
+        fs::read(&explicit_report).expect("read explicit report"),
+        fs::read(directory.join("report.md")).expect("read discovered report")
+    );
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 
@@ -1873,6 +1909,65 @@ fn temporary_directory(label: &str) -> PathBuf {
 
 fn path(path: &Path) -> &str {
     path.to_str().expect("UTF-8 test path")
+}
+
+#[cfg(unix)]
+fn apply_low_descriptor_limit(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            let mut limit = std::mem::zeroed::<libc::rlimit>();
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            limit.rlim_cur = limit.rlim_cur.min(32);
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+struct GuardedInput {
+    cursor: Cursor<Vec<u8>>,
+    live: Rc<Cell<usize>>,
+}
+
+impl GuardedInput {
+    fn new(contents: String, live: Rc<Cell<usize>>, maximum_live: Rc<Cell<usize>>) -> Self {
+        let next = live.get() + 1;
+        live.set(next);
+        maximum_live.set(maximum_live.get().max(next));
+        Self {
+            cursor: Cursor::new(contents.into_bytes()),
+            live,
+        }
+    }
+}
+
+impl Drop for GuardedInput {
+    fn drop(&mut self) {
+        self.live.set(self.live.get() - 1);
+    }
+}
+
+impl Read for GuardedInput {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.cursor.read(buffer)
+    }
+}
+
+impl BufRead for GuardedInput {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.cursor.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.cursor.consume(amount);
+    }
 }
 
 #[cfg(unix)]
