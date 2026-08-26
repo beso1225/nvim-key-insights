@@ -1,6 +1,7 @@
 # Milestone 6 platform and performance plan
 
-Status: in progress on `codex/m6-platform-performance`.
+Status: completion candidate on `codex/m6-platform-performance`; local gates pass
+and native branch CI remains to be confirmed.
 
 Roadmap issue: [#27](https://github.com/beso1225/nvim-key-insights/issues/27)
 
@@ -119,7 +120,7 @@ details never enter collector status.
 
 ## S6: completion gate and documentation
 
-Status: pending.
+Status: in progress; both local completion commands pass.
 
 - run `pkf run --no-cache check` and
   `nix flake check --no-update-lock-file`;

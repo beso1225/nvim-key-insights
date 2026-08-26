@@ -171,3 +171,36 @@ the exact preview bytes, process arguments, two-variable child environment,
 structured response, and deterministic Markdown while scanning the applicable
 JSONL, summary, local report, notifications, Codex boundary, and rendered output
 for seeded private values. No real Codex service or network connection is used.
+
+## Resource and native-platform gates
+
+Run the complete offline project contract with:
+
+```sh
+nix develop path:. --command pkf run --no-cache check
+nix flake check --no-update-lock-file
+```
+
+The resource suite counts every callback-path dependency and persisted event for
+excluded, ordinary Normal, mapped Normal, sequence-boundary, and Insert paths.
+No session-writer method may run inside the callback, callback bursts coalesce
+their deferred flush, and the real mapping resolver remains below a generous
+batch-median timing ceiling. Timing output is telemetry; deterministic call,
+event, queue, and byte bounds are the primary contract.
+
+On Unix, the CLI validates all selected inputs before publication and then
+reopens and consumes one input at a time, rechecking its filesystem identity and
+discovery privacy policy. The supported 4,096-session boundary is exercised
+without retaining one input descriptor per session. See
+[Analyzer CLI](analyzer.md) for the trusted same-user concurrency precondition.
+
+Retention inventories at most 8,192 directory entries and performs at most 512
+identity-safe deletions per finalization. Excess work is deferred without
+invalidating the newly finalized session and converges on later finalizations.
+See [Storage retention](storage-retention.md) for overflow and external-recovery
+behavior.
+
+CI runs the same uncached project gate natively on the three existing flake
+systems: `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The Linux
+Neovim 0.10 lower-bound job remains separate. These checks use synthetic local
+fixtures only and never invoke a real Codex service or read private usage logs.
