@@ -12,9 +12,10 @@ use key_insights::{
 };
 
 use super::{
-    OutputBackup, OutputLocks, PairPublication, StagedOutput, link_without_replacement,
-    open_input_file, open_private_input, open_private_lock_file, output_lock_path, publish_pair,
-    publish_pair_with_hook, publish_pair_with_hooks, resolve_paths,
+    OutputBackup, OutputLocks, PairPublication, RevalidatedInputReader, StagedOutput,
+    link_without_replacement, open_input_file, open_private_input, open_private_lock_file,
+    output_lock_path, publish_pair, publish_pair_with_hook, publish_pair_with_hooks,
+    resolve_input_path, resolve_paths,
 };
 
 #[test]
@@ -78,6 +79,47 @@ fn explicit_fifo_input_is_rejected_without_waiting_for_a_writer() {
     let error = open_input_file(&fifo).expect_err("FIFO input must be rejected");
 
     assert!(error.contains("regular file"), "{error}");
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[test]
+fn revalidated_input_rejects_permission_and_leaf_type_changes() {
+    use std::io::BufRead;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "key-insights-revalidated-input-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).expect("create test directory");
+    let input = directory.join("input.jsonl");
+    fs::write(&input, "trusted\n").expect("write input");
+
+    let error = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let mut resolved = resolve_input_path(&input).expect("resolve regular input");
+    resolved.requires_private_file = true;
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o644)).expect("widen input mode");
+    assert!(
+        RevalidatedInputReader::new(&resolved, std::rc::Rc::clone(&error))
+            .fill_buf()
+            .is_err(),
+        "a discovered input whose private mode changed must be rejected"
+    );
+
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).expect("restore private mode");
+    let resolved = resolve_input_path(&input).expect("resolve private input");
+    let moved = directory.join("moved.jsonl");
+    fs::rename(&input, &moved).expect("move input");
+    symlink(&moved, &input).expect("replace input with a symlink");
+    assert!(
+        RevalidatedInputReader::new(&resolved, error)
+            .fill_buf()
+            .is_err(),
+        "a symlink replacement must fail even when it targets the expected inode"
+    );
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 

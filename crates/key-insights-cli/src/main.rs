@@ -12,6 +12,11 @@ use std::{
     },
 };
 
+#[cfg(unix)]
+use std::io::{self, BufRead};
+#[cfg(unix)]
+use std::{cell::RefCell, rc::Rc};
+
 use key_insights::{
     AnalysisSummary, MAX_CODEX_PAYLOAD_BYTES, MAX_SESSIONS_PER_LOG, MAX_SNAPSHOT_BYTES,
     analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot, parse_keymap_snapshot,
@@ -150,11 +155,23 @@ fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
         .map(|input| parse_keymap_snapshot(input.bytes.as_slice()))
         .transpose()
         .map_err(|error| format!("failed to parse keymap snapshot: {error}"))?;
+    #[cfg(unix)]
+    let input_error = Rc::new(RefCell::new(None));
+    #[cfg(unix)]
+    let readers = paths
+        .inputs
+        .iter()
+        .map(|input| RevalidatedInputReader::new(input, Rc::clone(&input_error)));
+    #[cfg(not(unix))]
     let readers = paths.inputs.iter().map(|input| BufReader::new(&input.file));
     let analysis = match snapshot.as_ref() {
         Some(snapshot) => analyze_jsonl_inputs_with_snapshot(readers, snapshot),
         None => analyze_jsonl_inputs(readers),
     };
+    #[cfg(unix)]
+    if let Some(error) = input_error.borrow_mut().take() {
+        return Err(error);
+    }
     let summary = analysis.map_err(|error| match error.input_index {
         Some(index) => format!(
             "failed to analyze {}: {}",
@@ -427,8 +444,82 @@ struct ResolvedPaths {
 #[derive(Debug)]
 struct ResolvedInputPath {
     path: PathBuf,
+    #[cfg(not(unix))]
     file: File,
     identity: InputIdentity,
+    #[cfg(unix)]
+    requires_private_file: bool,
+}
+
+#[cfg(unix)]
+struct RevalidatedInputReader<'a> {
+    error: Rc<RefCell<Option<String>>>,
+    input: &'a ResolvedInputPath,
+    reader: Option<BufReader<File>>,
+}
+
+#[cfg(unix)]
+impl<'a> RevalidatedInputReader<'a> {
+    fn new(input: &'a ResolvedInputPath, error: Rc<RefCell<Option<String>>>) -> Self {
+        Self {
+            error,
+            input,
+            reader: None,
+        }
+    }
+
+    fn reader(&mut self) -> io::Result<&mut BufReader<File>> {
+        if self.reader.is_none() {
+            match self.open_reader() {
+                Ok(reader) => self.reader = Some(reader),
+                Err(error) => {
+                    if self.error.borrow().is_none() {
+                        *self.error.borrow_mut() = Some(error);
+                    }
+                    return Err(io::Error::other("analysis input revalidation failed"));
+                }
+            }
+        }
+        Ok(self.reader.as_mut().expect("reader initialized"))
+    }
+
+    fn open_reader(&self) -> Result<BufReader<File>, String> {
+        let (file, metadata) = open_input_file(&self.input.path)?;
+        let identity = input_identity(&self.input.path, &metadata);
+        if owned_input_identity(&identity) != owned_input_identity(&self.input.identity) {
+            return Err(format!(
+                "analysis input changed after validation: {}",
+                self.input.path.display()
+            ));
+        }
+        if self.input.requires_private_file && !is_private_input_metadata(&metadata) {
+            return Err(format!(
+                "discovered analysis input is no longer a private owned file: {}",
+                self.input.path.display()
+            ));
+        }
+        Ok(BufReader::new(file))
+    }
+}
+
+#[cfg(unix)]
+impl Read for RevalidatedInputReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reader()?.read(buffer)
+    }
+}
+
+#[cfg(unix)]
+impl BufRead for RevalidatedInputReader<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.reader()?.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        if let Some(reader) = self.reader.as_mut() {
+            reader.consume(amount);
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -516,10 +607,15 @@ fn resolve_input_path(path: &Path) -> Result<ResolvedInputPath, String> {
     }
     let (file, metadata) = open_input_file(&resolved)?;
     let identity = input_identity(&resolved, &metadata);
+    #[cfg(unix)]
+    drop(file);
     Ok(ResolvedInputPath {
         path: resolved,
+        #[cfg(not(unix))]
         file,
         identity,
+        #[cfg(unix)]
+        requires_private_file: false,
     })
 }
 
@@ -529,7 +625,7 @@ fn open_input_file(path: &Path) -> Result<(File, fs::Metadata), String> {
 
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW)
         .open(path)
         .map_err(|error| format!("failed to open input {}: {error}", path.display()))?;
     inspect_input_file(path, file)
@@ -550,6 +646,16 @@ fn inspect_input_file(path: &Path, file: File) -> Result<(File, fs::Metadata), S
         return Err(format!("input must be a regular file: {}", path.display()));
     }
     Ok((file, metadata))
+}
+
+#[cfg(unix)]
+fn is_private_input_metadata(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata.is_file()
+        && metadata.nlink() == 1
+        && metadata.mode() & 0o7777 == 0o600
+        && metadata.uid() == unsafe { libc::geteuid() }
 }
 
 #[cfg(unix)]

@@ -82,7 +82,10 @@ key-insights analyze first.jsonl second.jsonl \
 
 The same ordered inputs produce byte-identical output. Every input is resolved
 before analysis; duplicate filesystem identities, incomplete inputs, output
-aliases, and an invalid later input fail without replacing existing outputs.
+aliases, and an invalid later input fail without replacing existing outputs. On
+supported Unix systems, resolved input descriptors are closed after validation
+and reopened one at a time with identity revalidation during streaming analysis,
+so the supported 4,096-session boundary does not require 4,096 open files.
 
 The mutually exclusive `--session-dir` form scans at most 8,192 entries, accepts
 at most 4,096 finalized sessions, sorts accepted files by ASCII collector

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Cursor, Write},
+    io::{BufReader, Cursor, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
@@ -531,6 +531,52 @@ fn multi_input_analysis_applies_the_session_limit_across_sources() {
 }
 
 #[test]
+fn multi_input_analysis_accepts_the_supported_session_limit_streamingly() {
+    let inputs = (0..MAX_SESSIONS_PER_LOG).map(|index| {
+        Cursor::new(format!(
+            concat!(
+                "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":0}}\n",
+                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":1}}\n",
+            ),
+            index
+        ))
+    });
+
+    let summary = analyze_jsonl_inputs(inputs).expect("the supported session limit is valid");
+    let repeated = analyze_jsonl_inputs((0..MAX_SESSIONS_PER_LOG).map(|index| {
+        Cursor::new(format!(
+            concat!(
+                "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":0}}\n",
+                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"limit-{0}\",\"elapsed_ms\":1}}\n",
+            ),
+            index
+        ))
+    }))
+    .expect("repeated supported-limit analysis");
+
+    assert_eq!(summary.sessions, MAX_SESSIONS_PER_LOG as u64);
+    assert_eq!(summary.events, (MAX_SESSIONS_PER_LOG * 2) as u64);
+    assert_eq!(
+        render_summary_json(&summary),
+        render_summary_json(&repeated)
+    );
+    assert_eq!(render_markdown(&summary), render_markdown(&repeated));
+}
+
+#[test]
+fn analyzer_output_is_identical_with_single_byte_input_buffering() {
+    let ordinary = analyze_jsonl(Cursor::new(INPUT)).expect("ordinary input");
+    let chunked = analyze_jsonl(BufReader::with_capacity(1, Cursor::new(INPUT.as_bytes())))
+        .expect("single-byte buffered input");
+
+    assert_eq!(
+        render_summary_json(&chunked),
+        render_summary_json(&ordinary)
+    );
+    assert_eq!(render_markdown(&chunked), render_markdown(&ordinary));
+}
+
+#[test]
 fn multi_input_validation_errors_take_precedence_over_earlier_analysis_errors() {
     let overflowing = format!(
         concat!(
@@ -936,6 +982,64 @@ fn cli_reports_an_empty_session_directory_without_replacing_outputs() {
         fs::read_to_string(&report).expect("read previous report"),
         "previous report\n"
     );
+    fs::remove_dir_all(directory).expect("remove test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_session_directory_does_not_hold_one_descriptor_per_input() {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+
+    let directory = temporary_directory("bounded-session-descriptors");
+    let sessions = directory.join("sessions");
+    fs::create_dir_all(&sessions).expect("create session directory");
+    for index in 0..96 {
+        let session = sessions.join(format!("nvim-key-insights-session-{index:03}.jsonl"));
+        fs::write(
+            &session,
+            session_with_key(&format!("session-{index:03}"), "j", 1),
+        )
+        .expect("write session input");
+        fs::set_permissions(&session, fs::Permissions::from_mode(0o600))
+            .expect("protect session input");
+    }
+    let summary = directory.join("summary.json");
+    let report = directory.join("report.md");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_key-insights"));
+    command.args([
+        "analyze",
+        "--session-dir",
+        path(&sessions),
+        "--summary",
+        path(&summary),
+        "--report",
+        path(&report),
+    ]);
+    unsafe {
+        command.pre_exec(|| {
+            let limit = libc::rlimit {
+                rlim_cur: 32,
+                rlim_max: 32,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+
+    let output = command
+        .output()
+        .expect("run analyzer with a low descriptor limit");
+    assert!(
+        output.status.success(),
+        "analyzer must not retain every input descriptor: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(&summary).expect("read summary")).expect("parse summary");
+    assert_eq!(summary["sessions"], 96);
     fs::remove_dir_all(directory).expect("remove test directory");
 }
 
