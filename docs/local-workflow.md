@@ -202,5 +202,6 @@ behavior.
 
 CI runs the same uncached project gate natively on the three existing flake
 systems: `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The Linux
-Neovim 0.10 lower-bound job remains separate. These checks use synthetic local
-fixtures only and never invoke a real Codex service or read private usage logs.
+Neovim 0.10 lower-bound job separately runs both the normal Lua suite and the
+callback/retention resource suite. These checks use synthetic local fixtures
+only and never invoke a real Codex service or read private usage logs.

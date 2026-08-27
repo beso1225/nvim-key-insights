@@ -36,10 +36,35 @@ if document.get("permissions") != {"contents": "read"}:
 jobs = document.get("jobs")
 if not isinstance(jobs, dict):
     fail("CI workflow must define jobs")
+for job_name, job in jobs.items():
+    if not isinstance(job, dict):
+        fail(f"CI job {job_name!r} must be a mapping")
+    if job.get("permissions") is not None:
+        fail(f"CI job {job_name!r} must not override read-only workflow permissions")
+    if job.get("continue-on-error") is not None:
+        fail(f"CI job {job_name!r} failures must not be ignored")
+    if job.get("if") is not None:
+        fail(f"CI job {job_name!r} must not conditionally skip required gates")
+    for step in job.get("steps", []):
+        if isinstance(step, dict) and step.get("continue-on-error") is not None:
+            fail(f"CI job {job_name!r} step failures must not be ignored")
+        if isinstance(step, dict) and step.get("if") is not None:
+            fail(f"CI job {job_name!r} steps must not conditionally skip required gates")
 if "check" not in jobs or jobs["check"].get("name") != "Project checks":
     fail("the existing Project checks job must remain stable")
 if jobs["check"].get("runs-on") != "ubuntu-24.04":
     fail("Project checks must remain the x86_64-linux native gate")
+compatibility_steps = jobs.get("neovim-compatibility", {}).get("steps", [])
+lower_bound_gate = [
+    step for step in compatibility_steps if step.get("name") == "Run Lua tests on the supported lower bound"
+]
+if len(lower_bound_gate) != 1 or lower_bound_gate[0].get("run", "").strip() != (
+    '"$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u '
+    "tests/lua/minimal_init.lua -l tests/lua/run.lua\n"
+    '"$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u '
+    "tests/lua/minimal_init.lua -l tests/lua/resource_run.lua"
+):
+    fail("Neovim lower-bound CI must run both normal and resource Lua suites")
 check_steps = jobs["check"].get("steps", [])
 project_gate = [step for step in check_steps if step.get("name") == "Run project checks"]
 if len(project_gate) != 1 or project_gate[0].get("run") != (
@@ -50,8 +75,6 @@ if len(project_gate) != 1 or project_gate[0].get("run") != (
 native_job = jobs.get("native-platforms")
 if not isinstance(native_job, dict):
     fail("CI must define a native-platforms matrix job")
-if native_job.get("continue-on-error") is not None:
-    fail("native platform failures must not be ignored")
 strategy = native_job.get("strategy")
 if not isinstance(strategy, dict) or strategy.get("fail-fast") != "false":
     fail("native platform matrix must run every supported platform")
@@ -136,13 +159,16 @@ tasks = {task["name"]: task for task in pkfire.get("tasks", [])}
 resource_rust = tasks.get("test:resource:rust")
 resource_lua = tasks.get("test:resource:lua")
 resource = tasks.get("test:resource")
+test = tasks.get("test")
 check = tasks.get("check")
-if not all(isinstance(task, dict) for task in (resource_rust, resource_lua, resource, check)):
-    fail("pkfire must evaluate all resource tasks and the project check")
+if not all(isinstance(task, dict) for task in (resource_rust, resource_lua, resource, test, check)):
+    fail("pkfire must evaluate all resource tasks and the aggregate test/check tasks")
 if resource.get("deps") != ["test:resource:rust", "test:resource:lua"]:
     fail("the resource aggregate must depend on both language contracts")
 if "test:resource" not in check.get("deps", []):
     fail("the project check must execute the resource aggregate")
+if test.get("deps") != ["test:lua", "test:e2e", "test:resource"]:
+    fail("the all-tests entrypoint must execute Lua, E2E, and resource suites")
 if resource_rust.get("cmd") != (
     "cargo test -p key-insights --test deterministic_reporting --test jsonl_validation"
 ):

@@ -39,6 +39,7 @@ jobs:
       - name: Run Lua tests on the supported lower bound
         run: |
           "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u tests/lua/minimal_init.lua -l tests/lua/run.lua
+          "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua
 
   check:
     name: Project checks

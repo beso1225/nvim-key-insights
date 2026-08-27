@@ -210,7 +210,7 @@ local lintActions: Task = new {
 local test: Task = new {
   name = "test"
   description = "Run all tests"
-  deps { testLua; testE2e }
+  deps { testLua; testE2e; testResource }
 }
 
 local check: Task = new {
