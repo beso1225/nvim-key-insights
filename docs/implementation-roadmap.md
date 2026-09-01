@@ -276,6 +276,9 @@ invariants without network access.
 
 ## Milestone 7: forward testing and release readiness
 
+Status: in progress under the
+[Milestone 7 forward-testing plan](milestone-7-forward-testing-plan.md).
+
 - Collect real local usage with the privacy defaults and manually inspect JSONL,
   summary, report, and Codex payload boundaries.
 - Tune deterministic thresholds using representative sessions without encoding
