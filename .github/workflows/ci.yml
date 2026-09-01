@@ -39,6 +39,7 @@ jobs:
       - name: Run Lua tests on the supported lower bound
         run: |
           "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u tests/lua/minimal_init.lua -l tests/lua/run.lua
+          "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua
 
   check:
     name: Project checks
@@ -58,4 +59,37 @@ jobs:
         run: nix flake check --no-update-lock-file --print-build-logs
 
       - name: Run project checks
-        run: nix develop --no-update-lock-file --command pkf run check
+        run: nix develop --no-update-lock-file --command pkf run --no-cache check
+
+  native-platforms:
+    name: Native checks (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+          - runner: macos-15
+            system: aarch64-darwin
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@61cbfe2efc2d4e7a8a6d56967c3c1058e846c858 # v3.21.9
+
+      - name: Verify native Nix system
+        run: |
+          actual_system=$(nix eval --raw --impure --expr builtins.currentSystem)
+          test "$actual_system" = "${{ matrix.system }}"
+
+      - name: Validate Nix flake
+        run: nix flake check --no-update-lock-file --print-build-logs
+
+      - name: Run uncached project checks
+        run: nix develop --no-update-lock-file --command pkf run --no-cache check

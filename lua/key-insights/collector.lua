@@ -17,6 +17,9 @@ local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
 local MAX_PENDING_EVENTS = 1024
 local MAX_PENDING_BYTES = 4 * 1024 * 1024
 local PENDING_LIMIT_ERROR = "collector pending queue limit exceeded"
+local CALLBACK_ERROR = "collector callback failed"
+local PENDING_WRITE_ERROR = "collector pending write failed"
+local SCHEDULER_CONTRACT_ERROR = "collector scheduler contract violated"
 local function default_clock_ms()
   return math.floor(vim.uv.hrtime() / 1000000)
 end
@@ -302,17 +305,23 @@ function Collector:_schedule_pending_write()
     if epoch ~= self._flush_epoch then
       return
     end
-    self._flush_scheduled = false
-    if self._in_callback or self._state ~= "recording" or self._last_error ~= nil then
+    if self._in_callback then
+      self._flush_scheduled = false
+      self._last_error = SCHEDULER_CONTRACT_ERROR
       return
     end
-    local ok, error_message = pcall(self._write_pending, self)
+    self._flush_scheduled = false
+    if self._state ~= "recording" or self._last_error ~= nil then
+      return
+    end
+    local ok = pcall(self._write_pending, self)
     if not ok then
-      self._last_error = tostring(error_message)
+      self._last_error = PENDING_WRITE_ERROR
     end
   end)
   if not scheduled then
     self._flush_scheduled = false
+    self._last_error = SCHEDULER_CONTRACT_ERROR
   end
 end
 
@@ -326,6 +335,11 @@ function Collector:_schedule_mapping_reprime()
     if epoch ~= self._flush_epoch then
       return
     end
+    if self._in_callback then
+      self._mapping_reprime_scheduled = false
+      self._last_error = SCHEDULER_CONTRACT_ERROR
+      return
+    end
     self._mapping_reprime_scheduled = false
     if self._state ~= "recording" or self._last_error ~= nil or not self._mapping_reprime_needed then
       return
@@ -336,6 +350,7 @@ function Collector:_schedule_mapping_reprime()
   end)
   if not scheduled then
     self._mapping_reprime_scheduled = false
+    self._last_error = SCHEDULER_CONTRACT_ERROR
   end
 end
 
@@ -516,10 +531,10 @@ function Collector:_attach()
 
   self._unregister = self._register_on_key(function(mapped, typed)
     self._in_callback = true
-    local ok, error_message = pcall(self._handle_key, self, mapped, typed)
+    local ok = pcall(self._handle_key, self, mapped, typed)
     self._in_callback = false
     if not ok then
-      self._last_error = tostring(error_message)
+      self._last_error = CALLBACK_ERROR
     end
     return nil
   end)

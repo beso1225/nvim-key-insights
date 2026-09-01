@@ -110,7 +110,7 @@ The current implementation provides these commands:
 - `:KeyInsightsPurge` previews collector-owned session artifacts and asks before deletion;
 - `:KeyInsightsPurge!` skips that prompt but retains every ownership and race check.
 
-Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Finalized logs are retained for at most 30 days and the newest 100 sessions by default. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Retention targets 30 days and the newest 100 finalized sessions by default, using bounded best-effort cleanup that safely retries deferred work. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
 
 By default, the analyzer is `key-insights`, and reports live under
 `stdpath("state")/key-insights/reports/`. The plugin verifies that directory and

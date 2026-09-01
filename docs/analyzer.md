@@ -14,7 +14,7 @@ key-insights analyze <input.jsonl>... \
   [--keymap-snapshot <snapshot.json|->]
 ```
 
-Each input must contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Inputs are processed in the supplied order with shared session-identity, cardinality, retained-byte, and duration limits. Canonical or hard-linked duplicate inputs and incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, neither output may alias any input, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules.
+Each input must contain one or more complete finalized `.jsonl` sessions accepted by the streaming schema validator. Inputs are processed in the supplied order with shared session-identity, cardinality, retained-byte, and duration limits. Canonical or hard-linked duplicate inputs and incomplete `.jsonl.part` collector artifacts are rejected. The analyzer completes validation and aggregation before it creates either output. Inputs and existing outputs must be regular files, output symlinks are rejected, neither output may alias any input, and the two output names must resolve to distinct entries under the target filesystem's case and Unicode-normalization rules. On supported Unix systems, initial resolution closes each input before resolving the next, then analysis reopens and revalidates one input identity at a time. The analyzer therefore does not require one simultaneously open descriptor per input.
 
 Alternatively, discover the collector's current finalized namespace:
 
@@ -30,11 +30,18 @@ then opens `nvim-key-insights-<session_id>.jsonl` files in ASCII filename order.
 Accepted IDs contain 1–128 ASCII alphanumeric, `_`, or `-` bytes. Discovered
 files must be owner-only (`0600`), owned by the current user, regular, and
 single-linked. Unsafe matching entries, `.jsonl.part`, locks, legacy names,
-outputs, and unrelated entries are ignored. The directory itself and every
-accepted leaf are held and verified through anchored handles without following
-symlinks; replacement during discovery fails the command before output recovery
-or publication. An empty discovery set is an error. Legacy filenames can still
-be selected explicitly.
+outputs, and unrelated entries are ignored. Discovery verifies the directory
+and each accepted leaf through anchored handles without following symlinks, then
+closes each accepted leaf while retaining its filesystem identity. Immediately
+before reading each source, analysis opens its canonical pathname one at a time,
+rejects a symlink in the final path component, and rechecks identity, owner,
+mode, link count, and regular-file type. A replacement or policy change observed
+at that read boundary fails before output recovery or publication. Ancestor-path
+stability remains a trusted same-user filesystem precondition; the identity
+check still rejects a retargeted ancestor that resolves to a different
+filesystem object. Concurrent in-place content mutation and inode reuse remain
+within that trusted same-user precondition. An empty discovery set is an error.
+Legacy filenames can still be selected explicitly.
 
 ## Current metrics
 
@@ -83,7 +90,14 @@ unique-token cardinalities when ranked rows are truncated. Mode rows use
 lexical mode order. JSON object layout and Markdown sections are stable for
 identical validated input.
 
-The analyzer accepts at most 4,096 distinct keys, mapping IDs, and repeated-key identifiers across the complete input set and retains at most 1 MiB of unique token data across those categories. Individual schema-v1 tokens remain valid up to the existing 64 KiB event-line boundary. The analyzer rejects inputs outside the aggregate bounds instead of retaining unbounded state.
+The analyzer accepts at most 4,096 complete sessions, distinct keys, mapping
+IDs, and repeated-key identifiers across the complete input set and retains at
+most 1 MiB of unique token data across those categories. Individual schema-v1
+tokens remain valid up to the existing 64 KiB event-line boundary. Validation
+buffers at most one bounded event line, ranked outputs retain at most 100 rows
+per category, and supported Unix CLI analysis holds one input descriptor at a
+time after the initial path-validation pass. Inputs outside these aggregate
+bounds are rejected instead of retaining unbounded state.
 
 Both artifacts are fully staged in private same-directory temporary files before publication. Each completed file replaces its destination with an atomic rename, so validation and write failures do not truncate an existing artifact and a swapped output symlink is rejected rather than followed. If either publication fails, the CLI rolls back both destinations to their previous state.
 

@@ -178,10 +178,15 @@ snapshot-derived attribution.
 
 ## Callback performance budget
 
-The headless regression suite measures the complete Normal-mode callback path
-with a real registered mapping and resolver lookup over 2,000 iterations. On
-2026-08-08, Neovim 0.12.2 release on arm64 measured 13.37 microseconds per
-callback. CI enforces a deliberately portable 500-microsecond average ceiling;
-the gap accommodates shared runners while still detecting accidental blocking
-I/O or unbounded work on the callback path. The test excludes deferred flush and
-report work from the timed region.
+The headless resource suite measures excluded, ordinary Normal, mapped Normal,
+and Insert paths in warm batches. The mapped path uses a real registered mapping
+and the production resolver, including live `maparg()` validation. Deterministic
+operation-count checks are the primary contract: every intended callback must
+reach the expected aggregation or mapping event, return `nil`, coalesce a burst
+to one scheduled flush, and perform no session-writer method inside the callback.
+
+CI also enforces a deliberately portable 500-microsecond median batch ceiling
+for each path. The suite prints the operating system, architecture, Neovim
+version, sample shape, and min/median/max batch averages as telemetry. Deferred
+flush and report work remain outside the timed region, and individual tail
+latency is not a shared-runner correctness oracle.

@@ -35,12 +35,28 @@ local e2eSources: Listing<String> = new {
   "tests/workflow_e2e.py"
 }
 
+local rustResourceSources: Listing<String> = new {
+  ...rustSources
+}
+
+local luaResourceSources: Listing<String> = new {
+  ...toolchainSources
+  "lua/**/*.lua"
+  "plugin/**/*.lua"
+  "tests/lua/callback_performance_spec.lua"
+  "tests/lua/minimal_init.lua"
+  "tests/lua/resource_run.lua"
+  "tests/lua/retention_spec.lua"
+  "Taskfile.pkl"
+}
+
 local workflowSources: Listing<String> = new {
   ...toolchainSources
   ".github/workflows/*.yml"
   ".github/workflows/*.yaml"
   "Taskfile.pkl"
   "tests/ci_contract.sh"
+  "tests/ci_platform_contract.py"
   "tests/release_workflow_contract.py"
 }
 
@@ -95,7 +111,7 @@ local releaseSources: Listing<String> = new {
 local testRust: Task = new {
   name = "test:rust"
   description = "Run Rust unit and integration tests"
-  cmd = "cargo test --workspace"
+  cmd = "cargo test --workspace --lib --bins && cargo test -p key-insights --test codex_exec --test codex_payload --test codex_suggestions --test keymap_snapshot --test privacy_contract && cargo test --workspace --doc"
   inputs = rustSources
 }
 
@@ -112,6 +128,26 @@ local testE2e: Task = new {
   cmd = "KEY_INSIGHTS_BIN=target/debug/key-insights nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/e2e_spec.lua && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/workflow_e2e.py"
   inputs = e2eSources
   deps { testRust }
+}
+
+local testResourceRust: Task = new {
+  name = "test:resource:rust"
+  description = "Run deterministic Rust analyzer resource contracts"
+  cmd = "cargo test -p key-insights --test deterministic_reporting --test jsonl_validation"
+  inputs = rustResourceSources
+}
+
+local testResourceLua: Task = new {
+  name = "test:resource:lua"
+  description = "Run collector callback and retention resource contracts"
+  cmd = "nvim --headless -u tests/lua/minimal_init.lua -l tests/lua/resource_run.lua"
+  inputs = luaResourceSources
+}
+
+local testResource: Task = new {
+  name = "test:resource"
+  description = "Run deterministic analyzer and collector resource contracts"
+  deps { testResourceRust; testResourceLua }
 }
 
 local testPackaging: Task = new {
@@ -167,20 +203,20 @@ local lintRust: Task = new {
 local lintActions: Task = new {
   name = "lint:actions"
   description = "Lint GitHub Actions workflows"
-  cmd = "actionlint && bash tests/ci_contract.sh && python3 tests/release_workflow_contract.py"
+  cmd = "actionlint && bash tests/ci_contract.sh && python3 tests/ci_platform_contract.py && python3 tests/release_workflow_contract.py"
   inputs = workflowSources
 }
 
 local test: Task = new {
   name = "test"
   description = "Run all tests"
-  deps { testLua; testE2e }
+  deps { testLua; testE2e; testResource }
 }
 
 local check: Task = new {
   name = "check"
   description = "Run formatting, linting, and tests"
-  deps { formatCheck; lintRust; lintActions; test; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease }
+  deps { formatCheck; lintRust; lintActions; test; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease }
 }
 
 local default: Task = new {
@@ -189,4 +225,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }

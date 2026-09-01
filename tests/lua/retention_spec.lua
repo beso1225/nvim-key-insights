@@ -497,4 +497,149 @@ assert(
 )
 vim.fn.delete(unavailable_directory, "rf")
 
+local scan_budget_directory = vim.fn.tempname()
+vim.fn.mkdir(scan_budget_directory, "p", 448)
+local scan_next_calls = 0
+local scan_budget_fs = setmetatable({}, { __index = vim.uv })
+scan_budget_fs.fs_scandir = function()
+  return { index = 0 }
+end
+scan_budget_fs.fs_scandir_next = function(request)
+  request.index = request.index + 1
+  scan_next_calls = scan_next_calls + 1
+  if request.index <= 5 then
+    return "unrelated-" .. request.index, "file"
+  end
+  return nil
+end
+local scan_budget_errors = {}
+local scan_budget_store = storage.new({
+  directory = scan_budget_directory,
+  fs = scan_budget_fs,
+  max_retention_scan_entries = 3,
+  on_retention_error = function(error_message)
+    table.insert(scan_budget_errors, error_message)
+  end,
+})
+finalize(scan_budget_store, "scan-budget-current")
+assert(scan_next_calls == 4, "retention must stop after observing the first over-budget entry")
+assert(#scan_budget_errors == 1, "scan overflow must defer cleanup without failing finalization")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(scan_budget_directory, log_name("scan-budget-current"))) ~= nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(scan_budget_directory, lock_name("scan-budget-current"))) == nil)
+vim.fn.delete(scan_budget_directory, "rf")
+
+local deletion_budget_directory = vim.fn.tempname()
+vim.fn.mkdir(deletion_budget_directory, "p", 448)
+local deletion_now = os.time()
+for _, session_id in ipairs({ "delta", "bravo", "echo", "alpha", "charlie" }) do
+  write_at(
+    vim.fs.joinpath(deletion_budget_directory, log_name(session_id)),
+    session_id,
+    deletion_now - 31 * DAY_SECONDS
+  )
+end
+local deletion_notifications = 0
+local deletion_budget_store = storage.new({
+  directory = deletion_budget_directory,
+  max_retention_deletions_per_pass = 2,
+  now_seconds = function()
+    return deletion_now
+  end,
+  on_retention_error = function()
+    deletion_notifications = deletion_notifications + 1
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 100,
+  },
+})
+finalize(deletion_budget_store, "budget-pass-a")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("alpha"))) == nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("bravo"))) == nil)
+for _, session_id in ipairs({ "charlie", "delta", "echo" }) do
+  assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name(session_id))) ~= nil)
+end
+assert(deletion_notifications == 1, "remaining eligible logs must report deferred cleanup")
+
+finalize(deletion_budget_store, "budget-pass-b")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("charlie"))) == nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("delta"))) == nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("echo"))) ~= nil)
+assert(deletion_notifications == 2, "a later finalization must retry bounded cleanup")
+
+finalize(deletion_budget_store, "budget-pass-c")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(deletion_budget_directory, log_name("echo"))) == nil)
+assert(deletion_notifications == 2, "cleanup convergence must stop deferred warnings")
+vim.fn.delete(deletion_budget_directory, "rf")
+
+local count_budget_directory = vim.fn.tempname()
+vim.fn.mkdir(count_budget_directory, "p", 448)
+for index, session_id in ipairs({ "count-a", "count-b", "count-c", "count-d", "count-e" }) do
+  write_at(
+    vim.fs.joinpath(count_budget_directory, log_name(session_id)),
+    session_id,
+    deletion_now - (10 - index) * DAY_SECONDS
+  )
+end
+local count_notifications = 0
+local count_budget_store = storage.new({
+  directory = count_budget_directory,
+  max_retention_deletions_per_pass = 2,
+  now_seconds = function()
+    return deletion_now
+  end,
+  on_retention_error = function()
+    count_notifications = count_notifications + 1
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 2,
+  },
+})
+finalize(count_budget_store, "count-current-a")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(count_budget_directory, log_name("count-a"))) == nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(count_budget_directory, log_name("count-b"))) == nil)
+assert(count_notifications == 1, "count pruning must defer after its shared deletion budget")
+finalize(count_budget_store, "count-current-b")
+assert(vim.uv.fs_lstat(vim.fs.joinpath(count_budget_directory, log_name("count-c"))) == nil)
+assert(vim.uv.fs_lstat(vim.fs.joinpath(count_budget_directory, log_name("count-d"))) == nil)
+assert(count_notifications == 2)
+finalize(count_budget_store, "count-current-c")
+assert(#basenames(count_budget_directory .. "/*.jsonl") == 2, "count pruning must converge to max_sessions")
+vim.fn.delete(count_budget_directory, "rf")
+
+local shared_budget_directory = vim.fn.tempname()
+vim.fn.mkdir(shared_budget_directory, "p", 448)
+for _, session_id in ipairs({ "shared-log-a", "shared-log-b" }) do
+  write_at(
+    vim.fs.joinpath(shared_budget_directory, log_name(session_id)),
+    session_id,
+    NOW_SECONDS - 31 * DAY_SECONDS
+  )
+end
+for _, session_id in ipairs({ "shared-quarantine-a", "shared-quarantine-b" }) do
+  local original_name = log_name(session_id)
+  local original_path = vim.fs.joinpath(shared_budget_directory, original_name)
+  write_at(original_path, session_id, NOW_SECONDS - 31 * DAY_SECONDS)
+  local identity = artifacts.identity(assert(vim.uv.fs_lstat(original_path)))
+  local name = artifacts.quarantine_name(original_name, identity, string.rep(session_id:sub(-1), 16))
+  assert(vim.uv.fs_rename(original_path, vim.fs.joinpath(shared_budget_directory, name)))
+end
+local shared_budget_store = storage.new({
+  directory = shared_budget_directory,
+  max_retention_deletions_per_pass = 2,
+  now_seconds = function()
+    return NOW_SECONDS
+  end,
+  retention = {
+    max_age_days = 30,
+    max_sessions = 100,
+  },
+})
+local before_shared = #vim.fn.readdir(shared_budget_directory)
+assert(not pcall(shared_budget_store._prune, shared_budget_store, nil))
+local after_shared = #vim.fn.readdir(shared_budget_directory)
+assert(before_shared - after_shared == 2, "quarantine recovery and log pruning must share one deletion budget")
+vim.fn.delete(shared_budget_directory, "rf")
+
 print("Lua retention contract: ok")

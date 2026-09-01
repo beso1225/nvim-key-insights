@@ -128,8 +128,11 @@ where
         }
         inputs.push(ResolvedInputPath {
             path: input_path,
+            #[cfg(not(unix))]
             file,
             identity,
+            #[cfg(unix)]
+            requires_private_file: true,
         });
     }
     directory.verify_current().map_err(|error| {

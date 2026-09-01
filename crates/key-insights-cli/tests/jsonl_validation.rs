@@ -1,4 +1,8 @@
-use std::io::Cursor;
+use std::{
+    cell::Cell,
+    io::{BufReader, Cursor, Read},
+    rc::Rc,
+};
 
 use key_insights::{
     MAX_SESSION_ID_BYTES, MAX_SESSIONS_PER_LOG, ValidationErrorKind, validate_jsonl,
@@ -224,7 +228,7 @@ fn rejects_empty_mapping_ids() {
 }
 
 #[test]
-fn bounds_memory_used_for_retained_session_ids() {
+fn bounds_retained_session_ids_with_a_chunked_generated_fixture() {
     let long_id = "x".repeat(MAX_SESSION_ID_BYTES + 1);
     let input = format!(
         r#"{{"schema_version":1,"event_type":"session_start","session_id":"{long_id}","elapsed_ms":0}}"#
@@ -233,19 +237,99 @@ fn bounds_memory_used_for_retained_session_ids() {
     assert_eq!(error.line, 1);
     assert_eq!(error.kind, ValidationErrorKind::SessionIdTooLong);
 
-    let mut many_sessions = String::new();
-    for index in 0..=MAX_SESSIONS_PER_LOG {
-        many_sessions.push_str(&format!(
-            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"session-{index}\",\"elapsed_ms\":0}}\n"
-        ));
-        if index < MAX_SESSIONS_PER_LOG {
-            many_sessions.push_str(&format!(
-                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"session-{index}\",\"elapsed_ms\":1}}\n"
-            ));
+    let maximum_generated = Rc::new(Cell::new(0));
+    let stream = SessionStream::new(MAX_SESSIONS_PER_LOG + 1, Rc::clone(&maximum_generated));
+    let error = validate_jsonl(BufReader::with_capacity(17, stream))
+        .expect_err("retained session IDs have a count limit");
+    assert_eq!(error.line, MAX_SESSIONS_PER_LOG * 2 + 1);
+    assert_eq!(error.kind, ValidationErrorKind::TooManySessions);
+    assert!(
+        maximum_generated.get() < 512,
+        "the generated fixture must retain only one small session chunk"
+    );
+}
+
+#[test]
+fn malformed_input_stops_before_reading_an_unbounded_suffix() {
+    let mut payload = b"not JSON\n".to_vec();
+    payload.extend(std::iter::repeat_n(b'x', 1024 * 1024));
+    let mut reader = CountingReader::new(Cursor::new(payload));
+
+    let error = validate_jsonl(BufReader::with_capacity(8, &mut reader))
+        .expect_err("the first malformed event must stop validation");
+
+    assert_eq!(error.line, 1);
+    assert_eq!(error.kind, ValidationErrorKind::MalformedEvent);
+    assert!(reader.bytes_read <= b"not JSON\n".len() + 8);
+}
+
+struct SessionStream {
+    maximum_generated: Rc<Cell<usize>>,
+    next_session: usize,
+    pending: Cursor<Vec<u8>>,
+    total_sessions: usize,
+}
+
+impl SessionStream {
+    fn new(total_sessions: usize, maximum_generated: Rc<Cell<usize>>) -> Self {
+        Self {
+            maximum_generated,
+            next_session: 0,
+            pending: Cursor::new(Vec::new()),
+            total_sessions,
         }
     }
 
-    let error = validate(&many_sessions).expect_err("retained session IDs have a count limit");
-    assert_eq!(error.line, MAX_SESSIONS_PER_LOG * 2 + 1);
-    assert_eq!(error.kind, ValidationErrorKind::TooManySessions);
+    fn refill(&mut self) -> bool {
+        if self.next_session >= self.total_sessions {
+            return false;
+        }
+        let index = self.next_session;
+        self.next_session += 1;
+        let mut chunk = format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"session-{index}\",\"elapsed_ms\":0}}\n"
+        );
+        if index < MAX_SESSIONS_PER_LOG {
+            chunk.push_str(&format!(
+                "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"session-{index}\",\"elapsed_ms\":1}}\n"
+            ));
+        }
+        self.maximum_generated
+            .set(self.maximum_generated.get().max(chunk.len()));
+        self.pending = Cursor::new(chunk.into_bytes());
+        true
+    }
+}
+
+impl Read for SessionStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.pending.read(buffer)?;
+            if read > 0 || !self.refill() {
+                return Ok(read);
+            }
+        }
+    }
+}
+
+struct CountingReader<R> {
+    bytes_read: usize,
+    inner: R,
+}
+
+impl<R> CountingReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            bytes_read: 0,
+            inner,
+        }
+    }
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.bytes_read += read;
+        Ok(read)
+    }
 }
