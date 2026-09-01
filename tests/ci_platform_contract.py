@@ -159,16 +159,33 @@ tasks = {task["name"]: task for task in pkfire.get("tasks", [])}
 resource_rust = tasks.get("test:resource:rust")
 resource_lua = tasks.get("test:resource:lua")
 resource = tasks.get("test:resource")
+forward = tasks.get("test:forward")
 test = tasks.get("test")
 check = tasks.get("check")
-if not all(isinstance(task, dict) for task in (resource_rust, resource_lua, resource, test, check)):
-    fail("pkfire must evaluate all resource tasks and the aggregate test/check tasks")
+if not all(
+    isinstance(task, dict)
+    for task in (resource_rust, resource_lua, resource, forward, test, check)
+):
+    fail("pkfire must evaluate resource, forward, and aggregate test/check tasks")
 if resource.get("deps") != ["test:resource:rust", "test:resource:lua"]:
     fail("the resource aggregate must depend on both language contracts")
 if "test:resource" not in check.get("deps", []):
     fail("the project check must execute the resource aggregate")
-if test.get("deps") != ["test:lua", "test:e2e", "test:resource"]:
-    fail("the all-tests entrypoint must execute Lua, E2E, and resource suites")
+if forward.get("deps") != ["test:rust"] or forward.get("cmd") != (
+    'UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" '
+    "KEY_INSIGHTS_BIN=target/debug/key-insights "
+    "uv run --no-project --python-preference only-system python tests/forward_test_contract.py"
+):
+    fail("the forward-test task must run only after the Rust analyzer is built")
+if not {
+    "scripts/forward_test.py",
+    "tests/forward_test_contract.py",
+    "docs/local-workflow.md",
+    "docs/milestone-7-forward-testing-plan.md",
+} <= set(forward.get("inputs", [])):
+    fail("the forward-test task is missing its harness contract inputs")
+if test.get("deps") != ["test:lua", "test:e2e", "test:resource", "test:forward"]:
+    fail("the all-tests entrypoint must execute Lua, E2E, resource, and forward suites")
 if resource_rust.get("cmd") != (
     "cargo test -p key-insights --test deterministic_reporting --test jsonl_validation"
 ):

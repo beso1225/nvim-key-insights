@@ -205,3 +205,40 @@ systems: `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`. The Linux
 Neovim 0.10 lower-bound job separately runs both the normal Lua suite and the
 callback/retention resource suite. These checks use synthetic local fixtures
 only and never invoke a real Codex service or read private usage logs.
+
+## Synthetic offline forward test
+
+Run the Milestone 7 synthetic forward-test contract with:
+
+```sh
+nix develop path:. --command pkf run --no-cache test:forward
+```
+
+The task builds the local analyzer and runs generated sessions in a fresh
+owner-only temporary directory outside the repository. It exercises the public
+`analyze` and `preview` commands with an empty child environment, bounded
+private artifacts, schema checks, and private canaries. It does not inspect real
+usage, invoke Codex, access the network, or change release state.
+
+The temporary directory contains the generated JSONL, local report, sanitized
+summary and payload, plus a compact `inspection-manifest.json`. The manifest
+contains only contract versions, artifact byte sizes and SHA-256 digests, and
+boolean boundary results. It never contains artifact text, paths, session IDs,
+or seeded private canaries. These temporary artifacts remain local and must not
+be copied into the repository.
+
+To inspect an individual run, first build the analyzer, then provide an empty
+absolute directory owned by the current user with mode `0700`:
+
+```sh
+cargo build -p key-insights
+workspace="$(mktemp -d)"
+chmod 0700 "$workspace"
+python3 scripts/forward_test.py \
+  --workspace "$workspace" \
+  --key-insights-bin "$PWD/target/debug/key-insights"
+```
+
+Delete the temporary directory after the deliberate local inspection. Real
+usage inspection is a separate opt-in step and is not part of this synthetic
+contract.

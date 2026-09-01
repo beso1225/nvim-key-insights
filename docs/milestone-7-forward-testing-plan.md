@@ -18,7 +18,7 @@ separate, explicitly approved operation after the release-candidate gate.
 
 ## S1: forward-test contract and synthetic harness
 
-Status: pending.
+Status: complete.
 
 - add an offline harness that runs the installed/public command workflow only on
   generated synthetic sessions;

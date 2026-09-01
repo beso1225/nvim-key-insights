@@ -50,6 +50,15 @@ local luaResourceSources: Listing<String> = new {
   "Taskfile.pkl"
 }
 
+local forwardTestSources: Listing<String> = new {
+  ...rustSources
+  "docs/local-workflow.md"
+  "docs/milestone-7-forward-testing-plan.md"
+  "scripts/forward_test.py"
+  "tests/forward_test_contract.py"
+  "Taskfile.pkl"
+}
+
 local workflowSources: Listing<String> = new {
   ...toolchainSources
   ".github/workflows/*.yml"
@@ -150,6 +159,14 @@ local testResource: Task = new {
   deps { testResourceRust; testResourceLua }
 }
 
+local testForward: Task = new {
+  name = "test:forward"
+  description = "Run the synthetic offline forward-test contract"
+  cmd = "UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/forward_test_contract.py"
+  inputs = forwardTestSources
+  deps { testRust }
+}
+
 local testPackaging: Task = new {
   name = "test:packaging"
   description = "Validate Nix package, app, and overlay outputs"
@@ -210,7 +227,7 @@ local lintActions: Task = new {
 local test: Task = new {
   name = "test"
   description = "Run all tests"
-  deps { testLua; testE2e; testResource }
+  deps { testLua; testE2e; testResource; testForward }
 }
 
 local check: Task = new {
@@ -225,4 +242,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testForward; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
