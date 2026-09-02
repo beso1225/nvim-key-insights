@@ -118,9 +118,11 @@ output subset; action-specific semantics remain enforced locally.
 
 ## S6: release-candidate audit
 
-Status: in progress. The Nix development-shell project check and all-systems
-flake check pass on the current tree; the audit and release-candidate review
-remain open until the explicit Codex decision and clean reviewed commit.
+Status: complete on 2026-09-02. The explicit Codex decision was exercised on
+clean commit `dfafcf3`; the full project check, all-systems flake check, release
+contract, and an unpublished plugin artifact build/checksum audit all pass.
+Installation, upgrade, schema compatibility, retention, purge, crash recovery,
+authentication-boundary, resource, and native-platform contracts were reviewed.
 
 - rerun the full offline project, flake, package, plugin, schema, release, and
   native-platform contracts;
