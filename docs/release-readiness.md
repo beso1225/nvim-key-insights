@@ -1,8 +1,8 @@
-# Milestone 7 forward testing and release-readiness plan
+# Release readiness
 
-Status: in progress on `codex/m7-forward-testing`.
+Status: release candidate ready; initial release blocked pending explicit approval.
 
-Roadmap issue: [#29](https://github.com/beso1225/nvim-key-insights/issues/29)
+Tracking issue: [#29](https://github.com/beso1225/nvim-key-insights/issues/29)
 
 ## Objective
 
@@ -10,13 +10,13 @@ Validate the completed privacy-first workflow with deliberate local forward
 tests, tune deterministic recommendations without encoding one person's habits
 as universal policy, and prepare an auditable first release candidate.
 
-Milestone 7 does not weaken the existing collection or AI boundaries. Personal
+This release-readiness work does not weaken the existing collection or AI boundaries. Personal
 session logs, generated private reports, local paths, authentication material,
 and raw Codex responses must never be committed. Raw JSONL and local reports
 must never be sent to an AI service. Creating a tag or GitHub release remains a
 separate, explicitly approved operation after the release-candidate gate.
 
-## S1: forward-test contract and synthetic harness
+## Forward-test contract and synthetic harness
 
 Status: complete.
 
@@ -30,7 +30,7 @@ Status: complete.
   never invokes Codex, accesses the network, or modifies release state;
 - keep ordinary CI synthetic and deterministic.
 
-## S2: deliberate local usage inspection
+## Deliberate local usage inspection
 
 Status: complete. The local-only inspection harness and synthetic contract
 tests are implemented, and a deliberate human inspection of real local usage
@@ -47,7 +47,7 @@ repository.
   tree;
 - keep all real-usage execution local and outside ordinary CI.
 
-## S3: deterministic threshold tuning
+## Deterministic threshold tuning
 
 Status: complete. A real local aggregate exposed a candidate-cap ordering
 problem, and a synthetic regression now preserves observed evidence before
@@ -76,7 +76,7 @@ Accepted tuning change under review:
 - No raw local logs, paths, identifiers, or personal key preferences are
   recorded in this plan.
 
-## S4: performance forward tests
+## Performance forward tests
 
 Status: complete. The public contract test and local-only analyzer measurement
 harness are implemented, and a real-session measurement completed on the
@@ -84,20 +84,20 @@ current host. The private performance manifest remains outside the repository.
 
 - measure collector callback telemetry and analyzer resource use on deliberate
   local sessions without persisting typed text or paths in measurements;
-- compare observations with the deterministic M6 callback, queue, scan,
+- compare observations with the deterministic callback, queue, scan,
   descriptor, byte, and cardinality contracts;
 - add public synthetic regressions before changing any enforced budget;
 - treat machine-specific timing and RSS values as telemetry rather than portable
   correctness thresholds;
 - keep measurement artifacts private and bounded.
 
-The callback side reuses the M6 synthetic resource suite: deterministic
+The callback side reuses the synthetic resource suite: deterministic
 operation-count, queue, byte, and cardinality contracts remain enforcement,
-while callback timing is printed as machine-specific telemetry. The local S4
+while callback timing is printed as machine-specific telemetry. The local
 harness measures only aggregate analyzer resource observations from finalized
 sessions and removes its temporary report artifacts before returning.
 
-## S5: optional Codex forward test
+## Optional Codex forward test
 
 Status: complete for the explicit local run on 2026-09-02. The canonical
 preview was inspected, the confirmation gate was exercised, and the real
@@ -116,7 +116,7 @@ output subset; action-specific semantics remain enforced locally.
   private canaries from entering the subprocess boundary;
 - keep a real Codex call out of ordinary CI and require separate opt-in approval.
 
-## S6: release-candidate audit
+## Release-candidate audit
 
 Status: complete on 2026-09-02. The explicit Codex decision was exercised on
 clean commit `dfafcf3`; the full project check, all-systems flake check, release
@@ -134,9 +134,9 @@ authentication-boundary, resource, and native-platform contracts were reviewed.
 - prepare the changelog and version only through the existing release tooling;
 - produce reproducible artifacts and checksums without publishing them.
 
-## S7: initial release
+## Initial release
 
-Status: blocked on explicit approval after S6.
+Status: blocked on explicit approval after the audit.
 
 - require a clean, reviewed, merged release-candidate commit;
 - require every protected native CI and release-contract check to pass;
@@ -147,7 +147,7 @@ Status: blocked on explicit approval after S6.
 
 ## Completion gate
 
-Milestone 7 is complete only when deliberate local forward testing finds no
+Release readiness is complete only when deliberate local forward testing finds no
 privacy-boundary regression, every accepted tuning change is backed by a public
 deterministic fixture, the release-candidate audit is clean, and the user has
 explicitly approved and verified the first release. Until then, the repository

@@ -4,35 +4,35 @@
 
 Privacy-first Neovim usage collection and deterministic local analysis.
 
-This repository is in its initial implementation phase. The intended system has three parts:
+## Overview
 
-1. a Neovim 0.10+ Lua collector;
-2. a local Rust analyzer that produces `summary.json` and `report.md`;
-3. an optional Codex skill that reads only the sanitized summary.
+`nvim-key-insights` has three local-first components:
 
-Raw key logging, Insert-mode text, command/search text, and file paths are disabled by default. Terminal, prompt, special, and sensitive buffers are excluded from collection.
+- a Neovim 0.10+ Lua collector;
+- a Rust analyzer that produces deterministic `summary.json` and `report.md`;
+- an optional Codex workflow that reads only a bounded sanitized summary.
 
-## Development
+Raw key logging, Insert-mode text, command/search text, and file paths are not
+captured by the default workflow. Terminal, prompt, special, and sensitive
+buffers are excluded from collection.
 
-Enter the reproducible development shell and run the test suite:
+## Status
+
+The v0.1.0 implementation is release-candidate ready. The initial public
+release is not published yet; the publication steps remain explicit maintainer
+decisions. See the [release-readiness audit](docs/release-readiness.md)
+for the current verification record.
+
+## Quick start
+
+For development:
 
 ```sh
 nix develop
-pkf run test
+pkf run check
 ```
 
-`pkf run test:e2e` builds the Rust analyzer and exercises the complete local
-collector-to-report workflow in headless Neovim without network access.
-Individual tasks are available through `pkf list`.
-
-Release history, schema upgrades, and the non-publishing maintainer workflow are
-documented in the [changelog](CHANGELOG.md),
-[schema compatibility policy](docs/schema-compatibility.md), and
-[release procedure](docs/releasing.md).
-
-## Deterministic analyzer
-
-Analyze a complete finalized JSONL stream without an AI service:
+To analyze finalized sessions locally without an AI service:
 
 ```sh
 cargo run --bin key-insights -- analyze session-1.jsonl session-2.jsonl \
@@ -40,137 +40,66 @@ cargo run --bin key-insights -- analyze session-1.jsonl session-2.jsonl \
   --report report.md
 ```
 
-One or more finalized inputs are accepted in the supplied order. The command validates every input before creating outputs and rejects duplicate filesystem identities. `summary.json` contains only aggregated counts and bounded rankings of sanitized tokens; it excludes session IDs, project IDs, raw sequences, Insert text, and command/search contents. `report.md` is rendered deterministically from the same in-memory summary.
+For plugin installation, configuration, Nix packages, and the optional Codex
+skill, see [Installation and configuration](docs/installation.md).
 
-To analyze every finalized collector session in its owned directory, use the
-mutually exclusive discovery form:
+## Neovim commands
 
-```sh
-cargo run --bin key-insights -- analyze \
-  --session-dir /path/to/sessions \
-  --summary summary.json \
-  --report report.md
-```
+The collector is explicit opt-in. The main commands are:
 
-Directory discovery considers only private regular files in the current
-`nvim-key-insights-<session_id>.jsonl` namespace. It is bounded and ordered by
-ASCII filename, and it does not follow session-directory or entry symlinks.
-Incomplete, lock, legacy, and unrelated entries are ignored. Legacy logs remain
-available through explicit positional input paths.
+- `:KeyInsightsStart`, `:KeyInsightsPause`, `:KeyInsightsStop`, and
+  `:KeyInsightsStatus` for collection control;
+- `:KeyInsightsReport`, `:KeyInsightsOpenReport`, and
+  `:KeyInsightsAnalyze` for local analysis and the optional confirmation-gated
+  Codex workflow;
+- `:KeyInsightsPurge` for the bounded, ownership-checked cleanup of collector
+  artifacts.
 
-## Installation
+See [Local collection and reporting](docs/local-workflow.md) for command
+ordering, discovery, outputs, purge, and recovery behavior.
 
-The Nix flake exports the Rust analyzer as `key-insights`, the Neovim runtime as
-`nvim-key-insights`, the optional inert Codex plugin as
-`nvim-key-insights-codex-plugin`, executable apps, and a reusable overlay.
-lazy.nvim, Codex marketplace/standalone skill, direct flake, overlay,
-supported-system, and complete configuration examples are in
-[Installation and configuration](docs/installation.md).
+## Privacy boundary
 
-## Collector lifecycle
+Sessions are stored in the Neovim state directory with owner-only permissions.
+Incomplete sessions remain excluded until their end marker is durable. Reports
+are generated locally from aggregated data. Raw JSONL, local reports, private
+paths, authentication material, and raw Codex responses must stay outside the
+repository.
 
-The collector can be loaded with lazy.nvim without starting collection automatically:
+The optional Codex integration requires explicit confirmation and may receive
+only the canonical sanitized payload. Local validators check the response
+against the exact summary and mapping snapshot before deterministic Markdown is
+rendered.
 
-```lua
-{
-  "beso1225/nvim-key-insights",
-  version = false,
-  cmd = {
-    "KeyInsightsStart",
-    "KeyInsightsPause",
-    "KeyInsightsStop",
-    "KeyInsightsStatus",
-    "KeyInsightsReport",
-    "KeyInsightsAnalyze",
-    "KeyInsightsOpenReport",
-    "KeyInsightsPurge",
-  },
-  opts = {
-    report = {
-      analyzer = "key-insights",
-      directory = "/path/to/private/reports",
-      codex = {
-        -- Optional; defaults to an owner-only empty cache directory.
-        working_directory = "/path/to/empty/private/directory",
-      },
-    },
-  },
-}
-```
+## Documentation
 
-The current implementation provides these commands:
+The [documentation index](docs/README.md) is the starting point for user and
+maintainer guides.
 
-- `:KeyInsightsStart` starts a new session or resumes a paused session;
-- `:KeyInsightsPause` detaches the input callback and flushes pending events;
-- `:KeyInsightsStop` writes `session_end`, flushes, and detaches the callback;
-- `:KeyInsightsStatus` displays collection state and whether a report job is running;
-- `:KeyInsightsReport` asynchronously analyzes finalized sessions and opens the new report;
-- `:KeyInsightsAnalyze` renders the bounded sanitized Codex payload, then asks for explicit confirmation before launching Codex;
-- `:KeyInsightsOpenReport` opens the existing report without running analysis;
-- `:KeyInsightsPurge` previews collector-owned session artifacts and asks before deletion;
-- `:KeyInsightsPurge!` skips that prompt but retains every ownership and race check.
+- [Analyzer](docs/analyzer.md)
+- [Collector lifecycle](docs/collector-lifecycle.md)
+- [Development](docs/development.md)
+- [Event schema](docs/event-schema.md)
+- [Input aggregation](docs/input-aggregation.md)
+- [Mapping attribution](docs/mapping-attribution.md)
+- [Releasing](docs/releasing.md)
+- [Schema compatibility](docs/schema-compatibility.md)
+- [Storage and retention](docs/storage-retention.md)
+- [Changelog](CHANGELOG.md)
 
-Each session is written under `stdpath("state")/key-insights/sessions/` with owner-only file permissions. Incomplete sessions retain a `.jsonl.part` suffix and are not analyzer inputs; a log becomes `.jsonl` only after its `session_end` is durable. Retention targets 30 days and the newest 100 finalized sessions by default, using bounded best-effort cleanup that safely retries deferred work. Collection never starts implicitly. A `VimLeavePre` handler closes an active session.
+## License
 
-By default, the analyzer is `key-insights`, and reports live under
-`stdpath("state")/key-insights/reports/`. The plugin verifies that directory and
-sets owner-only permissions before passing paths as argv without a shell. It
-passes the sanitized mapping snapshot through the analyzer's standard input and
-does not create a snapshot file. It
-allows one report process at a time. An active collector's
-`.jsonl.part` file remains excluded. After a successful exit, the plugin opens
-only fresh, bounded, valid outputs; analyzer errors keep the current editor view
-and previously published artifacts.
-
-Purge considers only private, single-linked regular files in the collector
-namespace. Active sessions, live owners, malformed reservations, symlinks,
-hard links, special modes, directories, and unrelated entries remain untouched.
-The result reports removed, protected, skipped, and failed counts. Purge is
-local-only and is refused while a report process is running.
-
-See [Local collection and reporting](docs/local-workflow.md) for ordering,
-discovery, output, purge, and recovery contracts.
-See [Installation and configuration](docs/installation.md) for the complete
-supported option reference. Raw capture options are deliberately unavailable;
-attempting to enable them fails configuration.
+Dual-licensed under either the [MIT License](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE), at your option. See
+[LICENSE](LICENSE) for the project-level notice.
 
 ## Repository layout
 
 ```text
 lua/key-insights/             Neovim collector modules
-tests/lua/                    Headless Neovim tests
+plugin/                       Neovim command registration
 crates/key-insights-cli/      Deterministic Rust analyzer
-docs/                         Public design contracts
+plugins/nvim-key-insights/    Optional inert Codex plugin and skill
+tests/                        Rust, Lua, Python, packaging, and CI contracts
+docs/                         Public user, data, and maintainer documentation
 ```
-
-## Status
-
-The current implementation covers privacy-safe collection, bounded retention and
-validation, privacy-safe mapping attribution, strict API-derived keymap
-snapshots, deterministic multi-session reports, asynchronous Neovim report
-commands, explicit bounded purge, and a headless local-workflow privacy test.
-Normal, Visual, and Operator-pending input becomes bounded typed-key sequences;
-Insert and Select input becomes text-run counts and timing. Command/search
-contents and mapping expansions are discarded. Confirmed Normal, Visual, and
-Operator-pending mappings emit only opaque IDs and canonical typed keys; mapping
-implementations remain callback-local. Deterministic ergonomic distributions,
-operation evidence, guarded repeated-motion candidates, and cautious mapping
-coverage are implemented. The bounded Codex payload preview and explicit
-confirmation-gated Codex workflow are available from `:KeyInsightsAnalyze`.
-The flake exports separate analyzer, Neovim, and inert Codex plugin packages,
-executable apps, and a reusable overlay. The repository marketplace packages a
-self-contained `analyze-neovim-usage` skill for an optional manual workflow;
-only the local Rust validator turns its structured JSON into trusted Markdown.
-
-See the [implementation roadmap](docs/implementation-roadmap.md) for the ordered
-remaining milestones and the
-[Milestone 3 implementation plan](docs/milestone-3-deterministic-ergonomic-metrics-plan.md)
-for the current deterministic ergonomic evidence contract, and the
-[mapping attribution contract](docs/mapping-attribution.md) for snapshot-backed
-mapping evidence. The optional Codex payload contract is implemented in
-the [Milestone 4 plan](docs/milestone-4-codex-analysis-plan.md). Codex is
-launched only after confirmation, with saved authentication, ignored user
-configuration/rules, an empty working directory, and a payload-only permission
-profile. The Codex workflow currently fails closed outside Unix because its
-timeout and shutdown guarantees require process-group termination. Cancelling
-leaves the workflow local-only.

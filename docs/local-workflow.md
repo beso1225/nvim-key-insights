@@ -215,7 +215,7 @@ only and never invoke a real Codex service or read private usage logs.
 
 ## Synthetic offline forward test
 
-Run the Milestone 7 synthetic forward-test contract with:
+Run the synthetic forward-test contract with:
 
 ```sh
 nix develop path:. --command pkf run --no-cache test:forward

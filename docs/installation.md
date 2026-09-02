@@ -22,7 +22,7 @@ The following specification remains lazy until one of the commands is used:
 ```lua
 {
   "beso1225/nvim-key-insights",
-  version = false,
+  version = "v0.1.0",
   cmd = {
     "KeyInsightsStart",
     "KeyInsightsPause",
@@ -41,12 +41,9 @@ The following specification remains lazy until one of the commands is used:
 }
 ```
 
-There is no release tag yet. Keep the revision recorded by the plugin-manager
-lock file, and review changes before updating it.
-
-After the first release is published, replace `version = false` with an exact
-immutable tag such as `version = "v0.1.0"`. Do not mix a tagged Neovim plugin
-with an analyzer or Codex plugin from an unrelated revision.
+Use an exact immutable tag and keep the revision recorded by the plugin-manager
+lock file. Do not mix a tagged Neovim plugin with an analyzer or Codex plugin
+from an unrelated revision.
 
 ## Nix flake packages
 
@@ -57,7 +54,7 @@ nix run github:beso1225/nvim-key-insights#key-insights -- --version
 nix profile install github:beso1225/nvim-key-insights#key-insights
 ```
 
-After a tag is published, pin it explicitly:
+Pin the released revision explicitly:
 
 ```sh
 nix run 'github:beso1225/nvim-key-insights?ref=v0.1.0#key-insights' -- --version
@@ -128,15 +125,14 @@ codex plugin marketplace add beso1225/nvim-key-insights
 codex plugin add nvim-key-insights@nvim-key-insights
 ```
 
-There is no release tag yet. These commands therefore track the selected Git
-revision; review changes before upgrading the marketplace or plugin cache. To
-use only the standalone skill, copy
+The commands above use the repository marketplace. To use only the standalone
+skill, copy
 `plugins/nvim-key-insights/skills/analyze-neovim-usage` into
 `$CODEX_HOME/skills/`. That directory is self-contained and does not resolve
 resources from the repository.
 
-After a release, install the marketplace from the same immutable tag before
-installing the plugin:
+For a released installation, use the same immutable tag before installing the
+plugin:
 
 ```sh
 codex plugin marketplace add beso1225/nvim-key-insights@v0.1.0

@@ -1,10 +1,10 @@
 # Mapping attribution contract
 
-Status: complete (M2-S1 through M2-S6)
+Status: complete.
 
 This document records the observed `vim.on_key` behavior used by the
-privacy-safe attribution design. It complements the
-[Milestone 2 implementation plan](milestone-2-mapping-attribution-plan.md).
+privacy-safe attribution design. It complements the public
+[event schema](event-schema.md) and the collector lifecycle contract.
 
 ## Callback observations
 
@@ -59,18 +59,18 @@ may confirm an attribution only when it supplies exactly one candidate that is:
 - stable across the resolver's observation window;
 - in Normal, Visual, or Operator-pending mode;
 - global or buffer-local;
-- represented by canonical tokens that have passed the M2-S2 validation limits.
+- represented by canonical tokens that have passed the validation limits.
 
-Until that canonicalizer exists, the S1 decision function returns a new
+Until that canonicalizer exists, the decision function returns a new
 allowlisted object containing only mode and scope. It deliberately does not
 return the candidate left-hand side. Extra candidate fields are discarded. Zero,
 multiple, sparse, unstable, inexact, or text-bearing-mode candidates return no
 attribution.
 
-M2-S2 defines the bounded canonical tokens and mapping identities below. M2-S3
-will connect a validated mapping resolver and the decision function to the
-collector. Until then, the collector continues to discard mapping expansions and
-emits no `mapping_use` events.
+The bounded canonical tokens and mapping identities below define the public
+normalization boundary. The collector continues to discard mapping expansions
+until a validated mapping resolver is connected to the decision function, and
+emits no `mapping_use` events until then.
 
 ## Canonical mapping model
 

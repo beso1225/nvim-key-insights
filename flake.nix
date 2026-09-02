@@ -53,6 +53,7 @@
           meta = {
             description = "Deterministic local analyzer for nvim-key-insights";
             homepage = "https://github.com/beso1225/nvim-key-insights";
+            license = with pkgs.lib.licenses; [ mit asl20 ];
             mainProgram = "key-insights";
           };
         };
@@ -65,6 +66,7 @@
           meta = {
             description = "Privacy-first Neovim key usage collector";
             homepage = "https://github.com/beso1225/nvim-key-insights";
+            license = with pkgs.lib.licenses; [ mit asl20 ];
           };
         };
 
@@ -84,6 +86,7 @@
           meta = {
             description = "Inert Codex plugin for sanitized Neovim usage analysis";
             homepage = "https://github.com/beso1225/nvim-key-insights";
+            license = with pkgs.lib.licenses; [ mit asl20 ];
           };
         };
 

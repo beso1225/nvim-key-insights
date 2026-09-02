@@ -191,7 +191,7 @@ if not {
     "scripts/local_performance_test.py",
     "tests/local_performance_test_contract.py",
     "docs/local-workflow.md",
-    "docs/milestone-7-forward-testing-plan.md",
+    "docs/release-readiness.md",
 } <= set(forward.get("inputs", [])):
     fail("the forward-test task is missing its harness contract inputs")
 if test.get("deps") != ["test:lua", "test:e2e", "test:resource", "test:forward"]:
