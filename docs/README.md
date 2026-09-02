@@ -42,9 +42,9 @@ boundary. See the Codex sections in [installation](installation.md) and
   and privacy requirements for changes.
 - [Releasing](releasing.md) — release preparation, artifact checks, and
   publication steps.
-- [Release readiness](release-readiness.md) — the current v0.1.0 candidate audit
-  and the remaining approval gate.
+- [Release readiness](release-readiness.md) — the completed v0.1.0 candidate
+  audit and publication record.
 - [Changelog](../CHANGELOG.md) — user-visible changes and release history.
 
-The initial public release is not published yet. Any tag, push, or release
-operation remains an explicit maintainer decision.
+The v0.1.0 release is published. Any tag, push, or release operation for a
+future version remains an explicit maintainer decision.
