@@ -15,6 +15,7 @@ import os
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -219,6 +220,46 @@ def write_all(descriptor: int, payload: bytes, label: str) -> None:
         view = view[written:]
 
 
+def write_manifest(path: Path, payload: bytes) -> None:
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            dir=path.parent,
+        )
+    except OSError as error:
+        raise LocalForwardTestError("inspection manifest cannot be created") from error
+
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, OWNER_FILE)
+        write_all(descriptor, payload, "inspection manifest")
+        try:
+            os.fsync(descriptor)
+        except OSError as error:
+            raise LocalForwardTestError("inspection manifest cannot be written") from error
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary_path, path)
+        temporary_path = None
+    except LocalForwardTestError:
+        raise
+    except OSError as error:
+        raise LocalForwardTestError("inspection manifest cannot be written") from error
+    finally:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
 def tool_version(binary: Path, label: str) -> str:
     try:
         completed = subprocess.run(
@@ -355,25 +396,7 @@ def execute(
     manifest_bytes = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode()
     if len(manifest_bytes) > MAX_MANIFEST_BYTES:
         raise LocalForwardTestError("inspection manifest exceeds its bound")
-    try:
-        descriptor = os.open(
-            manifest_path,
-            os.O_CREAT
-            | os.O_EXCL
-            | os.O_WRONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            OWNER_FILE,
-        )
-    except OSError as error:
-        raise LocalForwardTestError("inspection manifest cannot be created") from error
-    write_all(descriptor, manifest_bytes, "inspection manifest")
-    try:
-        os.fsync(descriptor)
-    except OSError as error:
-        raise LocalForwardTestError("inspection manifest cannot be written") from error
-    finally:
-        os.close(descriptor)
+    write_manifest(manifest_path, manifest_bytes)
     return manifest_bytes
 
 

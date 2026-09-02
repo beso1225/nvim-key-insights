@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import importlib.util
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -22,6 +24,14 @@ PRIVATE_CANARIES = (
     "FORWARD_PROJECT_PRIVATE_CANARY",
     "FORWARD_ADJACENT_PRIVATE_CANARY",
 )
+
+
+def load_forward_tool():
+    spec = importlib.util.spec_from_file_location("local_forward_test", FORWARD_TOOL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 SYNTHETIC_EVENTS = (
@@ -179,6 +189,25 @@ class LocalForwardTestContract(unittest.TestCase):
             "shell=True",
         ):
             self.assertNotIn(forbidden, source)
+
+    def test_manifest_write_failures_leave_no_partial_final_file(self) -> None:
+        forward = load_forward_tool()
+        payload = b'{"manifest_version":1}'
+        for failure, patch_target in (("write", forward.os.write), ("fsync", forward.os.fsync)):
+            manifest = self.root / f"manifest-{failure}.json"
+            failing_call = mock.patch.object(
+                forward.os,
+                patch_target.__name__,
+                side_effect=OSError("simulated disk-full failure"),
+            )
+            with failing_call:
+                with self.assertRaises(forward.LocalForwardTestError):
+                    forward.write_manifest(manifest, payload)
+            self.assertFalse(manifest.exists(), failure)
+            self.assertEqual(list(self.root.glob(f".{manifest.name}.*")), [], failure)
+
+            forward.write_manifest(manifest, payload)
+            self.assertEqual(manifest.read_bytes(), payload)
 
 
 if __name__ == "__main__":
