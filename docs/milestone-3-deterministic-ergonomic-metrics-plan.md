@@ -112,6 +112,12 @@ not three invented absence events.
 - Thresholds and token sets are serialized with a version so identical inputs
   cannot silently change meaning after an implementation update.
 
+The ergonomics contract version is `2`. Version 2 gives observed
+`repeated_motion` candidates deterministic priority over absence-only
+`current_mapping_unobserved_in_sample` candidates when the shared 100-row cap
+is reached. This keeps measured behavior visible without increasing the
+bounded output or weakening the mapping sample guard.
+
 ## Deferred work
 
 - Filetype distribution requires a separate privacy review and collector schema

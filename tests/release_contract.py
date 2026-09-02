@@ -228,8 +228,8 @@ class ReleaseContractTest(unittest.TestCase):
                 "| Event log | `2` |",
             ),
             "codex/suggestions.schema.json": (
-                '"schema_version": { "const": 1 }',
-                '"schema_version": { "const": 2 }',
+                '"schema_version": { "type": "integer", "const": 1 }',
+                '"schema_version": { "type": "integer", "const": 2 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
                 '"payload_schema_version": { "const": 1 }',

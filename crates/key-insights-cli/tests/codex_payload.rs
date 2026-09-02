@@ -51,7 +51,7 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "9b91b3564b8d10092c3957665b2f71bbe31b86ca26c402e15d75946dd3622bc9"
+        "ebd1eb1ae0dc82c19a2cdfb7abd2e3743744c1e618395ecf016b919e17fd4f42"
     );
     assert!(first.starts_with(
         r#"{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
@@ -116,7 +116,7 @@ fn rejects_mutated_sanitized_fields_and_nested_contract_versions() {
     ));
 
     let mut versioned_summary = summary();
-    versioned_summary.ergonomics.contract_version = 2;
+    versioned_summary.ergonomics.contract_version = 3;
     assert!(matches!(
         render_codex_payload_json(&versioned_summary, None),
         Err(CodexPayloadError::InvalidSummaryContract {
@@ -174,7 +174,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "882e81ff715512b5f48a11137484f59cea73a58ae6339d505f6528dcfcbb1678"
+        "31a1a8af15a3ff9212bec7383364a3770563571a29289e96eb0517b51317cfcc"
     );
 }
 

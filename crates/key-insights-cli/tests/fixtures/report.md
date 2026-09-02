@@ -48,7 +48,7 @@ _Ranked tables show at most 100 items._
 
 ## Ergonomic evidence
 
-- Contract version: 1
+- Contract version: 2
 - Candidate limit: 100
 - Candidate guard: 3 sessions, 100 sequence keys, 3 observations
 

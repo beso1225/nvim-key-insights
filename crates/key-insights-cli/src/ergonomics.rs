@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{KeymapSnapshot, Mode};
 
-pub const ERGONOMICS_CONTRACT_VERSION: u32 = 1;
+pub const ERGONOMICS_CONTRACT_VERSION: u32 = 2;
 pub const MAX_ERGONOMIC_CANDIDATES: usize = 100;
 pub const MIN_CANDIDATE_SESSIONS: u64 = 3;
 pub const MIN_CANDIDATE_SEQUENCE_KEYS: u64 = 100;
@@ -399,8 +399,9 @@ impl ErgonomicAccumulator {
             MappingCoverageEvidence::default()
         };
         candidates.sort_by(|left, right| {
-            left.kind
-                .cmp(&right.kind)
+            candidate_kind_priority(&left.kind)
+                .cmp(&candidate_kind_priority(&right.kind))
+                .then_with(|| left.kind.cmp(&right.kind))
                 .then_with(|| right.observations.cmp(&left.observations))
                 .then_with(|| left.candidate_id.cmp(&right.candidate_id))
         });
@@ -500,6 +501,16 @@ fn is_countable_operation(token: &str) -> bool {
             | "u"
             | "."
     )
+}
+
+fn candidate_kind_priority(kind: &str) -> u8 {
+    match kind {
+        // Observed behavior should remain visible when absence-only mapping
+        // evidence fills the shared candidate cap.
+        "repeated_motion" => 0,
+        "current_mapping_unobserved_in_sample" => 1,
+        _ => 2,
+    }
 }
 
 fn mode_name(mode: &Mode) -> &'static str {

@@ -85,7 +85,22 @@ fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
         suggestion["properties"]["mapping"]["properties"]["lhs"]["items"]["maxLength"],
         64
     );
-    assert_eq!(suggestion["allOf"].as_array().map(Vec::len), Some(3));
+    assert_eq!(
+        suggestion["properties"]["mapping"]["type"],
+        serde_json::json!(["object", "null"])
+    );
+    assert_eq!(
+        suggestion["properties"]["mapping"]["properties"]["target_mapping_id"]["type"],
+        serde_json::json!(["string", "null"])
+    );
+    assert!(suggestion["allOf"].is_null());
+}
+
+#[test]
+fn accepts_null_optional_fields_from_strict_codex_schema() {
+    let strict = VALID.replace("\"evidence\"", "\"mapping\":null,\"evidence\"");
+    let document = validate_codex_suggestions_json(strict.as_bytes()).expect("strict suggestions");
+    assert_eq!(document.suggestions[0].mapping, None);
 }
 
 #[test]
@@ -351,9 +366,25 @@ fn accepts_standalone_search_key_references_but_rejects_paths() {
     let search_key = VALID.replace("Use the existing motion", "Use / to search");
     validate_codex_suggestions_json(search_key.as_bytes()).expect("standalone search key");
 
+    let key_alternatives = VALID.replace("Use the existing motion", "Use j/k navigation");
+    validate_codex_suggestions_json(key_alternatives.as_bytes())
+        .expect("keyboard alternatives are safe suggestion text");
+
+    let search_prefix = VALID.replace("Use the existing motion", "Use /… to search");
+    validate_codex_suggestions_json(search_prefix.as_bytes())
+        .expect("search notation punctuation is safe suggestion text");
+
     let path = VALID.replace("Use the existing motion", "Review src/config.lua");
     assert!(matches!(
         validate_codex_suggestions_json(path.as_bytes()),
+        Err(CodexSuggestionError::InvalidContract {
+            field: "suggestion.title"
+        })
+    ));
+
+    let absolute_path = VALID.replace("Use the existing motion", "Review /Users/private");
+    assert!(matches!(
+        validate_codex_suggestions_json(absolute_path.as_bytes()),
         Err(CodexSuggestionError::InvalidContract {
             field: "suggestion.title"
         })

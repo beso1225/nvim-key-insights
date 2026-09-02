@@ -33,6 +33,13 @@ paused state resumes it. Stop publishes the completed `.jsonl` file. Collection
 also stops during `VimLeavePre`. `:KeyInsightsStatus` shows the lifecycle state
 and whether a local report process is running.
 
+For a deliberate local usage window, run `:KeyInsightsStart` only after you
+have reviewed the configured storage directory and privacy defaults. Use the
+editor normally for the chosen window, then run `:KeyInsightsStop` explicitly.
+Do not copy the resulting JSONL into the repository, and do not enable any raw
+capture option; raw capture options are intentionally unavailable. A paused or
+active session is not a finalized input until it is stopped.
+
 The current session remains a `.jsonl.part` file and is never selected by
 automatic analysis. Run `:KeyInsightsStop` before reporting when the current
 session should be included.
@@ -242,3 +249,74 @@ python3 scripts/forward_test.py \
 Delete the temporary directory after the deliberate local inspection. Real
 usage inspection is a separate opt-in step and is not part of this synthetic
 contract.
+
+## Deliberate local usage inspection
+
+After an explicit collection window, use the local inspection harness on the
+private finalized session directory. It runs the public analyzer and canonical
+preview commands locally, never invokes Codex, and requires a human to inspect
+each boundary before it writes a manifest. The session directory must be the
+owner-only directory used by the plugin, while the report directory must be a
+new empty owner-only directory outside the source tree:
+
+```sh
+inspection_root="$(mktemp -d)"
+chmod 700 "$inspection_root"
+mkdir "$inspection_root/reports"
+chmod 700 "$inspection_root/reports"
+
+python3 scripts/local_forward_test.py \
+  --session-dir "/path/to/stdpath/state/key-insights/sessions" \
+  --report-dir "$inspection_root/reports" \
+  --manifest "$inspection_root/inspection-manifest.json" \
+  --key-insights-bin "$(realpath "$(command -v key-insights)")" \
+  --nvim-bin "$(realpath "$(command -v nvim)")"
+```
+
+`realpath` resolves Nix profile and Home Manager symlinks to the regular binary
+files required by the harness. The harness rejects relative, aliased,
+non-private, non-empty, or source-tree paths. It creates only
+`summary.json`, `report.md`, and `payload.json` in the private report
+directory. At four separate prompts, inspect the private JSONL, sanitized
+summary, local report, and canonical Codex preview. Type `yes` only after each
+inspection is complete; refusing any boundary leaves the manifest unpublished.
+
+The resulting `inspection-manifest.json` contains only contract versions, tool
+version strings, a finalized-session count, and aggregate boolean checks. It
+does not contain session IDs, paths, JSONL, summary/report/payload text, or
+authentication material. This command is deliberately excluded from ordinary
+CI when pointed at real usage; the checked-in contract test uses only a
+synthetic session in a temporary directory. Keep the private artifacts local,
+review the manifest, and remove the temporary report directory when finished.
+
+## Local performance forward test
+
+The callback resource suite is synthetic and deterministic. Run it to collect
+platform telemetry for the four production callback paths while keeping the
+operation-count, queue, and byte contracts as the primary oracle:
+
+```sh
+nix develop path:. --command pkf run test:resource:lua
+```
+
+For analyzer telemetry, first build or install the current repository version
+so its ergonomics contract matches the checked-in version. Then provide the
+private finalized session directory and a new private manifest location:
+
+```sh
+performance_root="$(mktemp -d)"
+chmod 700 "$performance_root"
+python3 scripts/local_performance_test.py \
+  --session-dir "/path/to/stdpath/state/key-insights/sessions" \
+  --manifest "$performance_root/performance-manifest.json" \
+  --key-insights-bin "$(realpath "$(command -v key-insights)")" \
+  --nvim-bin "$(realpath "$(command -v nvim)")"
+```
+
+The harness measures one local analyzer run and stores only the finalized
+session count, elapsed milliseconds, child maximum RSS, and generated artifact
+byte sizes. Temporary summary/report files are private and removed on exit;
+the manifest contains no paths, session IDs, key tokens, JSONL, report text, or
+other input content. RSS and elapsed time are machine-specific telemetry, not
+portable correctness thresholds. Keep the manifest private and remove
+`performance_root` after review.

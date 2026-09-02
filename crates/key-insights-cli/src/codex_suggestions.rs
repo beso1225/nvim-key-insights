@@ -491,10 +491,29 @@ fn validate_text(
 fn contains_non_standalone_slash(value: &str) -> bool {
     let characters = value.chars().collect::<Vec<_>>();
     characters.iter().enumerate().any(|(index, character)| {
-        *character == '/'
-            && (!is_left_search_key_boundary(
+        *character == '/' && {
+            let left_safe = is_left_search_key_boundary(
                 index.checked_sub(1).map(|previous| characters[previous]),
-            ) || !is_right_search_key_boundary(characters.get(index + 1).copied()))
+            );
+            let right_safe = is_right_search_key_boundary(characters.get(index + 1).copied());
+            if left_safe && right_safe {
+                return false;
+            }
+            let start = (0..index)
+                .rev()
+                .find(|position| characters[*position].is_whitespace())
+                .map_or(0, |position| position + 1);
+            let end = (index + 1..characters.len())
+                .find(|position| characters[*position].is_whitespace())
+                .unwrap_or(characters.len());
+            let token: String = characters[start..end].iter().collect();
+            let suffix = token
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
+            token.starts_with('/') || suffix.contains('.')
+        }
     })
 }
 
@@ -509,7 +528,19 @@ fn is_right_search_key_boundary(character: Option<char>) -> bool {
         character.is_whitespace()
             || matches!(
                 character,
-                '`' | '\'' | '"' | ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':' | '!' | '?'
+                '`' | '\''
+                    | '"'
+                    | ')'
+                    | ']'
+                    | '}'
+                    | '>'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '\u{2026}'
             )
     })
 }

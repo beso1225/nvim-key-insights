@@ -174,12 +174,22 @@ if "test:resource" not in check.get("deps", []):
 if forward.get("deps") != ["test:rust"] or forward.get("cmd") != (
     'UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" '
     "KEY_INSIGHTS_BIN=target/debug/key-insights "
-    "uv run --no-project --python-preference only-system python tests/forward_test_contract.py"
+    "uv run --no-project --python-preference only-system python tests/forward_test_contract.py && "
+    'UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" '
+    "KEY_INSIGHTS_BIN=target/debug/key-insights "
+    "uv run --no-project --python-preference only-system python tests/local_forward_test_contract.py && "
+    'UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" '
+    "KEY_INSIGHTS_BIN=target/debug/key-insights "
+    "uv run --no-project --python-preference only-system python tests/local_performance_test_contract.py"
 ):
-    fail("the forward-test task must run only after the Rust analyzer is built")
+    fail("the forward-test task must run only after the Rust analyzer is built and cover all harness contracts")
 if not {
     "scripts/forward_test.py",
     "tests/forward_test_contract.py",
+    "scripts/local_forward_test.py",
+    "tests/local_forward_test_contract.py",
+    "scripts/local_performance_test.py",
+    "tests/local_performance_test_contract.py",
     "docs/local-workflow.md",
     "docs/milestone-7-forward-testing-plan.md",
 } <= set(forward.get("inputs", [])):

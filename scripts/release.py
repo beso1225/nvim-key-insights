@@ -77,7 +77,7 @@ SCHEMA_VERSIONS = {
     "Keymap snapshot": 1,
     "Codex payload": 1,
     "Codex suggestions": 1,
-    "Ergonomics contract": 1,
+    "Ergonomics contract": 2,
     "Histogram layout": 1,
     "Operation token set": 1,
     "Count-prefix token set": 1,

@@ -90,6 +90,11 @@ unique-token cardinalities when ranked rows are truncated. Mode rows use
 lexical mode order. JSON object layout and Markdown sections are stable for
 identical validated input.
 
+When the shared candidate cap is reached, observed `repeated_motion` evidence
+is ordered before absence-only `current_mapping_unobserved_in_sample` evidence.
+This deterministic priority keeps measured behavior visible without increasing
+the bounded output or weakening the mapping sample guard.
+
 The analyzer accepts at most 4,096 complete sessions, distinct keys, mapping
 IDs, and repeated-key identifiers across the complete input set and retains at
 most 1 MiB of unique token data across those categories. Individual schema-v1
@@ -155,6 +160,11 @@ non-Unix platforms until equivalent process-tree termination is available. It
 is wired into
 `:KeyInsightsAnalyze`; real Codex invocations remain opt-in and are not run by
 ordinary CI.
+
+The response schema stays within the Codex structured-output subset: object
+properties are explicitly typed and required, absent mapping proposals use
+`null`, and action-specific rules are enforced by the local validator because
+conditional `allOf` schemas are not accepted by the Codex API.
 
 Codex responses are accepted only through the structured suggestion validator.
 The validator bounds the document, rejects duplicate JSON keys and unknown

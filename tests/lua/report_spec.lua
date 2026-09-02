@@ -457,7 +457,7 @@ local valid_preview = vim.json.encode({
     mappings = {},
     repeated_keys = {},
     ergonomics = {
-      contract_version = 1,
+      contract_version = 2,
       candidate_limit = 100,
       thresholds = {
         minimum_candidate_sessions = 3,
@@ -1032,7 +1032,7 @@ assert(vim.deep_equal(analysis_invocations[3], {
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use / to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
@@ -1110,7 +1110,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","mapping":null,"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")

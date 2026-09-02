@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import hashlib
 import pathlib
 import re
@@ -83,6 +84,26 @@ class CodexSkillContractTests(unittest.TestCase):
         self.assertIn('"codex/suggestions.schema.json"', schema_sources)
         self.assertIn("...codexSchemaSources", taskfile_listing("rustSources"))
         self.assertIn("...codexSchemaSources", taskfile_listing("codexPluginSources"))
+
+    def test_response_schema_uses_explicit_types_for_codex_structured_output(self) -> None:
+        schema = json.loads((ROOT / "codex/suggestions.schema.json").read_text())
+        properties = schema["properties"]
+        self.assertEqual(properties["schema_version"], {"type": "integer", "const": 1})
+        self.assertNotIn("allOf", properties["suggestions"]["items"])
+        suggestion_schema = properties["suggestions"]["items"]
+        self.assertIn("mapping", suggestion_schema["required"])
+        mapping_schema = suggestion_schema["properties"]["mapping"]
+        self.assertEqual(mapping_schema["type"], ["object", "null"])
+        self.assertIn("target_mapping_id", mapping_schema["required"])
+        self.assertEqual(
+            mapping_schema["properties"]["target_mapping_id"]["type"],
+            ["string", "null"],
+        )
+        self.assertEqual(
+            properties["suggestions"]["items"]["properties"]["collision_check"]
+            ["properties"]["checked"],
+            {"type": "boolean", "const": True},
+        )
 
 
 if __name__ == "__main__":

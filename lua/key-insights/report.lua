@@ -651,6 +651,7 @@ local RIGHT_SEARCH_KEY_BOUNDARIES = {
   [":"] = true,
   ["!"] = true,
   ["?"] = true,
+  ["…"] = true,
 }
 
 local function contains_non_standalone_slash(value)
@@ -665,7 +666,20 @@ local function contains_non_standalone_slash(value)
     local left_safe = previous == nil or string.match(previous, "%s") ~= nil or LEFT_SEARCH_KEY_BOUNDARIES[previous]
     local right_safe = following == nil or string.match(following, "%s") ~= nil or RIGHT_SEARCH_KEY_BOUNDARIES[following]
     if not left_safe or not right_safe then
-      return true
+      local token_start = slash
+      while token_start > 1 and string.match(string.sub(value, token_start - 1, token_start - 1), "%s") == nil do
+        token_start = token_start - 1
+      end
+      local token_end = slash
+      while token_end < #value and string.match(string.sub(value, token_end + 1, token_end + 1), "%s") == nil do
+        token_end = token_end + 1
+      end
+      local token = string.sub(value, token_start, token_end)
+      local suffix = string.match(token, "[^/]+$") or ""
+      suffix = string.gsub(suffix, "[%.,;:!?%)%]%}]+$", "")
+      if string.sub(token, 1, 1) == "/" or string.find(suffix, ".", 1, true) ~= nil then
+        return true
+      end
     end
     offset = slash + 1
   end
@@ -969,15 +983,22 @@ local function validate_codex_suggestions(contents, preview_payload)
       end
     end
     local proposal = suggestion.mapping
+    if proposal == vim.NIL then
+      proposal = nil
+    end
     local mapping_action = suggestion.action == "add_mapping" or suggestion.action == "change_mapping"
     if mapping_action then
+      local target_mapping_id = type(proposal) == "table" and proposal.target_mapping_id or nil
+      if target_mapping_id == vim.NIL then
+        target_mapping_id = nil
+      end
       if type(proposal) ~= "table"
         or (proposal.mode ~= "normal" and proposal.mode ~= "visual" and proposal.mode ~= "operator_pending")
         or (proposal.scope ~= "global" and proposal.scope ~= "buffer")
         or not is_array(proposal.lhs, 64)
         or #proposal.lhs < 1
-        or (suggestion.action == "add_mapping" and proposal.target_mapping_id ~= nil)
-        or (suggestion.action == "change_mapping" and not valid_mapping_id(proposal.target_mapping_id))
+        or (suggestion.action == "add_mapping" and target_mapping_id ~= nil)
+        or (suggestion.action == "change_mapping" and not valid_mapping_id(target_mapping_id))
       then
         return false, "Codex returned an invalid mapping proposal"
       end
@@ -1169,14 +1190,18 @@ local function validate_codex_suggestions(contents, preview_payload)
       if snapshot == nil then
         return false, "mapping suggestions require a sanitized snapshot"
       end
-      if proposal.target_mapping_id ~= nil and snapshot_by_id[proposal.target_mapping_id] == nil then
+      local target_mapping_id = proposal.target_mapping_id
+      if target_mapping_id == vim.NIL then
+        target_mapping_id = nil
+      end
+      if target_mapping_id ~= nil and snapshot_by_id[target_mapping_id] == nil then
         return false, "Codex returned an unknown mapping change target"
       end
       local expected = {}
       for mapping_id, mapping in pairs(snapshot_by_id) do
         if mapping.mode == proposal.mode
           and lhs_collides(mapping.lhs, proposal.lhs)
-          and mapping_id ~= proposal.target_mapping_id
+          and mapping_id ~= target_mapping_id
         then
           expected[mapping_id] = true
         end

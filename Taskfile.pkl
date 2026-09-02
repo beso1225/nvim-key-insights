@@ -56,6 +56,10 @@ local forwardTestSources: Listing<String> = new {
   "docs/milestone-7-forward-testing-plan.md"
   "scripts/forward_test.py"
   "tests/forward_test_contract.py"
+  "scripts/local_forward_test.py"
+  "tests/local_forward_test_contract.py"
+  "scripts/local_performance_test.py"
+  "tests/local_performance_test_contract.py"
   "Taskfile.pkl"
 }
 
@@ -161,8 +165,8 @@ local testResource: Task = new {
 
 local testForward: Task = new {
   name = "test:forward"
-  description = "Run the synthetic offline forward-test contract"
-  cmd = "UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/forward_test_contract.py"
+  description = "Run synthetic offline forward-test contracts"
+  cmd = "UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/forward_test_contract.py && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/local_forward_test_contract.py && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/local_performance_test_contract.py"
   inputs = forwardTestSources
   deps { testRust }
 }

@@ -32,7 +32,10 @@ Status: complete.
 
 ## S2: deliberate local usage inspection
 
-Status: pending.
+Status: complete. The local-only inspection harness and synthetic contract
+tests are implemented, and a deliberate human inspection of real local usage
+completed successfully. The private inspection manifest remains outside the
+repository.
 
 - document an explicit opt-in collection window using the shipped privacy
   defaults;
@@ -46,7 +49,9 @@ Status: pending.
 
 ## S3: deterministic threshold tuning
 
-Status: pending.
+Status: complete. A real local aggregate exposed a candidate-cap ordering
+problem, and a synthetic regression now preserves observed evidence before
+absence-only mapping evidence without changing thresholds or bounds.
 
 - compare real observations with public synthetic fixtures before changing a
   threshold or ranking rule;
@@ -57,9 +62,25 @@ Status: pending.
 - document rejected tuning ideas as local observations rather than silently
   changing defaults.
 
+Accepted tuning change under review:
+
+- A real local aggregate exposed a cap-ordering failure: absence-only mapping
+  candidates could fill the shared 100-row limit before observed repeated
+  motion evidence was emitted. The public regression fixture reproduces this
+  with synthetic data only.
+- Ergonomics contract version 2 gives observed `repeated_motion` candidates
+  deterministic priority over absence-only
+  `current_mapping_unobserved_in_sample` candidates. Thresholds, candidate
+  bounds, collision checks, and the existing `learn_existing` / `no_change`
+  choices remain unchanged.
+- No raw local logs, paths, identifiers, or personal key preferences are
+  recorded in this plan.
+
 ## S4: performance forward tests
 
-Status: pending.
+Status: complete. The public contract test and local-only analyzer measurement
+harness are implemented, and a real-session measurement completed on the
+current host. The private performance manifest remains outside the repository.
 
 - measure collector callback telemetry and analyzer resource use on deliberate
   local sessions without persisting typed text or paths in measurements;
@@ -70,9 +91,19 @@ Status: pending.
   correctness thresholds;
 - keep measurement artifacts private and bounded.
 
+The callback side reuses the M6 synthetic resource suite: deterministic
+operation-count, queue, byte, and cardinality contracts remain enforcement,
+while callback timing is printed as machine-specific telemetry. The local S4
+harness measures only aggregate analyzer resource observations from finalized
+sessions and removes its temporary report artifacts before returning.
+
 ## S5: optional Codex forward test
 
-Status: pending.
+Status: complete for the explicit local run on 2026-09-02. The canonical
+preview was inspected, the confirmation gate was exercised, and the real
+Codex response passed the local evidence/collision validator and deterministic
+Markdown renderer. The response schema was adjusted to the Codex structured
+output subset; action-specific semantics remain enforced locally.
 
 - require an explicit user invocation and preview of the exact sanitized payload;
 - send only the canonical payload produced by `key-insights preview`;
@@ -87,7 +118,9 @@ Status: pending.
 
 ## S6: release-candidate audit
 
-Status: pending.
+Status: in progress. The Nix development-shell project check and all-systems
+flake check pass on the current tree; the audit and release-candidate review
+remain open until the explicit Codex decision and clean reviewed commit.
 
 - rerun the full offline project, flake, package, plugin, schema, release, and
   native-platform contracts;

@@ -172,7 +172,7 @@
       "additionalProperties": false,
       "required": ["contract_version", "candidate_limit", "thresholds", "distributions", "operations", "count_prefixes", "mode_transitions", "repeated_motions", "mapping_coverage", "candidates"],
       "properties": {
-        "contract_version": { "const": 1 },
+        "contract_version": { "const": 2 },
         "candidate_limit": { "const": 100 },
         "thresholds": {
           "type": "object",

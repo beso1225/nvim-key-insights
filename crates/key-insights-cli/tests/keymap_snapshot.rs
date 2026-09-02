@@ -282,6 +282,56 @@ fn mapping_coverage_candidates_share_the_global_output_cap() {
     assert_eq!(summary.ergonomics.candidates.len(), 100);
 }
 
+#[test]
+fn observed_repeated_motion_candidates_are_not_starved_by_mapping_candidates() {
+    let mappings = (0..101)
+        .map(|index| {
+            let lhs = format!("<F{index:03}>");
+            let mapping_id = mapping_id("normal", "global", &[lhs.as_str()]);
+            mapping(&mapping_id, "normal", "global", &format!("[\"{lhs}\"]"))
+        })
+        .collect::<Vec<_>>();
+    let snapshot = parse_keymap_snapshot(Cursor::new(snapshot(&mappings.join(","))))
+        .expect("valid mapping snapshot");
+
+    let mut log = String::new();
+    log.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"one\",\"elapsed_ms\":0}\n",
+    );
+    for elapsed_ms in 1..=34 {
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"key_sequence\",\"session_id\":\"one\",\"elapsed_ms\":{elapsed_ms},\"mode\":\"normal\",\"keys\":[\"j\",\"j\",\"j\"],\"duration_ms\":0}}\n"
+        ));
+    }
+    log.push_str(
+        "{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"one\",\"elapsed_ms\":35}\n",
+    );
+    for session_id in ["two", "three"] {
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_start\",\"session_id\":\"{session_id}\",\"elapsed_ms\":0}}\n"
+        ));
+        log.push_str(&format!(
+            "{{\"schema_version\":1,\"event_type\":\"session_end\",\"session_id\":\"{session_id}\",\"elapsed_ms\":1}}\n"
+        ));
+    }
+
+    let summary = analyze_jsonl_with_snapshot(Cursor::new(log), &snapshot).expect("valid analysis");
+
+    assert_eq!(summary.ergonomics.mapping_coverage.unobserved_mappings, 101);
+    assert_eq!(summary.ergonomics.candidates.len(), 100);
+    assert!(
+        summary
+            .ergonomics
+            .candidates
+            .iter()
+            .any(|candidate| candidate.kind == "repeated_motion")
+    );
+    assert_eq!(
+        summary.ergonomics.candidates[0].kind, "repeated_motion",
+        "observed evidence must rank before absence-only mapping evidence"
+    );
+}
+
 fn mapping_id(mode: &str, scope: &str, lhs: &[&str]) -> String {
     let mut preimage = String::new();
     let count = lhs.len().to_string();
