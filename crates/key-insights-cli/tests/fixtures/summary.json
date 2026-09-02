@@ -73,7 +73,7 @@
     }
   ],
   "ergonomics": {
-    "contract_version": 1,
+    "contract_version": 2,
     "candidate_limit": 100,
     "thresholds": {
       "minimum_candidate_sessions": 3,

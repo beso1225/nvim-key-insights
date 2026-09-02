@@ -8,6 +8,8 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-02
+
 ### Added
 
 - Privacy-first Neovim collection with content-free Insert text runs,
@@ -19,6 +21,14 @@ derived from package SemVer.
 - Previewed, bounded Codex analysis with contextual suggestion validation,
   deterministic Markdown rendering, an inert installable Codex plugin, and a
   standalone privacy-constrained skill.
+- Synthetic and local-only forward-test harnesses for privacy-boundary
+  inspection and aggregate analyzer performance telemetry.
+- Codex structured-output compatibility fixes with explicit types, required
+  nullable fields, and local enforcement of action-specific constraints.
+- Safe suggestion-text handling for keyboard notation such as `j/k` while
+  retaining rejection of path-shaped output.
+- Deterministic candidate ranking that keeps observed repeated-motion evidence
+  visible before absence-only mapping candidates at the shared output cap.
 - Nix CLI, Neovim, and Codex plugin packages, executable apps, an overlay, and
   lazy.nvim installation documentation.
 - Version synchronization, schema compatibility, and non-publishing release

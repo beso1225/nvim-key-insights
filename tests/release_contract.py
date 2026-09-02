@@ -3,6 +3,7 @@
 import json
 import hashlib
 import importlib.util
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,16 @@ def run_release(*arguments: str, root: Path = ROOT) -> subprocess.CompletedProce
         check=False,
         capture_output=True,
         text=True,
+    )
+
+
+def unreleased_changelog() -> str:
+    contents = CHANGELOG.read_text()
+    return re.sub(
+        r"(?m)^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [^\n]+\n",
+        "",
+        contents,
+        count=1,
     )
 
 
@@ -80,7 +91,10 @@ def copy_schema_contract(destination: Path) -> None:
         source = ROOT / relative
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        if relative == "CHANGELOG.md":
+            target.write_text(unreleased_changelog())
+        else:
+            shutil.copyfile(source, target)
 
 
 def write_test_license(root: Path) -> None:
@@ -228,8 +242,8 @@ class ReleaseContractTest(unittest.TestCase):
                 "| Event log | `2` |",
             ),
             "codex/suggestions.schema.json": (
-                '"schema_version": { "const": 1 }',
-                '"schema_version": { "const": 2 }',
+                '"schema_version": { "type": "integer", "const": 1 }',
+                '"schema_version": { "type": "integer", "const": 2 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
                 '"payload_schema_version": { "const": 1 }',
@@ -334,8 +348,7 @@ class ReleaseContractTest(unittest.TestCase):
 
     def test_release_tag_must_exactly_match_the_package_version(self) -> None:
         accepted = run_release("check", "--tag", "v0.1.0")
-        self.assertNotEqual(accepted.returncode, 0)
-        self.assertIn("changelog", accepted.stderr.lower())
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
         for tag in ("0.1.0", "v0.1.1", "v0.1.0-rc.1", "refs/tags/v0.1.0"):
             with self.subTest(tag=tag):
@@ -470,7 +483,7 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertNotEqual(empty.returncode, 0)
             self.assertIn("release notes", empty.stderr)
 
-            shutil.copyfile(CHANGELOG, changelog_path)
+            changelog_path.write_text(unreleased_changelog())
             prepared = run_release(
                 "prepare-changelog",
                 "--version",

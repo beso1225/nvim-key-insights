@@ -50,6 +50,19 @@ local luaResourceSources: Listing<String> = new {
   "Taskfile.pkl"
 }
 
+local forwardTestSources: Listing<String> = new {
+  ...rustSources
+  "docs/local-workflow.md"
+  "docs/release-readiness.md"
+  "scripts/forward_test.py"
+  "tests/forward_test_contract.py"
+  "scripts/local_forward_test.py"
+  "tests/local_forward_test_contract.py"
+  "scripts/local_performance_test.py"
+  "tests/local_performance_test_contract.py"
+  "Taskfile.pkl"
+}
+
 local workflowSources: Listing<String> = new {
   ...toolchainSources
   ".github/workflows/*.yml"
@@ -89,16 +102,26 @@ local releaseSources: Listing<String> = new {
   "Cargo.lock"
   "Cargo.toml"
   "CHANGELOG.md"
+  "CONTRIBUTING.md"
   "LICENSE*"
   "README.md"
+  "SECURITY.md"
   "crates/**/*"
   ".agents/plugins/marketplace.json"
   "plugins/nvim-key-insights/**/*"
   "docs/analyzer.md"
+  "docs/collector-lifecycle.md"
+  "docs/development.md"
   "docs/event-schema.md"
+  "docs/README.md"
   "docs/installation.md"
+  "docs/input-aggregation.md"
+  "docs/local-workflow.md"
+  "docs/mapping-attribution.md"
+  "docs/release-readiness.md"
   "docs/releasing.md"
   "docs/schema-compatibility.md"
+  "docs/storage-retention.md"
   "lua/key-insights/contract_versions.lua"
   "lua/key-insights/keymap_snapshot.lua"
   "lua/key-insights/report.lua"
@@ -148,6 +171,14 @@ local testResource: Task = new {
   name = "test:resource"
   description = "Run deterministic analyzer and collector resource contracts"
   deps { testResourceRust; testResourceLua }
+}
+
+local testForward: Task = new {
+  name = "test:forward"
+  description = "Run synthetic offline forward-test contracts"
+  cmd = "UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/forward_test_contract.py && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/local_forward_test_contract.py && UV_CACHE_DIR=\"${TMPDIR:-/tmp}/nvim-key-insights-uv-cache\" KEY_INSIGHTS_BIN=target/debug/key-insights uv run --no-project --python-preference only-system python tests/local_performance_test_contract.py"
+  inputs = forwardTestSources
+  deps { testRust }
 }
 
 local testPackaging: Task = new {
@@ -210,7 +241,7 @@ local lintActions: Task = new {
 local test: Task = new {
   name = "test"
   description = "Run all tests"
-  deps { testLua; testE2e; testResource }
+  deps { testLua; testE2e; testResource; testForward }
 }
 
 local check: Task = new {
@@ -225,4 +256,4 @@ local default: Task = new {
   deps { check }
 }
 
-tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }
+tasks { testRust; testLua; testE2e; testResourceRust; testResourceLua; testResource; testForward; testPackaging; testCodexPlugin; testCodexSkill; testCodexPluginWorkflow; testRelease; formatCheck; lintRust; lintActions; test; check; default }

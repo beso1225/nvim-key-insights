@@ -5,9 +5,10 @@ publish to crates.io, and the repository keeps `publish = false` in the Cargo
 manifest. Creating a tag or GitHub release is always a deliberate maintainer
 operation.
 
-The repository currently has no published release. The first public release
-also requires an explicit owner decision about the repository license; the
-release tooling does not choose or modify usage rights.
+The repository is dual-licensed under either the MIT License or the Apache
+License, Version 2.0, at the user's option. The first public release still
+requires explicit approval for the publication steps below; the release tooling
+does not choose or modify usage rights.
 
 ## Release surfaces
 

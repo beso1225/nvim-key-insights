@@ -14,12 +14,12 @@ unknown versions fail closed before output publication or a Codex handoff.
 | Keymap snapshot | `1` | Ephemeral report input | Capture a fresh snapshot from Neovim. |
 | Codex payload | `1` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
 | Codex suggestions | `1` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
-| Ergonomics contract | `1` | Nested in summary 3 | Regenerate the containing summary. |
-| Histogram layout | `1` | Nested in ergonomics 1 | Regenerate the containing summary. |
-| Operation token set | `1` | Nested in ergonomics 1 | Regenerate the containing summary. |
-| Count-prefix token set | `1` | Nested in ergonomics 1 | Regenerate the containing summary. |
-| Directional-motion token set | `1` | Nested in ergonomics 1 | Regenerate the containing summary. |
-| Candidate kind | `1` | Nested in ergonomics 1 | Regenerate the containing summary. |
+| Ergonomics contract | `2` | Nested in summary 3 | Regenerate the containing summary. |
+| Histogram layout | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
+| Operation token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
+| Count-prefix token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
+| Directional-motion token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
+| Candidate kind | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Mapping identity | `mapping-v1` | Durable event identity and derived references | Preserve the byte-length-prefixed preimage contract; a new identity prefix requires an explicit cross-version attribution design. |
 | Mapping-underuse candidate identity | `mapping-unobserved-v1` | Derived summary and payload reference | Regenerate the summary; changing the prefix requires a candidate-kind version bump. |
 

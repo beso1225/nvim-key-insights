@@ -488,13 +488,45 @@ fn validate_text(
     Ok(())
 }
 
+fn is_slash_separated_key_alternative(token: &str) -> bool {
+    let mut segments = 0;
+    for segment in token.split('/') {
+        if segment.is_empty() || segment.chars().count() != 1 {
+            return false;
+        }
+        segments += 1;
+    }
+    (2..=8).contains(&segments)
+}
+
+fn is_safe_slash_token(token: &str) -> bool {
+    matches!(
+        token,
+        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+    ) || is_slash_separated_key_alternative(token)
+}
+
 fn contains_non_standalone_slash(value: &str) -> bool {
     let characters = value.chars().collect::<Vec<_>>();
     characters.iter().enumerate().any(|(index, character)| {
-        *character == '/'
-            && (!is_left_search_key_boundary(
+        *character == '/' && {
+            let left_safe = is_left_search_key_boundary(
                 index.checked_sub(1).map(|previous| characters[previous]),
-            ) || !is_right_search_key_boundary(characters.get(index + 1).copied()))
+            );
+            let right_safe = is_right_search_key_boundary(characters.get(index + 1).copied());
+            if left_safe && right_safe {
+                return false;
+            }
+            let start = (0..index)
+                .rev()
+                .find(|position| characters[*position].is_whitespace())
+                .map_or(0, |position| position + 1);
+            let end = (index + 1..characters.len())
+                .find(|position| characters[*position].is_whitespace())
+                .unwrap_or(characters.len());
+            let token: String = characters[start..end].iter().collect();
+            !is_safe_slash_token(&token)
+        }
     })
 }
 
@@ -509,7 +541,19 @@ fn is_right_search_key_boundary(character: Option<char>) -> bool {
         character.is_whitespace()
             || matches!(
                 character,
-                '`' | '\'' | '"' | ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':' | '!' | '?'
+                '`' | '\''
+                    | '"'
+                    | ')'
+                    | ']'
+                    | '}'
+                    | '>'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '\u{2026}'
             )
     })
 }

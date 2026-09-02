@@ -86,7 +86,7 @@ fn summary_v3_exposes_the_versioned_ergonomic_contract() {
     let value = serde_json::to_value(summary).expect("summary is serializable");
 
     assert_eq!(value["schema_version"], 3);
-    assert_eq!(value["ergonomics"]["contract_version"], 1);
+    assert_eq!(value["ergonomics"]["contract_version"], 2);
     assert_eq!(value["ergonomics"]["candidate_limit"], 100);
     assert_eq!(
         value["ergonomics"]["thresholds"],

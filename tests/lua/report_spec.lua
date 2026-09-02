@@ -457,7 +457,7 @@ local valid_preview = vim.json.encode({
     mappings = {},
     repeated_keys = {},
     ergonomics = {
-      contract_version = 1,
+      contract_version = 2,
       candidate_limit = 100,
       thresholds = {
         minimum_candidate_sessions = 3,
@@ -1032,7 +1032,7 @@ assert(vim.deep_equal(analysis_invocations[3], {
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use / to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
@@ -1098,11 +1098,18 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"schema_\\u0076ersion":1,"suggestions":[]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use /… to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().phase == "rendering_suggestions")
+analysis_render_callback({
+  code = 0,
+  signal = 0,
+  stdout = "# Codex suggestions\n\n## 1. Use the search key\n",
   stderr = "",
 })
 assert(analysis:status().running == false)
-assert(#analysis_opened == 8, "duplicate JSON keys must be rejected before opening Codex output")
+assert(#analysis_opened == 9, "UTF-8 search notation should be accepted")
 
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
@@ -1110,13 +1117,37 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Review home/alice/project","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 10, "extensionless relative paths must not be opened")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"schema_\\u0076ersion":1,"suggestions":[]}',
+  stderr = "",
+})
+assert(analysis:status().running == false)
+assert(#analysis_opened == 11, "duplicate JSON keys must be rejected before opening Codex output")
+
+assert(analysis:analyze() == true)
+analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
+analysis_confirm_callback(true)
+analysis_codex_callback({
+  code = 0,
+  signal = 0,
+  stdout = '{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","mapping":null,"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
 analysis_render_callback({ code = 1, signal = 0, stdout = "raw model response", stderr = "/secret" })
 assert(analysis:status().running == false)
-assert(#analysis_opened == 9, "renderer failure must not open raw or partial output")
+assert(#analysis_opened == 12, "renderer failure must not open raw or partial output")
 
 local global_gg = "mapping-v1:a27261baf28b456378725590385ed469ee8c2c2e3fd5173cd32c7dbec271cc71"
 local prefix_preview_table = vim.json.decode(valid_preview)
