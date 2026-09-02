@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import resource
+import signal
 import stat
 import subprocess
 import sys
@@ -220,12 +221,41 @@ def child_max_rss_bytes(usage: resource.struct_rusage) -> int:
     return raw if sys.platform == "darwin" else raw * 1024
 
 
+def wait_for_analyzer(process: subprocess.Popen[bytes]) -> tuple[int, resource.struct_rusage]:
+    if not hasattr(os, "wait4"):
+        process.kill()
+        process.wait()
+        raise LocalPerformanceTestError("direct analyzer resource accounting is unavailable")
+
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            waited_pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+        except OSError as error:
+            raise LocalPerformanceTestError("local analyzer performance run failed") from error
+        if waited_pid == process.pid:
+            process.returncode = os.waitstatus_to_exitcode(status)
+            return status, usage
+        if time.monotonic() >= deadline:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                process.kill()
+            try:
+                _, status, _ = os.wait4(process.pid, 0)
+                process.returncode = os.waitstatus_to_exitcode(status)
+            except ChildProcessError:
+                pass
+            raise LocalPerformanceTestError("local analyzer performance run timed out")
+        time.sleep(0.01)
+
+
 def measure_analyzer(binary: Path, session_directory: Path, workspace: Path) -> dict[str, int]:
     summary_path = workspace / "summary.json"
     report_path = workspace / "report.md"
     started = time.perf_counter_ns()
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [
                 str(binary),
                 "analyze",
@@ -241,14 +271,14 @@ def measure_analyzer(binary: Path, session_directory: Path, workspace: Path) -> 
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=60,
+            start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+        status, usage = wait_for_analyzer(process)
+    except OSError as error:
         raise LocalPerformanceTestError("local analyzer performance run failed") from error
     elapsed_ms = max(1, (time.perf_counter_ns() - started) // 1_000_000)
-    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    if completed.returncode != 0:
+    returncode = os.waitstatus_to_exitcode(status)
+    if returncode != 0:
         raise LocalPerformanceTestError("local analyzer rejected the private performance run")
 
     try:
@@ -266,7 +296,7 @@ def measure_analyzer(binary: Path, session_directory: Path, workspace: Path) -> 
         raise LocalPerformanceTestError("local analyzer produced an unsupported summary")
     return {
         "elapsed_ms": elapsed_ms,
-        "child_max_rss_bytes": child_max_rss_bytes(after_usage),
+        "child_max_rss_bytes": child_max_rss_bytes(usage),
         "summary_bytes": len(summary_bytes),
         "report_bytes": len(report_bytes),
     }

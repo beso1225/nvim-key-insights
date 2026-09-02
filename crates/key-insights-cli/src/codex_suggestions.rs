@@ -488,6 +488,24 @@ fn validate_text(
     Ok(())
 }
 
+fn is_slash_separated_key_alternative(token: &str) -> bool {
+    let mut segments = 0;
+    for segment in token.split('/') {
+        if segment.is_empty() || segment.chars().count() != 1 {
+            return false;
+        }
+        segments += 1;
+    }
+    (2..=8).contains(&segments)
+}
+
+fn is_safe_slash_token(token: &str) -> bool {
+    matches!(
+        token,
+        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+    ) || is_slash_separated_key_alternative(token)
+}
+
 fn contains_non_standalone_slash(value: &str) -> bool {
     let characters = value.chars().collect::<Vec<_>>();
     characters.iter().enumerate().any(|(index, character)| {
@@ -507,12 +525,7 @@ fn contains_non_standalone_slash(value: &str) -> bool {
                 .find(|position| characters[*position].is_whitespace())
                 .unwrap_or(characters.len());
             let token: String = characters[start..end].iter().collect();
-            let suffix = token
-                .rsplit('/')
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
-            token.starts_with('/') || suffix.contains('.')
+            !is_safe_slash_token(&token)
         }
     })
 }

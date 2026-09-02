@@ -389,6 +389,16 @@ fn accepts_standalone_search_key_references_but_rejects_paths() {
             field: "suggestion.title"
         })
     ));
+
+    for relative_path in ["Review home/alice/project", "Review private/customer"] {
+        let path = VALID.replace("Use the existing motion", relative_path);
+        assert!(matches!(
+            validate_codex_suggestions_json(path.as_bytes()),
+            Err(CodexSuggestionError::InvalidContract {
+                field: "suggestion.title"
+            })
+        ));
+    }
 }
 
 #[test]

@@ -653,6 +653,50 @@ local RIGHT_SEARCH_KEY_BOUNDARIES = {
   ["?"] = true,
   ["…"] = true,
 }
+local SAFE_MODIFIER_SLASH_TOKENS = {
+  ["<C-/>"] = true,
+  ["<A-/>"] = true,
+  ["<M-/>"] = true,
+  ["<S-/>"] = true,
+  ["<C-\\>"] = true,
+  ["<A-\\>"] = true,
+  ["<M-\\>"] = true,
+  ["<S-\\>"] = true,
+}
+
+local function first_utf8_character(value)
+  if value == nil or value == "" then
+    return nil
+  end
+  local byte_index = vim.str_byteindex(value, 1)
+  return string.sub(value, 1, byte_index)
+end
+
+local function last_utf8_character(value)
+  if value == nil or value == "" then
+    return nil
+  end
+  local byte_index = vim.str_byteindex(value, vim.str_utfindex(value) - 1)
+  return string.sub(value, byte_index + 1)
+end
+
+local function is_slash_separated_key_alternative(token)
+  if SAFE_MODIFIER_SLASH_TOKENS[token] ~= nil
+    or string.sub(token, 1, 1) == "/"
+    or string.sub(token, -1) == "/"
+    or string.find(token, "//", 1, true) ~= nil
+  then
+    return SAFE_MODIFIER_SLASH_TOKENS[token] == true
+  end
+  local segments = 0
+  for segment in string.gmatch(token, "[^/]+") do
+    segments = segments + 1
+    if vim.str_utfindex(segment) ~= 1 then
+      return false
+    end
+  end
+  return segments >= 2 and segments <= 8
+end
 
 local function contains_non_standalone_slash(value)
   local offset = 1
@@ -661,8 +705,10 @@ local function contains_non_standalone_slash(value)
     if slash == nil then
       return false
     end
-    local previous = slash > 1 and string.sub(value, slash - 1, slash - 1) or nil
-    local following = slash < #value and string.sub(value, slash + 1, slash + 1) or nil
+    local previous_text = slash > 1 and string.sub(value, 1, slash - 1) or nil
+    local following_text = slash < #value and string.sub(value, slash + 1) or nil
+    local previous = last_utf8_character(previous_text)
+    local following = first_utf8_character(following_text)
     local left_safe = previous == nil or string.match(previous, "%s") ~= nil or LEFT_SEARCH_KEY_BOUNDARIES[previous]
     local right_safe = following == nil or string.match(following, "%s") ~= nil or RIGHT_SEARCH_KEY_BOUNDARIES[following]
     if not left_safe or not right_safe then
@@ -675,9 +721,7 @@ local function contains_non_standalone_slash(value)
         token_end = token_end + 1
       end
       local token = string.sub(value, token_start, token_end)
-      local suffix = string.match(token, "[^/]+$") or ""
-      suffix = string.gsub(suffix, "[%.,;:!?%)%]%}]+$", "")
-      if string.sub(token, 1, 1) == "/" or string.find(suffix, ".", 1, true) ~= nil then
+      if not is_slash_separated_key_alternative(token) then
         return true
       end
     end

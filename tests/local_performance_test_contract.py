@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import importlib.util
 import json
 import os
 import stat
@@ -19,6 +20,14 @@ PRIVATE_CANARIES = (
     "performance-session-alpha",
     "PERFORMANCE_PROJECT_PRIVATE_CANARY",
 )
+
+
+def load_performance_tool():
+    spec = importlib.util.spec_from_file_location("local_performance_test", PERFORMANCE_TOOL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_session(directory: Path) -> None:
@@ -155,6 +164,46 @@ class LocalPerformanceTestContract(unittest.TestCase):
             "shell=True",
         ):
             self.assertNotIn(forbidden, source)
+        self.assertIn("wait4", source)
+        self.assertNotIn("RUSAGE_CHILDREN", source)
+
+    def test_analyzer_rss_is_measured_from_its_direct_child(self) -> None:
+        performance = load_performance_tool()
+        high_rss_nvim = self.root / "high-rss-nvim"
+        high_rss_nvim.write_text(
+            "#!" + sys.executable + "\n"
+            "blob = bytearray(64 * 1024 * 1024)\n"
+            "for index in range(0, len(blob), 4096):\n"
+            "    blob[index] = 1\n"
+            "print('NVIM v0.10.0')\n"
+        )
+        high_rss_nvim.chmod(0o700)
+
+        analyzer = self.root / "fake-analyzer"
+        analyzer.write_text(
+            "#!" + sys.executable + "\n"
+            "import json\n"
+            "import pathlib\n"
+            "import sys\n"
+            "if sys.argv[1] == '--version':\n"
+            "    print('key-insights 0.1.0')\n"
+            "else:\n"
+            "    summary = pathlib.Path(sys.argv[sys.argv.index('--summary') + 1])\n"
+            "    report = pathlib.Path(sys.argv[sys.argv.index('--report') + 1])\n"
+            "    summary.write_text(json.dumps({'schema_version': 3, 'ergonomics': {'contract_version': 2}}))\n"
+            "    report.write_text('# report\\n')\n"
+            "    summary.chmod(0o600)\n"
+            "    report.chmod(0o600)\n"
+        )
+        analyzer.chmod(0o700)
+
+        performance.tool_version(high_rss_nvim, "Neovim")
+        with tempfile.TemporaryDirectory(prefix="nvim-key-insights-rss-measurement-") as temporary:
+            workspace = Path(temporary)
+            workspace.chmod(0o700)
+            measurements = performance.measure_analyzer(analyzer, self.sessions, workspace)
+
+        self.assertLess(measurements["child_max_rss_bytes"], 64 * 1024 * 1024)
 
 
 if __name__ == "__main__":
