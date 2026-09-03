@@ -1,6 +1,6 @@
 # Release readiness
 
-Status: release candidate ready; initial release blocked pending explicit approval.
+Status: complete; v0.1.0 was published on 2026-09-02.
 
 Tracking issue: [#29](https://github.com/beso1225/nvim-key-insights/issues/29)
 
@@ -136,19 +136,22 @@ authentication-boundary, resource, and native-platform contracts were reviewed.
 
 ## Initial release
 
-Status: blocked on explicit approval after the audit.
+Status: complete on 2026-09-02.
 
-- require a clean, reviewed, merged release-candidate commit;
-- require every protected native CI and release-contract check to pass;
-- request explicit approval for the exact version, tag, artifacts, checksums,
-  changelog, and release notes;
-- create the first tag and GitHub release only after that approval;
-- verify the published assets and document any rollback or follow-up action.
+The following gates were satisfied before publication:
+
+- the release candidate was clean, reviewed, and merged;
+- the protected native CI and release-contract checks passed;
+- the exact version, tag, artifacts, checksums, changelog, and release notes
+  were explicitly approved;
+- the immutable `v0.1.0` tag was created on the merged `main` commit;
+- the release workflow verified and published the plugin archive and
+  `SHA256SUMS`.
 
 ## Completion gate
 
-Release readiness is complete only when deliberate local forward testing finds no
+Release readiness is complete. Deliberate local forward testing found no
 privacy-boundary regression, every accepted tuning change is backed by a public
-deterministic fixture, the release-candidate audit is clean, and the user has
-explicitly approved and verified the first release. Until then, the repository
-may be release-ready but must not claim that an initial release was published.
+deterministic fixture, the release-candidate audit is clean, and the user
+explicitly approved and verified the first release. Future work should be
+tracked in new milestone or feature issues rather than extending this audit.

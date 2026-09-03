@@ -6,9 +6,10 @@ manifest. Creating a tag or GitHub release is always a deliberate maintainer
 operation.
 
 The repository is dual-licensed under either the MIT License or the Apache
-License, Version 2.0, at the user's option. The first public release still
-requires explicit approval for the publication steps below; the release tooling
-does not choose or modify usage rights.
+License, Version 2.0, at the user's option. The v0.1.0 release was published
+after explicit approval. Future releases still require explicit approval for
+the publication steps below; the release tooling does not choose or modify
+usage rights.
 
 ## Release surfaces
 

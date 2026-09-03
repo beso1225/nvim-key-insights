@@ -18,10 +18,10 @@ buffers are excluded from collection.
 
 ## Status
 
-The v0.1.0 implementation is release-candidate ready. The initial public
-release is not published yet; the publication steps remain explicit maintainer
-decisions. See the [release-readiness audit](docs/release-readiness.md)
-for the current verification record.
+The v0.1.0 release is published. See the [GitHub Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.1.0)
+for the Codex plugin archive and checksum file, and the
+[release-readiness audit](docs/release-readiness.md) for the verification
+record.
 
 ## Quick start
 
