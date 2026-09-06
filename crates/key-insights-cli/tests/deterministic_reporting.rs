@@ -1628,6 +1628,29 @@ fn analyzer_rejects_unbounded_distinct_key_cardinality() {
 }
 
 #[test]
+fn analyzer_rejects_unbounded_distinct_control_key_cardinality() {
+    let mut input =
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"controls","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..=MAX_DISTINCT_ITEMS {
+        input.push_str(&format!(
+            "{{\"schema_version\":2,\"event_type\":\"control_key_use\",\"session_id\":\"controls\",\"elapsed_ms\":{},\"mode\":\"insert\",\"key\":\"<C-{index:05}>\",\"count\":1}}\n",
+            index + 1
+        ));
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":2,\"event_type\":\"session_end\",\"session_id\":\"controls\",\"elapsed_ms\":{}}}\n",
+        MAX_DISTINCT_ITEMS + 2
+    ));
+
+    let error =
+        analyze_jsonl(Cursor::new(input)).expect_err("control-key cardinality must be bounded");
+
+    assert!(error.to_string().contains("distinct key limit"));
+}
+
+#[test]
 fn analyzer_rejects_unbounded_distinct_mapping_cardinality() {
     let mut input =
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#
@@ -1771,6 +1794,39 @@ fn analyzer_bounds_total_retained_token_bytes_across_categories() {
     let error = analyze_jsonl(Cursor::new(input)).expect_err("retained bytes must be bounded");
 
     assert_eq!(error, AnalysisError::RetainedTokenBytesExceeded);
+}
+
+#[test]
+fn analyzer_bounds_retained_control_key_bytes() {
+    let control_key_size = 252;
+    let identity_size = control_key_size + "insert".len();
+    let token_count = MAX_RETAINED_TOKEN_BYTES / identity_size + 1;
+    let mut input =
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"control-bytes","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..token_count {
+        let key = format!("<C-{index:0width$}>", width = control_key_size - 4);
+        let event = serde_json::json!({
+            "schema_version": 2,
+            "event_type": "control_key_use",
+            "session_id": "control-bytes",
+            "elapsed_ms": index + 1,
+            "mode": "insert",
+            "key": key,
+            "count": 1
+        });
+        input.push_str(&event.to_string());
+        input.push('\n');
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":2,\"event_type\":\"session_end\",\"session_id\":\"control-bytes\",\"elapsed_ms\":{}}}\n",
+        token_count + 1
+    ));
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("control-key bytes must be bounded");
+
+    assert!(error.to_string().contains("retained token budget"));
 }
 
 #[test]

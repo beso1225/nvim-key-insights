@@ -33,6 +33,17 @@ local NAMED_CONTROL_TOKENS = {
   ["<kRight>"] = true,
 }
 
+local SAFE_BRACKETED_CONTROL_TOKENS = {
+  ["<C-/>"] = true,
+  ["<A-/>"] = true,
+  ["<M-/>"] = true,
+  ["<S-/>"] = true,
+  ["<C-\\>"] = true,
+  ["<A-\\>"] = true,
+  ["<M-\\>"] = true,
+  ["<S-\\>"] = true,
+}
+
 local function valid_limit(value)
   return value == nil
     or (type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value))
@@ -177,10 +188,30 @@ function M.is_control_token(token)
   if NAMED_CONTROL_TOKENS[token] then
     return true
   end
+  if SAFE_BRACKETED_CONTROL_TOKENS[token] then
+    return true
+  end
   if string.match(token, "^<F%d+>$") ~= nil then
     return true
   end
-  return string.match(token, "^<[CASMD]%-[^>]+>$") ~= nil
+  local key = string.match(token, "^<[CASMD]%-([^>]+)>$")
+  if key == nil or key == "" then
+    return false
+  end
+  local lower = string.lower(token)
+  if string.find(lower, ".env", 1, true) ~= nil
+    or string.find(lower, "secret", 1, true) ~= nil
+    or string.find(lower, "credential", 1, true) ~= nil
+  then
+    return false
+  end
+  for index = 1, #key do
+    local byte = string.byte(key, index)
+    if byte < 0x20 or byte > 0x7E or byte == 0x2F or byte == 0x5C then
+      return false
+    end
+  end
+  return true
 end
 
 return M

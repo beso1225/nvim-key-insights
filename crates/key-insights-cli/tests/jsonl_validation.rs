@@ -51,6 +51,23 @@ fn validates_schema_v2_control_key_usage_without_accepting_insert_text() {
 }
 
 #[test]
+fn rejects_schema_v1_control_key_usage() {
+    let input = concat!(
+        r#"{"schema_version":1,"event_type":"session_start","session_id":"control-v1","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":1,"event_type":"control_key_use","session_id":"control-v1","elapsed_ms":5,"mode":"insert","key":"<C-Y>","count":1}"#,
+        "\n",
+    );
+
+    let error = validate(input).expect_err("control-key usage requires schema v2");
+    assert_eq!(error.line, 2);
+    assert_eq!(
+        error.kind,
+        ValidationErrorKind::UnsupportedSchema { found: 1 }
+    );
+}
+
+#[test]
 fn rejects_non_control_tokens_in_control_key_usage() {
     let input = concat!(
         r#"{"schema_version":2,"event_type":"session_start","session_id":"control","elapsed_ms":0}"#,
@@ -62,6 +79,41 @@ fn rejects_non_control_tokens_in_control_key_usage() {
     let error = validate(input).expect_err("ordinary text must not enter control-key usage");
     assert_eq!(error.line, 2);
     assert_eq!(error.kind, ValidationErrorKind::MalformedEvent);
+}
+
+#[test]
+fn rejects_non_ascii_control_tokens() {
+    let input = concat!(
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"control-ascii","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"control_key_use","session_id":"control-ascii","elapsed_ms":5,"mode":"insert","key":"<C-é>","count":1}"#,
+        "\n",
+    );
+
+    let error = validate(input).expect_err("control-token modifier payloads must be ASCII");
+    assert_eq!(error.line, 2);
+    assert_eq!(error.kind, ValidationErrorKind::MalformedEvent);
+}
+
+#[test]
+fn rejects_unsafe_control_tokens_at_the_event_boundary() {
+    for key in [
+        "<C-secret>",
+        "<C-.env>",
+        "<C-/Users/alice/private>",
+        r#"<C-\private>"#,
+    ] {
+        let input = format!(
+            "{{\"schema_version\":2,\"event_type\":\"session_start\",\"session_id\":\"unsafe-control\",\"elapsed_ms\":0}}\n{{\"schema_version\":2,\"event_type\":\"control_key_use\",\"session_id\":\"unsafe-control\",\"elapsed_ms\":5,\"mode\":\"insert\",\"key\":{key:?},\"count\":1}}\n"
+        );
+        let error = validate(&input).expect_err("unsafe control tokens must fail closed");
+        assert_eq!(error.line, 2, "key: {key}");
+        assert_eq!(
+            error.kind,
+            ValidationErrorKind::MalformedEvent,
+            "key: {key}"
+        );
+    }
 }
 
 #[test]

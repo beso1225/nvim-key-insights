@@ -143,6 +143,11 @@ assert(vim.deep_equal(special_sequences[1].keys, { "<C-X>", "a" }))
 
 assert(key_tokens.is_control_token("<C-Y>"))
 assert(key_tokens.is_control_token("<Tab>"))
+assert(not key_tokens.is_control_token("<C-é>"), "control-token payloads must be ASCII")
+assert(not key_tokens.is_control_token("<C-secret>"), "sensitive control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-.env>"), "environment control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-/Users/alice/private>"), "path control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-\\private>"), "backslash control paths must be rejected")
 assert(not key_tokens.is_control_token("<lt>C-Y>"), "literal bracket text must remain text")
 
 local control_collector, control = new_harness("aggregation-control-keys")
@@ -175,6 +180,21 @@ local control_json = vim.json.encode(control.events)
 for _, secret in ipairs({ "mapped-text-secret", "mapped-control-secret", "mapped-replace-secret", "mapped-select-secret" }) do
   assert(string.find(control_json, secret, 1, true) == nil)
 end
+
+local control_limit_collector, control_limit = new_harness("aggregation-control-limit")
+control_limit_collector:start()
+control_limit.mode = "i"
+for index = 1, 1024 do
+  control_limit.now_ms = index
+  control_limit.callback("mapped-control-limit", string.format("<C-%04d>", index))
+end
+assert(control_limit_collector:status().last_error == nil)
+control_limit.now_ms = 1025
+control_limit.callback("mapped-control-limit", "<C-1025>")
+assert(
+  control_limit_collector:status().last_error == "collector control-key limit exceeded",
+  "the collector must fail closed after the control-key bucket limit"
+)
 
 local text_collector, text = new_harness("aggregation-text")
 text_collector:start()

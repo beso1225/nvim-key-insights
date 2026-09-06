@@ -310,7 +310,13 @@ pub(crate) fn is_control_token(token: &str) -> bool {
         "<kLeft>",
         "<kRight>",
     ];
+    const SAFE_BRACKETED: &[&str] = &[
+        "<C-/>", "<A-/>", "<M-/>", "<S-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#, r#"<S-\>"#,
+    ];
     if NAMED.contains(&token) {
+        return true;
+    }
+    if SAFE_BRACKETED.contains(&token) {
         return true;
     }
     if let Some(number) = token
@@ -328,7 +334,15 @@ pub(crate) fn is_control_token(token: &str) -> bool {
     let Some((modifier, key)) = inner.split_once('-') else {
         return false;
     };
-    matches!(modifier, "C" | "A" | "S" | "M" | "D") && !key.is_empty()
+    let lower = token.to_ascii_lowercase();
+    if lower.contains(".env") || lower.contains("secret") || lower.contains("credential") {
+        return false;
+    }
+    matches!(modifier, "C" | "A" | "S" | "M" | "D")
+        && !key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| (0x20..=0x7e).contains(&byte) && !matches!(byte, b'>' | b'/' | b'\\'))
 }
 
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {

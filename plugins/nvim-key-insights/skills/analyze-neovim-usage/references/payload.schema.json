@@ -78,8 +78,19 @@
     "control_token": {
       "anyOf": [
         { "enum": ["<Nul>", "<BS>", "<Tab>", "<NL>", "<CR>", "<Return>", "<Enter>", "<Esc>", "<Space>", "<Del>", "<Delete>", "<Insert>", "<Home>", "<End>", "<PageUp>", "<PageDown>", "<Up>", "<Down>", "<Left>", "<Right>", "<kHome>", "<kEnd>", "<kPageUp>", "<kPageDown>", "<kUp>", "<kDown>", "<kLeft>", "<kRight>"] },
-        { "type": "string", "pattern": "^<F[0-9]+>$" },
-        { "type": "string", "pattern": "^<[CASMD]-[^>]+>$" }
+        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^(?:<F[0-9]+>|<[CASMD]-[^>]+>)$",
+          "allOf": [
+            { "not": { "pattern": "[\u0000-\u001f\u007f]" } },
+            { "not": { "pattern": "[^\u0000-\u007f]" } },
+            { "not": { "pattern": "[/\\\\]" } },
+            { "not": { "pattern": "[.][Ee][Nn][Vv]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]" } }
+          ]
+        }
       ]
     },
     "control_key_count": {
