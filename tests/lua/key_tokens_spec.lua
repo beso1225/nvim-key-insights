@@ -10,6 +10,10 @@ assert(vim.deep_equal(assert(key_tokens.tokenize("")), {}))
 assert(vim.deep_equal(assert(key_tokens.tokenize("abc")), { "a", "b", "c" }))
 assert(vim.deep_equal(assert(key_tokens.tokenize("日本語")), { "日", "本", "語" }))
 assert(vim.deep_equal(assert(key_tokens.tokenize("<C-X>a<Space>")), { "<C-X>", "a", "<Space>" }))
+assert(key_tokens.normalize_caret_notation("^Y", string.char(25)) == "<C-Y>")
+assert(key_tokens.normalize_caret_notation("^[", string.char(27)) == "<Esc>")
+assert(key_tokens.normalize_caret_notation("^?", string.char(127)) == "<Del>")
+assert(key_tokens.normalize_caret_notation("^Y", "^Y") == "^Y", "literal caret text must remain text")
 
 -- A missing closing bracket was historically collected as literal characters.
 assert(vim.deep_equal(assert(key_tokens.tokenize("<C-X")), { "<", "C", "-", "X" }))

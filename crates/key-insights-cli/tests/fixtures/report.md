@@ -9,6 +9,7 @@
 - Sequence keys: 8
 - Text runs: 1
 - Text keys: 5
+- Control key uses: 0
 - Mode transitions: 1
 - Mapping uses: 3
 - Repeated key runs: 2 (4 presses)
@@ -31,6 +32,10 @@ _Ranked tables show at most 100 items._
 | <code>j</code> | 3 |
 | <code>w</code> | 1 |
 | <code>x</code> | 1 |
+
+## Text-input control keys
+
+_No text-input control keys recorded._
 
 ## Mapping usage
 

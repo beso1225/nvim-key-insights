@@ -51,10 +51,10 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "ebd1eb1ae0dc82c19a2cdfb7abd2e3743744c1e618395ecf016b919e17fd4f42"
+        "3a7d4f37ad75acb06cd73c9a3e6954ce2b33ac877202cba6173785f0d3ed7ec7"
     );
     assert!(first.starts_with(
-        r#"{"payload_schema_version":1,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
+        r#"{"payload_schema_version":2,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
     ));
     let instruction_position = first.find("\"instructions\"").expect("instructions field");
     let summary_position = first.find("\"summary\"").expect("summary field");
@@ -174,7 +174,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "31a1a8af15a3ff9212bec7383364a3770563571a29289e96eb0517b51317cfcc"
+        "aef4536baeb914d80ebd4c90d5ca088cd4330bd651a751f8c119260768bad1bd"
     );
 }
 

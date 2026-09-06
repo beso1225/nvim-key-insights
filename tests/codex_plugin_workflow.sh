@@ -48,6 +48,14 @@ assert payload["summary"]["sessions"] == 1
 token_validator = jsonschema.Draft202012Validator(schema["$defs"]["token"])
 assert token_validator.is_valid("<env>")
 assert not token_validator.is_valid("<.env>")
+control_token_validator = jsonschema.Draft202012Validator(schema["$defs"]["control_token"])
+assert control_token_validator.is_valid("<C-Y>")
+assert control_token_validator.is_valid("<C-/>")
+assert control_token_validator.is_valid("<C-\\>")
+assert not control_token_validator.is_valid("<C-" + ("x" * 300) + ">")
+assert not control_token_validator.is_valid("<C-é>")
+assert not control_token_validator.is_valid("<C-secret>")
+assert not control_token_validator.is_valid("<C-/Users/alice/private>")
 
 mutations = []
 path_token = copy.deepcopy(payload)

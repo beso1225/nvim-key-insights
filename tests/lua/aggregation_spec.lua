@@ -1,9 +1,11 @@
 local collector = require("key-insights.collector")
 local config = require("key-insights.config")
+local key_tokens = require("key-insights.key_tokens")
 local schema = require("key-insights.schema")
 local storage = require("key-insights.storage")
 
-local function new_harness(session_id, options)
+local function new_harness(session_id, options, overrides)
+  overrides = overrides or {}
   local state = {
     buffer = { buftype = "", filetype = "lua", name = "src/init.lua" },
     callback = nil,
@@ -26,7 +28,7 @@ local function new_harness(session_id, options)
     current_mode = function()
       return state.mode
     end,
-    keytrans = function(key)
+    keytrans = overrides.keytrans or function(key)
       return key
     end,
     new_session_id = function()
@@ -47,6 +49,14 @@ local function new_harness(session_id, options)
     end,
     register_on_key = function(callback)
       state.callback = callback
+      if overrides.real_on_key then
+        local namespace = vim.api.nvim_create_namespace("key-insights." .. session_id)
+        vim.on_key(callback, namespace)
+        return function()
+          vim.on_key(nil, namespace)
+          state.callback = nil
+        end
+      end
       return function()
         state.callback = nil
       end
@@ -139,6 +149,105 @@ special_collector:stop()
 local special_sequences = events_of_type(special.events, "key_sequence")
 assert(#special_sequences == 1)
 assert(vim.deep_equal(special_sequences[1].keys, { "<C-X>", "a" }))
+
+assert(key_tokens.is_control_token("<C-Y>"))
+assert(key_tokens.is_control_token("<Tab>"))
+assert(not key_tokens.is_control_token("<C-é>"), "control-token payloads must be ASCII")
+assert(not key_tokens.is_control_token("<C-secret>"), "sensitive control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-.env>"), "environment control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-/Users/alice/private>"), "path control tokens must be rejected")
+assert(not key_tokens.is_control_token("<C-\\private>"), "backslash control paths must be rejected")
+assert(not key_tokens.is_control_token("<lt>C-Y>"), "literal bracket text must remain text")
+
+local disabled_collector, disabled = new_harness("aggregation-control-disabled")
+disabled_collector:start()
+disabled.mode = "i"
+disabled.now_ms = 10
+disabled.callback("mapped-control-disabled", "<C-Y>")
+disabled_collector:stop()
+assert(#events_of_type(disabled.events, "control_key_use") == 0, "control-key capture must be opt-in")
+
+local control_options = config.resolve({ privacy = { capture_control_keys = true } })
+local control_collector, control = new_harness("aggregation-control-keys", control_options)
+control_collector:start()
+control.mode = "i"
+control.now_ms = 10
+control.callback("mapped-text-secret", "a")
+control.now_ms = 20
+control.callback("mapped-control-secret", "<C-Y>")
+control.now_ms = 30
+control.callback("mapped-control-secret", "<C-Y>")
+control.mode = "R"
+control.now_ms = 40
+control.callback("mapped-replace-secret", "<Tab>")
+control.mode = "s"
+control.now_ms = 50
+control.callback("mapped-select-secret", "<Esc>")
+control.now_ms = 60
+control_collector:stop()
+
+local control_uses = events_of_type(control.events, "control_key_use")
+assert(#control_uses == 3)
+assert(control_uses[1].mode == "insert")
+assert(control_uses[1].key == "<C-Y>" and control_uses[1].count == 2)
+assert(control_uses[2].mode == "replace" and control_uses[2].key == "<Tab>")
+assert(control_uses[3].mode == "select" and control_uses[3].key == "<Esc>")
+local control_text_runs = events_of_type(control.events, "text_run")
+assert(#control_text_runs == 1, "existing text-run aggregation must remain unchanged")
+local control_json = vim.json.encode(control.events)
+for _, secret in ipairs({ "mapped-text-secret", "mapped-control-secret", "mapped-replace-secret", "mapped-select-secret" }) do
+  assert(string.find(control_json, secret, 1, true) == nil)
+end
+
+local real_collector, real = new_harness("aggregation-real-on-key", control_options, {
+  keytrans = function(key)
+    if key == string.char(25) then
+      return "^Y"
+    end
+    return vim.fn.keytrans(key)
+  end,
+  real_on_key = true,
+})
+real_collector:start()
+real.mode = "i"
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-Y>", true, false, true), "xt", false)
+real_collector:stop()
+local real_control_uses = events_of_type(real.events, "control_key_use")
+assert(#real_control_uses == 1)
+assert(real_control_uses[1].mode == "insert" and real_control_uses[1].key == "<C-Y>")
+
+local control_limit_collector, control_limit = new_harness("aggregation-control-limit", control_options)
+control_limit_collector:start()
+control_limit.mode = "i"
+for index = 1, 1024 do
+  control_limit.now_ms = index
+  control_limit.callback("mapped-control-limit", string.format("<C-%04d>", index))
+end
+assert(control_limit_collector:status().last_error == nil)
+control_limit.now_ms = 1025
+control_limit.callback("mapped-control-limit", "<C-1025>")
+assert(
+  control_limit_collector:status().last_error == "collector control-key limit exceeded",
+  "the collector must fail closed after the control-key bucket limit"
+)
+
+local queue_collector, queue = new_harness("aggregation-control-queue-boundary", control_options)
+queue_collector:start()
+queue.mode = "i"
+for index = 1, 1023 do
+  queue.now_ms = index
+  queue.callback("mapped-control-queue", string.format("<C-%04d>", index))
+end
+queue.mode = "n"
+queue.now_ms = 1024
+queue.callback("mapped-mode-transition", "j")
+assert(queue_collector:status().last_error == nil, "control buckets must leave room for mode transitions")
+queue_collector:stop()
+local queued_control_uses = events_of_type(queue.events, "control_key_use")
+assert(#queued_control_uses == 1023, "all control buckets must survive deferred queue chunking")
+local queued_transitions = events_of_type(queue.events, "mode_transition")
+assert(#queued_transitions == 1)
+assert(queued_transitions[1].from == "insert" and queued_transitions[1].to == "normal")
 
 local text_collector, text = new_harness("aggregation-text")
 text_collector:start()

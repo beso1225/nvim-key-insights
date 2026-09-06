@@ -2,6 +2,67 @@ local M = {}
 
 local MAX_KEY_NOTATION_BYTES = 256
 
+local NAMED_CONTROL_TOKENS = {
+  ["<Nul>"] = true,
+  ["<BS>"] = true,
+  ["<Tab>"] = true,
+  ["<NL>"] = true,
+  ["<CR>"] = true,
+  ["<Return>"] = true,
+  ["<Enter>"] = true,
+  ["<Esc>"] = true,
+  ["<Space>"] = true,
+  ["<Del>"] = true,
+  ["<Delete>"] = true,
+  ["<Insert>"] = true,
+  ["<Home>"] = true,
+  ["<End>"] = true,
+  ["<PageUp>"] = true,
+  ["<PageDown>"] = true,
+  ["<Up>"] = true,
+  ["<Down>"] = true,
+  ["<Left>"] = true,
+  ["<Right>"] = true,
+  ["<kHome>"] = true,
+  ["<kEnd>"] = true,
+  ["<kPageUp>"] = true,
+  ["<kPageDown>"] = true,
+  ["<kUp>"] = true,
+  ["<kDown>"] = true,
+  ["<kLeft>"] = true,
+  ["<kRight>"] = true,
+}
+
+local SAFE_BRACKETED_CONTROL_TOKENS = {
+  ["<C-/>"] = true,
+  ["<A-/>"] = true,
+  ["<M-/>"] = true,
+  ["<S-/>"] = true,
+  ["<C-\\>"] = true,
+  ["<A-\\>"] = true,
+  ["<M-\\>"] = true,
+  ["<S-\\>"] = true,
+}
+
+local CARET_MARKERS = {
+  [27] = "[",
+  [28] = "\\",
+  [29] = "]",
+  [30] = "^",
+  [31] = "_",
+  [127] = "?",
+}
+
+local function caret_marker(byte)
+  if byte == 0 then
+    return "@"
+  end
+  if byte >= 1 and byte <= 26 then
+    return string.char(byte + 64)
+  end
+  return CARET_MARKERS[byte]
+end
+
 local function valid_limit(value)
   return value == nil
     or (type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value))
@@ -58,6 +119,58 @@ local function valid_utf8(value)
     index = index + width
   end
   return true
+end
+
+function M.normalize_caret_notation(canonical, typed)
+  if type(canonical) ~= "string" or type(typed) ~= "string" or typed == "" then
+    return canonical
+  end
+
+  -- Some Neovim versions expose C0 bytes from keytrans as caret pairs. Only
+  -- normalize when the raw callback input also contains a control byte so
+  -- literal text such as ^Y remains text.
+  local has_control = false
+  for index = 1, #typed do
+    local byte = string.byte(typed, index)
+    if byte < 0x20 or byte == 0x7F then
+      has_control = true
+      break
+    end
+  end
+  if not has_control then
+    return canonical
+  end
+
+  local caret_form = {}
+  for index = 1, #typed do
+    local byte = string.byte(typed, index)
+    local marker = caret_marker(byte)
+    if marker ~= nil then
+      table.insert(caret_form, "^" .. marker)
+    else
+      table.insert(caret_form, string.sub(typed, index, index))
+    end
+  end
+  if table.concat(caret_form) ~= canonical then
+    return canonical
+  end
+
+  local normalized = {}
+  for index = 1, #typed do
+    local marker = caret_marker(string.byte(typed, index))
+    if marker ~= nil then
+      if marker == "[" then
+        table.insert(normalized, "<Esc>")
+      elseif marker == "?" then
+        table.insert(normalized, "<Del>")
+      else
+        table.insert(normalized, "<C-" .. marker .. ">")
+      end
+    else
+      table.insert(normalized, string.sub(typed, index, index))
+    end
+  end
+  return table.concat(normalized)
 end
 
 function M.tokenize(canonical, limits)
@@ -137,6 +250,39 @@ function M.tokenize(canonical, limits)
   end
 
   return tokens
+end
+
+function M.is_control_token(token)
+  if type(token) ~= "string" or token == "" or #token > MAX_KEY_NOTATION_BYTES then
+    return false
+  end
+  if NAMED_CONTROL_TOKENS[token] then
+    return true
+  end
+  if SAFE_BRACKETED_CONTROL_TOKENS[token] then
+    return true
+  end
+  if string.match(token, "^<F%d+>$") ~= nil then
+    return true
+  end
+  local key = string.match(token, "^<[CASMD]%-([^>]+)>$")
+  if key == nil or key == "" then
+    return false
+  end
+  local lower = string.lower(token)
+  if string.find(lower, ".env", 1, true) ~= nil
+    or string.find(lower, "secret", 1, true) ~= nil
+    or string.find(lower, "credential", 1, true) ~= nil
+  then
+    return false
+  end
+  for index = 1, #key do
+    local byte = string.byte(key, index)
+    if byte < 0x20 or byte > 0x7E or byte == 0x2F or byte == 0x5C then
+      return false
+    end
+  end
+  return true
 end
 
 return M

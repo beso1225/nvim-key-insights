@@ -5,7 +5,7 @@ The collector converts `vim.on_key` callbacks into bounded, privacy-sanitized ev
 ## Mode policy
 
 - Normal, Visual, and Operator-pending modes produce `key_sequence` events.
-- Insert, Replace, and Select modes produce `text_run` events containing only key count and duration.
+- Insert, Replace, and Select modes produce `text_run` events containing only key count and duration. A parallel `control_key_use` aggregate for canonical control keys is produced only when `privacy.capture_control_keys = true`. The existing text-run metric remains unchanged.
 - Command-line and Search modes produce mode transitions but discard all input content.
 - Other modes do not produce input payload events.
 
@@ -16,6 +16,24 @@ mapping baseline identifies exactly one effective binding, the collector also
 emits `mapping_use` with an opaque ID and the same canonical typed keys.
 Ambiguity, mutation, unsupported modes, and excluded buffers reduce attribution
 coverage instead of producing a guess.
+
+Control-key aggregation is disabled by default. Enable it explicitly when the
+additional behavioral metric is desired:
+
+```lua
+require("key-insights").setup({
+  privacy = {
+    capture_control_keys = true,
+  },
+})
+```
+
+When enabled, control-key aggregation is keyed by normalized text-input mode (`insert`,
+`replace`, or `select`) and canonical token. Modifier tokens, function keys,
+and named control tokens are counted; ordinary Unicode text and literal text
+such as `<lt>C-Y>` are not. The aggregate is bounded to 1,024 distinct
+mode/token buckets and fails closed if that limit is reached. No mapping
+right-hand side or raw inserted text is retained.
 
 ## Sequence boundaries
 

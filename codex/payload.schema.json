@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["payload_schema_version", "purpose", "instructions", "summary"],
   "properties": {
-    "payload_schema_version": { "const": 1 },
+    "payload_schema_version": { "const": 2 },
     "purpose": { "const": "analyze-neovim-usage" },
     "instructions": { "$ref": "#/$defs/instructions" },
     "summary": { "$ref": "#/$defs/summary" },
@@ -72,6 +72,34 @@
       "required": ["key", "count"],
       "properties": {
         "key": { "$ref": "#/$defs/token" },
+        "count": { "$ref": "#/$defs/counter" }
+      }
+    },
+    "control_token": {
+      "anyOf": [
+        { "enum": ["<Nul>", "<BS>", "<Tab>", "<NL>", "<CR>", "<Return>", "<Enter>", "<Esc>", "<Space>", "<Del>", "<Delete>", "<Insert>", "<Home>", "<End>", "<PageUp>", "<PageDown>", "<Up>", "<Down>", "<Left>", "<Right>", "<kHome>", "<kEnd>", "<kPageUp>", "<kPageDown>", "<kUp>", "<kDown>", "<kLeft>", "<kRight>"] },
+        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^(?:<F[0-9]+>|<[CASMD]-[^>]+>)$",
+          "allOf": [
+            { "not": { "pattern": "[\u0000-\u001f\u007f]" } },
+            { "not": { "pattern": "[^\u0000-\u007f]" } },
+            { "not": { "pattern": "[/\\\\]" } },
+            { "not": { "pattern": "[.][Ee][Nn][Vv]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]" } }
+          ]
+        }
+      ]
+    },
+    "control_key_count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "key", "count"],
+      "properties": {
+        "mode": { "enum": ["insert", "replace", "select"] },
+        "key": { "$ref": "#/$defs/control_token" },
         "count": { "$ref": "#/$defs/counter" }
       }
     },
@@ -329,9 +357,9 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "ranking_limit", "sessions", "events", "total_session_duration_ms", "key_sequences", "sequence_keys", "text_runs", "text_keys", "mode_transitions", "mapping_uses", "repeated_key_runs", "repeated_key_presses", "unique_keys", "unique_mappings", "unique_repeated_keys", "modes", "keys", "mappings", "repeated_keys", "ergonomics"],
+      "required": ["schema_version", "ranking_limit", "sessions", "events", "total_session_duration_ms", "key_sequences", "sequence_keys", "text_runs", "text_keys", "control_key_uses", "unique_control_keys", "mode_transitions", "mapping_uses", "repeated_key_runs", "repeated_key_presses", "unique_keys", "unique_mappings", "unique_repeated_keys", "modes", "keys", "control_keys", "mappings", "repeated_keys", "ergonomics"],
       "properties": {
-        "schema_version": { "const": 3 },
+        "schema_version": { "const": 4 },
         "ranking_limit": { "const": 100 },
         "sessions": { "$ref": "#/$defs/counter" },
         "events": { "$ref": "#/$defs/counter" },
@@ -340,6 +368,8 @@
         "sequence_keys": { "$ref": "#/$defs/counter" },
         "text_runs": { "$ref": "#/$defs/counter" },
         "text_keys": { "$ref": "#/$defs/counter" },
+        "control_key_uses": { "$ref": "#/$defs/counter" },
+        "unique_control_keys": { "$ref": "#/$defs/counter" },
         "mode_transitions": { "$ref": "#/$defs/counter" },
         "mapping_uses": { "$ref": "#/$defs/counter" },
         "repeated_key_runs": { "$ref": "#/$defs/counter" },
@@ -349,6 +379,7 @@
         "unique_repeated_keys": { "$ref": "#/$defs/counter" },
         "modes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/mode_stats" } },
         "keys": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/key_count" } },
+        "control_keys": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/control_key_count" } },
         "mappings": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/mapping_count" } },
         "repeated_keys": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/repeated_key" } },
         "ergonomics": { "$ref": "#/$defs/ergonomics" },

@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "ranking_limit": 100,
   "sessions": 2,
   "events": 12,
@@ -8,6 +8,8 @@
   "sequence_keys": 8,
   "text_runs": 1,
   "text_keys": 5,
+  "control_key_uses": 0,
+  "unique_control_keys": 0,
   "mode_transitions": 1,
   "mapping_uses": 3,
   "repeated_key_runs": 2,
@@ -50,6 +52,7 @@
       "count": 1
     }
   ],
+  "control_keys": [],
   "mappings": [
     {
       "mapping_id": "map-b",

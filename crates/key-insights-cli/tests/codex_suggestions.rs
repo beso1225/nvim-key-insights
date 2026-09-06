@@ -50,6 +50,8 @@ fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
         "sequence_keys",
         "text_runs",
         "text_keys",
+        "control_key_uses",
+        "unique_control_keys",
         "mode_transitions",
         "mapping_uses",
         "repeated_key_runs",

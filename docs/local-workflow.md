@@ -156,7 +156,8 @@ Do not manually rename analyzer sidecars into place.
 ## Privacy boundaries
 
 Collector JSONL remains local and contains session boundaries, sanitized typed
-Normal/Visual/Operator-pending key tokens, and aggregate text-run counts. It does
+Normal/Visual/Operator-pending key tokens, aggregate text-run counts, and, only
+when explicitly enabled, canonical Insert/Replace/Select control-key counts. It does
 not contain Insert text, Command text, Search text, mapping expansions, buffer
 paths, or sensitive-buffer input. `summary.json` and `report.md` additionally
 exclude session IDs and project IDs. Only a user-previewed `summary.json` is

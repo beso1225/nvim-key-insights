@@ -10,10 +10,10 @@ mod keymap_snapshot;
 mod validator;
 
 pub use analyzer::{
-    AnalysisError, AnalysisInputsError, AnalysisSummary, KeyCount, MAX_DISTINCT_ITEMS,
-    MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, MappingAttribution, MappingAttributionEntry,
-    MappingAttributionStatus, MappingCollision, MappingCount, ModeStats, RepeatedKeyStats,
-    analyze_jsonl, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
+    AnalysisError, AnalysisInputsError, AnalysisSummary, ControlKeyCount, KeyCount,
+    MAX_DISTINCT_ITEMS, MAX_RANKED_ITEMS, MAX_RETAINED_TOKEN_BYTES, MappingAttribution,
+    MappingAttributionEntry, MappingAttributionStatus, MappingCollision, MappingCount, ModeStats,
+    RepeatedKeyStats, analyze_jsonl, analyze_jsonl_inputs, analyze_jsonl_inputs_with_snapshot,
     analyze_jsonl_with_snapshot, render_markdown, render_summary_json,
 };
 pub use codex_exec::{
@@ -40,7 +40,7 @@ pub use ergonomics::{
     ModeTransitionCount, OPERATION_TOKEN_SET_VERSION, OperationEvidence, RepeatedMotionEvidence,
     RepeatedMotionSummary,
 };
-pub use event::{Event, Mode, SequenceMode};
+pub use event::{Event, Mode, SequenceMode, TextInputMode};
 pub use keymap_snapshot::{
     KeymapSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MAPPINGS, SNAPSHOT_VERSION, SnapshotError,
     SnapshotMapping, SnapshotMode, SnapshotScope, parse_keymap_snapshot,
@@ -52,7 +52,12 @@ pub use validator::{
 };
 
 /// Version of the collector/analyzer event contract.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+pub const LEGACY_SCHEMA_VERSION: u32 = 1;
+
+pub(crate) fn is_supported_schema_version(version: u32) -> bool {
+    version == LEGACY_SCHEMA_VERSION || version == SCHEMA_VERSION
+}
 
 /// Sensitive data collection switches.
 ///

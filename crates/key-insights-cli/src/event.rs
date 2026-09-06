@@ -20,6 +20,14 @@ pub enum SequenceMode {
     OperatorPending,
 }
 
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextInputMode {
+    Insert,
+    Replace,
+    Select,
+}
+
 /// One privacy-sanitized collector event.
 ///
 /// Unknown fields are rejected so accidental additions such as `text`, `path`,
@@ -54,6 +62,14 @@ pub enum Event {
         key_count: u32,
         duration_ms: u64,
     },
+    ControlKeyUse {
+        schema_version: u32,
+        session_id: String,
+        elapsed_ms: u64,
+        mode: TextInputMode,
+        key: String,
+        count: u32,
+    },
     ModeTransition {
         schema_version: u32,
         session_id: String,
@@ -78,6 +94,7 @@ impl Event {
             | Self::SessionEnd { schema_version, .. }
             | Self::KeySequence { schema_version, .. }
             | Self::TextRun { schema_version, .. }
+            | Self::ControlKeyUse { schema_version, .. }
             | Self::ModeTransition { schema_version, .. }
             | Self::MappingUse { schema_version, .. } => *schema_version,
         }
@@ -89,6 +106,7 @@ impl Event {
             | Self::SessionEnd { session_id, .. }
             | Self::KeySequence { session_id, .. }
             | Self::TextRun { session_id, .. }
+            | Self::ControlKeyUse { session_id, .. }
             | Self::ModeTransition { session_id, .. }
             | Self::MappingUse { session_id, .. } => session_id,
         }
@@ -100,6 +118,7 @@ impl Event {
             | Self::SessionEnd { elapsed_ms, .. }
             | Self::KeySequence { elapsed_ms, .. }
             | Self::TextRun { elapsed_ms, .. }
+            | Self::ControlKeyUse { elapsed_ms, .. }
             | Self::ModeTransition { elapsed_ms, .. }
             | Self::MappingUse { elapsed_ms, .. } => *elapsed_ms,
         }

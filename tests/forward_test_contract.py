@@ -65,7 +65,7 @@ class ForwardTestContract(unittest.TestCase):
             {
                 "manifest_version": 1,
                 "mode": "synthetic-offline",
-                "contracts": {"event_schema": 1, "payload_schema": 1, "summary_schema": 3},
+                "contracts": {"event_schema": 2, "payload_schema": 2, "summary_schema": 4},
                 "artifacts": manifest["artifacts"],
                 "checks": {
                     "codex_invoked": False,
@@ -96,7 +96,23 @@ class ForwardTestContract(unittest.TestCase):
         ]
         adjacent = workspace / "adjacent-private-canary.txt"
         self.assertEqual(adjacent.read_text(), "FORWARD_ADJACENT_PRIVATE_CANARY")
-        self.assertTrue(all(session_id in session_log.read_text() for session_id in SESSION_IDS))
+        session_log_text = session_log.read_text()
+        self.assertTrue(all(session_id in session_log_text for session_id in SESSION_IDS))
+        session_events = [json.loads(line) for line in session_log_text.splitlines()]
+        self.assertTrue(session_events)
+        self.assertTrue(all(event["schema_version"] == 2 for event in session_events))
+        self.assertIn(
+            {
+                "schema_version": 2,
+                "event_type": "control_key_use",
+                "session_id": "forward-session-alpha",
+                "elapsed_ms": 80,
+                "mode": "insert",
+                "key": "<C-Y>",
+                "count": 2,
+            },
+            session_events,
+        )
         for artifact in [session_log, adjacent, *local_artifacts, manifest_path]:
             self.assertTrue(artifact.is_file())
             self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o600)

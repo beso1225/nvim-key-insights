@@ -81,11 +81,11 @@ fn aggregates_validated_sessions_into_stable_outputs() {
 }
 
 #[test]
-fn summary_v3_exposes_the_versioned_ergonomic_contract() {
+fn summary_v4_exposes_the_versioned_ergonomic_contract() {
     let summary = analyze_jsonl(Cursor::new(INPUT)).expect("valid analysis input");
     let value = serde_json::to_value(summary).expect("summary is serializable");
 
-    assert_eq!(value["schema_version"], 3);
+    assert_eq!(value["schema_version"], 4);
     assert_eq!(value["ergonomics"]["contract_version"], 2);
     assert_eq!(value["ergonomics"]["candidate_limit"], 100);
     assert_eq!(
@@ -263,6 +263,39 @@ fn count_prefixes_stay_within_sequences_and_preserve_zero_as_a_motion() {
             "occurrences": 3,
             "digit_presses": 5
         })
+    );
+}
+
+#[test]
+fn control_key_usage_is_aggregated_by_text_input_mode_and_key() {
+    let input = concat!(
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"controls","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"text_run","session_id":"controls","elapsed_ms":1,"key_count":3,"duration_ms":1}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"control_key_use","session_id":"controls","elapsed_ms":2,"mode":"insert","key":"<C-Y>","count":2}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"control_key_use","session_id":"controls","elapsed_ms":3,"mode":"replace","key":"<Tab>","count":1}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"control_key_use","session_id":"controls","elapsed_ms":4,"mode":"insert","key":"<C-Y>","count":1}"#,
+        "\n",
+        r#"{"schema_version":2,"event_type":"session_end","session_id":"controls","elapsed_ms":4}"#,
+        "\n",
+    );
+
+    let value = serde_json::to_value(
+        analyze_jsonl(Cursor::new(input)).expect("control key usage must analyze"),
+    )
+    .expect("summary is serializable");
+    assert_eq!(value["schema_version"], 4);
+    assert_eq!(value["control_key_uses"], 4);
+    assert_eq!(value["unique_control_keys"], 2);
+    assert_eq!(
+        value["control_keys"],
+        serde_json::json!([
+            {"mode":"insert","key":"<C-Y>","count":3},
+            {"mode":"replace","key":"<Tab>","count":1}
+        ])
     );
 }
 
@@ -713,7 +746,7 @@ fn cli_accepts_a_snapshot_file_and_snapshot_stdin() {
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&summary).expect("read summary"))
             .expect("summary JSON");
-    assert_eq!(value["schema_version"], 3);
+    assert_eq!(value["schema_version"], 4);
     assert_eq!(
         value["mapping_attribution"]["mappings"][0]["status"],
         "observed_not_in_snapshot"
@@ -1595,6 +1628,29 @@ fn analyzer_rejects_unbounded_distinct_key_cardinality() {
 }
 
 #[test]
+fn analyzer_rejects_unbounded_distinct_control_key_cardinality() {
+    let mut input =
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"controls","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..=MAX_DISTINCT_ITEMS {
+        input.push_str(&format!(
+            "{{\"schema_version\":2,\"event_type\":\"control_key_use\",\"session_id\":\"controls\",\"elapsed_ms\":{},\"mode\":\"insert\",\"key\":\"<C-{index:05}>\",\"count\":1}}\n",
+            index + 1
+        ));
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":2,\"event_type\":\"session_end\",\"session_id\":\"controls\",\"elapsed_ms\":{}}}\n",
+        MAX_DISTINCT_ITEMS + 2
+    ));
+
+    let error =
+        analyze_jsonl(Cursor::new(input)).expect_err("control-key cardinality must be bounded");
+
+    assert!(error.to_string().contains("distinct key limit"));
+}
+
+#[test]
 fn analyzer_rejects_unbounded_distinct_mapping_cardinality() {
     let mut input =
         r#"{"schema_version":1,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#
@@ -1738,6 +1794,39 @@ fn analyzer_bounds_total_retained_token_bytes_across_categories() {
     let error = analyze_jsonl(Cursor::new(input)).expect_err("retained bytes must be bounded");
 
     assert_eq!(error, AnalysisError::RetainedTokenBytesExceeded);
+}
+
+#[test]
+fn analyzer_bounds_retained_control_key_bytes() {
+    let control_key_size = 252;
+    let identity_size = control_key_size + "insert".len();
+    let token_count = MAX_RETAINED_TOKEN_BYTES / identity_size + 1;
+    let mut input =
+        r#"{"schema_version":2,"event_type":"session_start","session_id":"control-bytes","elapsed_ms":0}"#
+            .to_owned();
+    input.push('\n');
+    for index in 0..token_count {
+        let key = format!("<C-{index:0width$}>", width = control_key_size - 4);
+        let event = serde_json::json!({
+            "schema_version": 2,
+            "event_type": "control_key_use",
+            "session_id": "control-bytes",
+            "elapsed_ms": index + 1,
+            "mode": "insert",
+            "key": key,
+            "count": 1
+        });
+        input.push_str(&event.to_string());
+        input.push('\n');
+    }
+    input.push_str(&format!(
+        "{{\"schema_version\":2,\"event_type\":\"session_end\",\"session_id\":\"control-bytes\",\"elapsed_ms\":{}}}\n",
+        token_count + 1
+    ));
+
+    let error = analyze_jsonl(Cursor::new(input)).expect_err("control-key bytes must be bounded");
+
+    assert!(error.to_string().contains("retained token budget"));
 }
 
 #[test]

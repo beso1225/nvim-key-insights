@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Version of the sanitized subprocess payload contract.
-pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 1;
+pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 2;
 /// Hard upper bound for bytes sent to an optional Codex subprocess.
 pub const MAX_CODEX_PAYLOAD_BYTES: usize = 256 * 1024;
 
@@ -92,7 +92,7 @@ pub fn render_codex_payload_json(
     summary: &AnalysisSummary,
     snapshot: Option<&KeymapSnapshot>,
 ) -> Result<String, CodexPayloadError> {
-    if summary.schema_version != 3 {
+    if summary.schema_version != 4 {
         return Err(CodexPayloadError::UnsupportedSummarySchema {
             found: summary.schema_version,
         });
@@ -199,6 +199,7 @@ fn validate_summary(
 ) -> Result<(), CodexPayloadError> {
     if summary.modes.len() > MAX_RANKED_ITEMS
         || summary.keys.len() > MAX_RANKED_ITEMS
+        || summary.control_keys.len() > MAX_RANKED_ITEMS
         || summary.mappings.len() > MAX_RANKED_ITEMS
         || summary.repeated_keys.len() > MAX_RANKED_ITEMS
         || summary.ergonomics.candidates.len() > MAX_ERGONOMIC_CANDIDATES
@@ -265,6 +266,15 @@ fn validate_summary(
     }
     for key in &summary.keys {
         validate_token(&key.key, "keys.key")?;
+    }
+    for key in &summary.control_keys {
+        if !matches!(key.mode.as_str(), "insert" | "replace" | "select") {
+            return Err(invalid("control_keys.mode"));
+        }
+        validate_token(&key.key, "control_keys.key")?;
+        if !keymap_snapshot::is_control_token(&key.key) {
+            return Err(invalid("control_keys.key"));
+        }
     }
     for key in &summary.repeated_keys {
         validate_token(&key.key, "repeated_keys.key")?;

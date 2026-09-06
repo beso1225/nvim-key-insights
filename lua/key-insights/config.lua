@@ -20,6 +20,7 @@ local SENSITIVE_FILETYPES = {
 local DEFAULTS = {
   privacy = {
     raw_keylog = false,
+    capture_control_keys = false,
     capture_insert_text = false,
     capture_command_text = false,
     capture_search_text = false,
@@ -51,6 +52,7 @@ local DEFAULTS = {
 local CONFIG_SHAPE = {
   privacy = {
     raw_keylog = true,
+    capture_control_keys = true,
     capture_insert_text = true,
     capture_command_text = true,
     capture_search_text = true,
@@ -100,7 +102,11 @@ function M.resolve(options)
   end
   local resolved = vim.tbl_deep_extend("force", M.defaults(), options or {})
   for name, enabled in pairs(resolved.privacy) do
-    assert(enabled == false, "privacy." .. name .. " is not supported")
+    if name == "capture_control_keys" then
+      assert(type(enabled) == "boolean", "privacy." .. name .. " must be a boolean")
+    else
+      assert(enabled == false, "privacy." .. name .. " is not supported")
+    end
   end
   assert(
     resolved.collection.exclude_special_buffers == true,

@@ -279,6 +279,72 @@ pub(crate) fn is_canonical_token(token: &str) -> bool {
         && tokenize_canonical(token) == [token.to_owned()]
 }
 
+pub(crate) fn is_control_token(token: &str) -> bool {
+    const NAMED: &[&str] = &[
+        "<Nul>",
+        "<BS>",
+        "<Tab>",
+        "<NL>",
+        "<CR>",
+        "<Return>",
+        "<Enter>",
+        "<Esc>",
+        "<Space>",
+        "<Del>",
+        "<Delete>",
+        "<Insert>",
+        "<Home>",
+        "<End>",
+        "<PageUp>",
+        "<PageDown>",
+        "<Up>",
+        "<Down>",
+        "<Left>",
+        "<Right>",
+        "<kHome>",
+        "<kEnd>",
+        "<kPageUp>",
+        "<kPageDown>",
+        "<kUp>",
+        "<kDown>",
+        "<kLeft>",
+        "<kRight>",
+    ];
+    const SAFE_BRACKETED: &[&str] = &[
+        "<C-/>", "<A-/>", "<M-/>", "<S-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#, r#"<S-\>"#,
+    ];
+    if NAMED.contains(&token) {
+        return true;
+    }
+    if SAFE_BRACKETED.contains(&token) {
+        return true;
+    }
+    if let Some(number) = token
+        .strip_prefix("<F")
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        return !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit());
+    }
+    let Some(inner) = token
+        .strip_prefix('<')
+        .and_then(|value| value.strip_suffix('>'))
+    else {
+        return false;
+    };
+    let Some((modifier, key)) = inner.split_once('-') else {
+        return false;
+    };
+    let lower = token.to_ascii_lowercase();
+    if lower.contains(".env") || lower.contains("secret") || lower.contains("credential") {
+        return false;
+    }
+    matches!(modifier, "C" | "A" | "S" | "M" | "D")
+        && !key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| (0x20..=0x7e).contains(&byte) && !matches!(byte, b'>' | b'/' | b'\\'))
+}
+
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {
     let mut preimage = String::new();
     append_length_prefixed(&mut preimage, "mapping-v1");

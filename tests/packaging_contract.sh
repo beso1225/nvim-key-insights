@@ -79,6 +79,7 @@ nix run --no-update-lock-file .#key-insights -- --help >/dev/null
 
 for option in \
   privacy.raw_keylog \
+  privacy.capture_control_keys \
   privacy.capture_insert_text \
   privacy.capture_command_text \
   privacy.capture_search_text \
