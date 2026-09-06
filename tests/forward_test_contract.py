@@ -65,7 +65,7 @@ class ForwardTestContract(unittest.TestCase):
             {
                 "manifest_version": 1,
                 "mode": "synthetic-offline",
-                "contracts": {"event_schema": 1, "payload_schema": 1, "summary_schema": 3},
+                "contracts": {"event_schema": 2, "payload_schema": 2, "summary_schema": 4},
                 "artifacts": manifest["artifacts"],
                 "checks": {
                     "codex_invoked": False,

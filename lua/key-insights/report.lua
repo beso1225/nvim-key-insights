@@ -3,6 +3,7 @@ local filesystem = require("key-insights.filesystem")
 local process = require("key-insights.process")
 local snapshot_payload = require("key-insights.snapshot_payload")
 local strict_json = require("key-insights.strict_json")
+local key_tokens = require("key-insights.key_tokens")
 
 local M = {}
 local Report = {}
@@ -47,6 +48,8 @@ local KNOWN_PREVIEW_KEYS = {
   candidates = true,
   collision_mapping_ids = true,
   collision_check_required = true,
+  control_key_uses = true,
+  control_keys = true,
   collisions = true,
   contract_version = true,
   count = true,
@@ -129,6 +132,7 @@ local KNOWN_PREVIEW_KEYS = {
   unique_keys = true,
   unique_mappings = true,
   unique_repeated_keys = true,
+  unique_control_keys = true,
   unobserved_mappings = true,
 }
 
@@ -243,10 +247,13 @@ local function validate_preview(contents)
     sessions = true,
     text_keys = true,
     text_runs = true,
+    control_key_uses = true,
+    control_keys = true,
     total_session_duration_ms = true,
     unique_keys = true,
     unique_mappings = true,
     unique_repeated_keys = true,
+    unique_control_keys = true,
   }
   for key in pairs(decoded.summary) do
     if type(key) ~= "string" or not summary_fields[key] then
@@ -412,6 +419,8 @@ validate_analysis_summary = function(summary)
     "sequence_keys",
     "text_runs",
     "text_keys",
+    "control_key_uses",
+    "unique_control_keys",
     "mode_transitions",
     "mapping_uses",
     "repeated_key_runs",
@@ -426,6 +435,7 @@ validate_analysis_summary = function(summary)
   end
   if not is_array(summary.modes, 100)
     or not is_array(summary.keys, 100)
+    or not is_array(summary.control_keys, 100)
     or not is_array(summary.mappings, 100)
     or not is_array(summary.repeated_keys, 100)
     or type(summary.ergonomics) ~= "table"
@@ -443,6 +453,16 @@ validate_analysis_summary = function(summary)
   end
   for _, key in ipairs(summary.keys) do
     if not has_only_fields(key, { key = true, count = true })
+      or not safe_preview_token(key.key)
+      or not is_counter(key.count)
+    then
+      return false
+    end
+  end
+  for _, key in ipairs(summary.control_keys) do
+    if not has_only_fields(key, { mode = true, key = true, count = true })
+      or key.mode ~= "insert" and key.mode ~= "replace" and key.mode ~= "select"
+      or not key_tokens.is_control_token(key.key)
       or not safe_preview_token(key.key)
       or not is_counter(key.count)
     then

@@ -2,6 +2,37 @@ local M = {}
 
 local MAX_KEY_NOTATION_BYTES = 256
 
+local NAMED_CONTROL_TOKENS = {
+  ["<Nul>"] = true,
+  ["<BS>"] = true,
+  ["<Tab>"] = true,
+  ["<NL>"] = true,
+  ["<CR>"] = true,
+  ["<Return>"] = true,
+  ["<Enter>"] = true,
+  ["<Esc>"] = true,
+  ["<Space>"] = true,
+  ["<Del>"] = true,
+  ["<Delete>"] = true,
+  ["<Insert>"] = true,
+  ["<Home>"] = true,
+  ["<End>"] = true,
+  ["<PageUp>"] = true,
+  ["<PageDown>"] = true,
+  ["<Up>"] = true,
+  ["<Down>"] = true,
+  ["<Left>"] = true,
+  ["<Right>"] = true,
+  ["<kHome>"] = true,
+  ["<kEnd>"] = true,
+  ["<kPageUp>"] = true,
+  ["<kPageDown>"] = true,
+  ["<kUp>"] = true,
+  ["<kDown>"] = true,
+  ["<kLeft>"] = true,
+  ["<kRight>"] = true,
+}
+
 local function valid_limit(value)
   return value == nil
     or (type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value))
@@ -137,6 +168,19 @@ function M.tokenize(canonical, limits)
   end
 
   return tokens
+end
+
+function M.is_control_token(token)
+  if type(token) ~= "string" or token == "" or #token > MAX_KEY_NOTATION_BYTES then
+    return false
+  end
+  if NAMED_CONTROL_TOKENS[token] then
+    return true
+  end
+  if string.match(token, "^<F%d+>$") ~= nil then
+    return true
+  end
+  return string.match(token, "^<[CASMD]%-[^>]+>$") ~= nil
 end
 
 return M

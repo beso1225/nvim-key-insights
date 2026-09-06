@@ -52,7 +52,7 @@ assert(config.is_sensitive_buffer({ name = "credentials.json", filetype = "json"
 assert(config.is_sensitive_buffer({ name = "src/main.rs", filetype = "rust" }) == false)
 
 local start = schema.session_start("session-one", "project-one")
-assert(start.schema_version == 1)
+assert(start.schema_version == 2)
 assert(start.event_type == "session_start")
 assert(start.session_id == "session-one")
 assert(start.elapsed_ms == 0)
@@ -63,6 +63,14 @@ assert(text_run.event_type == "text_run")
 assert(text_run.key_count == 4)
 assert(text_run.duration_ms == 10)
 assert(text_run.text == nil, "text_run must not have a text field")
+
+local control_key = schema.control_key_use("session-one", 16, "insert", "<C-Y>", 2)
+assert(control_key.event_type == "control_key_use")
+assert(control_key.mode == "insert")
+assert(control_key.key == "<C-Y>")
+assert(control_key.count == 2)
+assert(control_key.text == nil and control_key.mapped == nil)
+assert(pcall(schema.control_key_use, "session-one", 16, "insert", "<lt>C-Y>", 1) == false)
 
 local sequence = schema.key_sequence("session-one", 20, "normal", { "d", "d" }, 5)
 assert(sequence.mode == "normal")

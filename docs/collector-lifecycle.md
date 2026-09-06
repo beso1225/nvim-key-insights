@@ -45,4 +45,4 @@ Start is failure-atomic: storage or callback-registration failures remove the in
 
 The callback always returns `nil`, so it cannot consume or replace editor input. It checks the current buffer before aggregation. Special buffers and sensitive filenames or filetypes are force-excluded.
 
-Normal, Visual, and Operator-pending typed keys are grouped into sequences. The mapping-applied callback value is never stored, preventing mapping right-hand sides from entering a sequence. Insert, Replace, and Select input is reduced to key count and duration; Command and Search input content is discarded. See [Input aggregation](input-aggregation.md) for sequence boundaries and configuration.
+Normal, Visual, and Operator-pending typed keys are grouped into sequences. The mapping-applied callback value is never stored, preventing mapping right-hand sides from entering a sequence. Insert, Replace, and Select input is reduced to key count and duration, with a parallel aggregate for canonical control-key tokens; Command and Search input content is discarded. See [Input aggregation](input-aggregation.md) for sequence boundaries and configuration.

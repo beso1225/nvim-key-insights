@@ -1,4 +1,5 @@
 local contract_versions = require("key-insights.contract_versions")
+local key_tokens = require("key-insights.key_tokens")
 
 local M = {}
 
@@ -9,6 +10,12 @@ local sequence_modes = {
   normal = true,
   visual = true,
   operator_pending = true,
+}
+
+local text_input_modes = {
+  insert = true,
+  replace = true,
+  select = true,
 }
 
 local modes = vim.tbl_extend("force", sequence_modes, {
@@ -80,6 +87,19 @@ function M.text_run(session_id, elapsed_ms, key_count, duration_ms)
   local event = envelope("text_run", session_id, elapsed_ms)
   event.key_count = key_count
   event.duration_ms = duration_ms
+  return event
+end
+
+function M.control_key_use(session_id, elapsed_ms, mode, key, count)
+  assert(text_input_modes[mode] == true, "control key mode must be text input mode")
+  assert(key_tokens.is_control_token(key), "key must be a canonical control token")
+  assert_nonnegative_integer(count, "count")
+  assert(count > 0, "count must be positive")
+
+  local event = envelope("control_key_use", session_id, elapsed_ms)
+  event.mode = mode
+  event.key = key
+  event.count = count
   return event
 end
 

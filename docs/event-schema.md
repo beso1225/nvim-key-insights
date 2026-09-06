@@ -1,12 +1,12 @@
 # Event schema contract
 
-The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `1` is the initial compatibility boundary between the Lua collector and Rust analyzer. Its support lifetime and any future upgrade path are defined in the [schema compatibility policy](schema-compatibility.md).
+The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `2` is the current compatibility boundary between the Lua collector and Rust analyzer; the analyzer continues to read event schema `1` logs. Its support lifetime and any future upgrade path are defined in the [schema compatibility policy](schema-compatibility.md).
 
 ## Envelope
 
 Every event will contain:
 
-- `schema_version`: integer, currently `1`;
+- `schema_version`: integer, currently `2`;
 - `event_type`: a stable event discriminator;
 - `session_id`: a random identifier created for one Neovim collection session;
 - `elapsed_ms`: monotonic milliseconds since the session began.
@@ -18,6 +18,7 @@ The default event stream does not contain an absolute timestamp or file path. Pr
 - `session_start` and `session_end` define hard aggregation boundaries. `session_start` may include an anonymized `project_id`.
 - `key_sequence` represents a completed Normal, Visual, or Operator-pending sequence with canonical pre-mapping typed `keys` and `duration_ms`.
 - `text_run` records Insert-, Replace-, or Select-mode `key_count` and `duration_ms`, never its text.
+- `control_key_use` records an aggregated canonical control-key token, its Insert/Replace/Select mode, and a positive count. It never records the callback's mapped value or any text.
 - `mode_transition` records `from` and `to` modes.
 - `mapping_use` records a collector-generated opaque `mapping_id` and `typed_keys`. It does not record the mapping right-hand side because that value may contain commands, paths, or inserted text.
 
@@ -31,6 +32,7 @@ The collector stores one session per finalized `.jsonl` file. The validator acce
 
 - Raw per-key logging is disabled unless explicitly opted in.
 - Insert-mode text and command/search contents are never present under default settings.
+- Control-key aggregates contain only canonical control tokens such as `<C-Y>` or `<Tab>`; literal text that resembles a notation is retained as text and is not promoted into this event.
 - Terminal, prompt, `nofile`, and other special buffers are excluded.
 - Sensitive filenames and filetypes are force-excluded and cannot be enabled through ordinary configuration.
 - File paths are absent by default.

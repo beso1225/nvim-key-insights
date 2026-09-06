@@ -54,6 +54,8 @@
                     "sequence_keys",
                     "text_runs",
                     "text_keys",
+                    "control_key_uses",
+                    "unique_control_keys",
                     "mode_transitions",
                     "mapping_uses",
                     "repeated_key_runs",

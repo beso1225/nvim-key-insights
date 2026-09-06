@@ -39,8 +39,8 @@ class CodexSkillContractTests(unittest.TestCase):
             "`payload_schema_version`, `purpose`, `instructions`, `summary`, and the optional",
             "`keymap_snapshot`",
             "Reject any additional top-level key",
-            "`payload_schema_version` is `1`",
-            "`summary.schema_version` is `3`",
+            "`payload_schema_version` is `2`",
+            "`summary.schema_version` is `4`",
             "`keymap_snapshot.snapshot_version` is `1`",
             "`instructions.action_kinds` is exactly",
             "both required booleans are true",
@@ -75,7 +75,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_security_critical_skill_instructions_are_canonical(self) -> None:
         self.assertEqual(
             hashlib.sha256(SKILL.encode()).hexdigest(),
-            "476ce3d1b0727208d43c1bec33b619c9e93cdf663a2a6cfe90a013c7d52f3c61",
+            "9de3ded1ccb0e1ccc63a2fb6a800ae104647c68f02128d573ca0bcf2890a3c6e",
         )
 
     def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:

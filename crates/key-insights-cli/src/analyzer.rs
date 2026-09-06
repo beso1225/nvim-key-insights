@@ -5,11 +5,11 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::{
     ErgonomicSummary, Event, KeymapSnapshot, SequenceMode, SnapshotMapping, SnapshotMode,
-    ValidationError, ergonomics, ergonomics::ErgonomicAccumulator, keymap_snapshot::mapping_order,
-    validator::JsonlValidator,
+    TextInputMode, ValidationError, ergonomics, ergonomics::ErgonomicAccumulator,
+    keymap_snapshot::mapping_order, validator::JsonlValidator,
 };
 
-const SUMMARY_SCHEMA_VERSION: u32 = 3;
+const SUMMARY_SCHEMA_VERSION: u32 = 4;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -107,6 +107,8 @@ pub struct AnalysisSummary {
     pub sequence_keys: u64,
     pub text_runs: u64,
     pub text_keys: u64,
+    pub control_key_uses: u64,
+    pub unique_control_keys: u64,
     pub mode_transitions: u64,
     pub mapping_uses: u64,
     pub repeated_key_runs: u64,
@@ -116,6 +118,7 @@ pub struct AnalysisSummary {
     pub unique_repeated_keys: u64,
     pub modes: Vec<ModeStats>,
     pub keys: Vec<KeyCount>,
+    pub control_keys: Vec<ControlKeyCount>,
     pub mappings: Vec<MappingCount>,
     pub repeated_keys: Vec<RepeatedKeyStats>,
     pub ergonomics: ErgonomicSummary,
@@ -134,6 +137,14 @@ pub struct ModeStats {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeyCount {
+    pub key: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlKeyCount {
+    pub mode: String,
     pub key: String,
     pub count: u64,
 }
@@ -216,6 +227,8 @@ struct Accumulator {
     sequence_keys: u64,
     text_runs: u64,
     text_keys: u64,
+    control_key_uses: u64,
+    control_keys: BTreeMap<(String, String), u64>,
     mode_transitions: u64,
     mapping_uses: u64,
     repeated_key_runs: u64,
@@ -353,6 +366,35 @@ impl Accumulator {
                 self.text_runs = self.text_runs.saturating_add(1);
                 self.text_keys = self.text_keys.saturating_add(u64::from(*key_count));
             }
+            Event::ControlKeyUse {
+                mode, key, count, ..
+            } => {
+                self.control_key_uses = self.control_key_uses.saturating_add(u64::from(*count));
+                let mode = text_input_mode_name(mode).to_owned();
+                let identity = (mode, key.clone());
+                if !self.control_keys.contains_key(&identity)
+                    && self.control_keys.len() >= MAX_DISTINCT_ITEMS
+                {
+                    self.record_error(AnalysisError::TooManyDistinctKeys);
+                } else if !self.control_keys.contains_key(&identity)
+                    && self
+                        .retained_token_bytes
+                        .saturating_add(identity.0.len())
+                        .saturating_add(identity.1.len())
+                        > MAX_RETAINED_TOKEN_BYTES
+                {
+                    self.record_error(AnalysisError::RetainedTokenBytesExceeded);
+                } else {
+                    if !self.control_keys.contains_key(&identity) {
+                        self.retained_token_bytes = self
+                            .retained_token_bytes
+                            .saturating_add(identity.0.len())
+                            .saturating_add(identity.1.len());
+                    }
+                    let value = self.control_keys.entry(identity).or_default();
+                    *value = value.saturating_add(u64::from(*count));
+                }
+            }
             Event::ModeTransition { from, to, .. } => {
                 self.ergonomics.observe_mode_transition(from, to);
                 self.mode_transitions = self.mode_transitions.saturating_add(1);
@@ -441,6 +483,7 @@ impl Accumulator {
         snapshot: Option<&KeymapSnapshot>,
     ) -> AnalysisSummary {
         let unique_keys = self.keys.len() as u64;
+        let unique_control_keys = self.control_keys.len() as u64;
         let unique_mappings = self.mappings.len() as u64;
         let unique_repeated_keys = self.repeated_keys.len() as u64;
         let modes = self
@@ -456,6 +499,7 @@ impl Accumulator {
             .into_iter()
             .map(|(key, count)| KeyCount { key, count })
             .collect();
+        let control_keys = ranked_control_keys(self.control_keys);
         let mapping_attribution =
             snapshot.map(|value| build_mapping_attribution(value, &self.mappings));
         let ergonomics =
@@ -487,6 +531,8 @@ impl Accumulator {
             sequence_keys: self.sequence_keys,
             text_runs: self.text_runs,
             text_keys: self.text_keys,
+            control_key_uses: self.control_key_uses,
+            unique_control_keys,
             mode_transitions: self.mode_transitions,
             mapping_uses: self.mapping_uses,
             repeated_key_runs: self.repeated_key_runs,
@@ -496,6 +542,7 @@ impl Accumulator {
             unique_repeated_keys,
             modes,
             keys,
+            control_keys,
             mappings,
             repeated_keys,
             ergonomics,
@@ -546,11 +593,35 @@ fn ranked(counts: BTreeMap<String, u64>) -> Vec<(String, u64)> {
     counts
 }
 
+fn ranked_control_keys(counts: BTreeMap<(String, String), u64>) -> Vec<ControlKeyCount> {
+    let mut counts: Vec<_> = counts
+        .into_iter()
+        .map(|((mode, key), count)| ControlKeyCount { mode, key, count })
+        .collect();
+    counts.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.mode.cmp(&right.mode))
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    counts.truncate(MAX_RANKED_ITEMS);
+    counts
+}
+
 fn sequence_mode_name(mode: &SequenceMode) -> &'static str {
     match mode {
         SequenceMode::Normal => "normal",
         SequenceMode::Visual => "visual",
         SequenceMode::OperatorPending => "operator_pending",
+    }
+}
+
+fn text_input_mode_name(mode: &TextInputMode) -> &'static str {
+    match mode {
+        TextInputMode::Insert => "insert",
+        TextInputMode::Replace => "replace",
+        TextInputMode::Select => "select",
     }
 }
 
@@ -685,6 +756,7 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
     writeln!(output, "- Sequence keys: {}", summary.sequence_keys).unwrap();
     writeln!(output, "- Text runs: {}", summary.text_runs).unwrap();
     writeln!(output, "- Text keys: {}", summary.text_keys).unwrap();
+    writeln!(output, "- Control key uses: {}", summary.control_key_uses).unwrap();
     writeln!(output, "- Mode transitions: {}", summary.mode_transitions).unwrap();
     writeln!(output, "- Mapping uses: {}", summary.mapping_uses).unwrap();
     writeln!(
@@ -702,6 +774,7 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
 
     render_modes(&mut output, summary);
     render_keys(&mut output, summary);
+    render_control_keys(&mut output, summary);
     render_mappings(&mut output, summary);
     render_mapping_attribution(&mut output, summary);
     render_repeated_keys(&mut output, summary);
@@ -739,6 +812,26 @@ fn render_keys(output: &mut String, summary: &AnalysisSummary) {
     writeln!(output, "| --- | ---: |").unwrap();
     for key in &summary.keys {
         writeln!(output, "| {} | {} |", html_code(&key.key), key.count).unwrap();
+    }
+    output.push('\n');
+}
+
+fn render_control_keys(output: &mut String, summary: &AnalysisSummary) {
+    writeln!(output, "## Text-input control keys\n").unwrap();
+    if summary.control_keys.is_empty() {
+        writeln!(output, "_No text-input control keys recorded._\n").unwrap();
+        return;
+    }
+    writeln!(output, "| Mode | Key | Count |\n| --- | --- | ---: |").unwrap();
+    for key in &summary.control_keys {
+        writeln!(
+            output,
+            "| {} | {} | {} |",
+            key.mode,
+            html_code(&key.key),
+            key.count
+        )
+        .unwrap();
     }
     output.push('\n');
 }

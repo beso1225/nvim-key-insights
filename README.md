@@ -13,8 +13,9 @@ Privacy-first Neovim usage collection and deterministic local analysis.
 - an optional Codex workflow that reads only a bounded sanitized summary.
 
 Raw key logging, Insert-mode text, command/search text, and file paths are not
-captured by the default workflow. Terminal, prompt, special, and sensitive
-buffers are excluded from collection.
+captured by the default workflow. Canonical Insert/Replace/Select control-key
+tokens may be counted without retaining surrounding text. Terminal, prompt,
+special, and sensitive buffers are excluded from collection.
 
 ## Status
 

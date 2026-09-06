@@ -49,6 +49,7 @@ Legacy filenames can still be selected explicitly.
 - total session duration;
 - key-sequence and sanitized sequence-key counts;
 - Insert/Replace/Select text-run counts without text content;
+- Insert/Replace/Select canonical control-key counts and rankings without text content;
 - sequence counts and keys by Normal, Visual, and Operator-pending mode;
 - mode-transition and opaque mapping-use counts;
 - deterministic key and mapping frequency rankings, capped at 100 rows each;
@@ -60,7 +61,8 @@ Legacy filenames can still be selected explicitly.
 - cautious, sample-guarded repeated-motion and current-mapping coverage
   candidates, capped at 100 total rows.
 
-Every analysis emits summary schema v3. Collector events remain schema v1 and
+Every analysis emits summary schema v4. Collector events use schema v2 while
+the reader remains compatible with schema v1, and
 the optional snapshot document remains version 1; these are independent
 contracts. The supported versions and regeneration paths are defined in the
 [schema compatibility policy](schema-compatibility.md). With a snapshot, the
@@ -71,7 +73,7 @@ exact mode and canonical LHS match; it does not claim that a buffer-local entry
 was active in every context. Current mappings that were unobserved may become
 candidates only after three complete sessions and 100 sequence keys; this does
 not claim that the current snapshot existed throughout the sample. Omitting the
-snapshot emits the same schema-v3 structure with unavailable mapping coverage.
+snapshot emits the same schema-v4 structure with unavailable mapping coverage.
 Snapshot JSON is limited to 1 MiB and 4,096 canonical,
 strictly ordered mappings. Unknown fields, unsupported versions, malformed or
 inconsistent IDs, invalid tokens, duplicates, and noncanonical ordering fail
@@ -131,7 +133,7 @@ The summary must be an owner-only regular file. A snapshot may be supplied as
 an owner-only file or through stdin (`-`); stdout is also selected with
 `--output -` and receives the exact compact JSON bytes without a trailing
 newline. File outputs are staged atomically and cannot alias either input.
-The Rust library and CLI renderer accept only an in-memory schema-v3 `AnalysisSummary`
+The Rust library and CLI renderer accept only an in-memory schema-v4 `AnalysisSummary`
 and an optional parsed keymap snapshot, emits compact deterministic JSON, and
 rejects unsupported summary versions or payloads larger than 256 KiB. The
 payload contains a fixed purpose, evidence and collision-check instructions,

@@ -289,7 +289,7 @@ def measure_analyzer(binary: Path, session_directory: Path, workspace: Path) -> 
         raise LocalPerformanceTestError("local analyzer produced invalid JSON") from error
     if (
         not isinstance(summary, dict)
-        or summary.get("schema_version") != 3
+        or summary.get("schema_version") != 4
         or not isinstance(summary.get("ergonomics"), dict)
         or summary["ergonomics"].get("contract_version") != 2
     ):
@@ -357,7 +357,7 @@ def execute(
     manifest = {
         "manifest_version": 1,
         "mode": "real-local-performance",
-        "contracts": {"event_schema": 1, "summary_schema": 3, "ergonomics": 2},
+        "contracts": {"event_schema": 2, "summary_schema": 4, "ergonomics": 2},
         "tools": {
             "key_insights": analyzer_version,
             "neovim": nvim_version,

@@ -1,8 +1,8 @@
 use key_insights::{PrivacyPolicy, SCHEMA_VERSION};
 
 #[test]
-fn schema_starts_at_version_one() {
-    assert_eq!(SCHEMA_VERSION, 1);
+fn schema_uses_the_current_event_log_version() {
+    assert_eq!(SCHEMA_VERSION, 2);
 }
 
 #[test]

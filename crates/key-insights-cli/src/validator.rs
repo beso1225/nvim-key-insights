@@ -4,7 +4,7 @@ use std::{
     io::{self, BufRead, Read},
 };
 
-use crate::{Event, SCHEMA_VERSION};
+use crate::{Event, SCHEMA_VERSION, is_supported_schema_version};
 
 pub const MAX_EVENT_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_SESSION_ID_BYTES: usize = 128;
@@ -186,11 +186,21 @@ fn validate_event(
     seen_session_ids: &mut HashSet<String>,
     summary: &mut ValidationSummary,
 ) -> Result<(), ValidationError> {
-    if event.schema_version() != SCHEMA_VERSION {
+    if !is_supported_schema_version(event.schema_version()) {
         return Err(error(
             line,
             ValidationErrorKind::UnsupportedSchema {
                 found: event.schema_version(),
+            },
+        ));
+    }
+    if let Event::ControlKeyUse { schema_version, .. } = event
+        && *schema_version != SCHEMA_VERSION
+    {
+        return Err(error(
+            line,
+            ValidationErrorKind::UnsupportedSchema {
+                found: *schema_version,
             },
         ));
     }
@@ -264,6 +274,15 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
         Event::MappingUse { mapping_id, .. } if mapping_id.is_empty()
     ) {
         return Err(error(line, ValidationErrorKind::EmptyMappingId));
+    }
+    if matches!(
+        event,
+        Event::ControlKeyUse { key, count, .. }
+            if *count == 0
+                || !crate::keymap_snapshot::is_canonical_token(key)
+                || !crate::keymap_snapshot::is_control_token(key)
+    ) {
+        return Err(error(line, ValidationErrorKind::MalformedEvent));
     }
     if matches!(
         event,

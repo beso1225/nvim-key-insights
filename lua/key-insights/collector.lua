@@ -13,10 +13,17 @@ local SEQUENCE_MODES = {
   operator_pending = true,
   visual = true,
 }
+local TEXT_INPUT_MODES = {
+  insert = true,
+  replace = true,
+  select = true,
+}
 local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
 local MAX_PENDING_EVENTS = 1024
 local MAX_PENDING_BYTES = 4 * 1024 * 1024
+local MAX_CONTROL_KEY_BUCKETS = 1024
 local PENDING_LIMIT_ERROR = "collector pending queue limit exceeded"
+local CONTROL_KEY_LIMIT_ERROR = "collector control-key limit exceeded"
 local CALLBACK_ERROR = "collector callback failed"
 local PENDING_WRITE_ERROR = "collector pending write failed"
 local SCHEDULER_CONTRACT_ERROR = "collector scheduler contract violated"
@@ -90,6 +97,16 @@ local function normalize_mode(mode, cmdtype)
   return "other"
 end
 
+local function normalize_text_input_mode(mode)
+  if string.sub(mode, 1, 1) == "R" then
+    return "replace"
+  end
+  if mode == "s" or mode == "S" or mode == "\19" then
+    return "select"
+  end
+  return "insert"
+end
+
 function M.new(spec)
   local dependencies = spec or {}
   local options = dependencies.options or config.defaults()
@@ -124,12 +141,50 @@ function M.new(spec)
     _session_id = nil,
     _session_writer = nil,
     _sequence = nil,
+    _control_keys = {},
+    _control_key_bucket_count = 0,
     _text_run = nil,
     _end_queued = false,
     _unregister = nil,
     _last_error = nil,
   }, Collector)
   return instance
+end
+
+function Collector:_emit_control_keys(elapsed_ms)
+  if next(self._control_keys) == nil then
+    return true
+  end
+
+  local entries = {}
+  for mode, keys in pairs(self._control_keys) do
+    for key, count in pairs(keys) do
+      table.insert(entries, { count = count, key = key, mode = mode })
+    end
+  end
+  table.sort(entries, function(left, right)
+    if left.mode ~= right.mode then
+      return left.mode < right.mode
+    end
+    return left.key < right.key
+  end)
+
+  local events = {}
+  for _, entry in ipairs(entries) do
+    table.insert(events, schema.control_key_use(
+      self._session_id,
+      elapsed_ms,
+      entry.mode,
+      entry.key,
+      entry.count
+    ))
+  end
+  local queued = self:_queue_many(events)
+  if queued then
+    self._control_keys = {}
+    self._control_key_bucket_count = 0
+  end
+  return queued
 end
 
 function Collector:_emit_sequence(elapsed_ms)
@@ -219,7 +274,10 @@ function Collector:_flush_input(elapsed_ms)
     self._text_run = nil
     return false
   end
-  return self:_emit_text_run(elapsed_ms)
+  if not self:_emit_text_run(elapsed_ms) then
+    return false
+  end
+  return self:_emit_control_keys(elapsed_ms)
 end
 
 function Collector:_typed_tokens(typed)
@@ -272,8 +330,8 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
   return true
 end
 
-function Collector:_record_text_keys(typed, elapsed_ms)
-  local key_count = #self:_typed_tokens(typed)
+function Collector:_record_text_keys(typed, elapsed_ms, typed_tokens)
+  local key_count = #(typed_tokens or self:_typed_tokens(typed))
   if key_count == 0 then
     return
   end
@@ -286,6 +344,29 @@ function Collector:_record_text_keys(typed, elapsed_ms)
   end
   self._text_run.key_count = self._text_run.key_count + key_count
   self._text_run.last_ms = elapsed_ms
+end
+
+function Collector:_record_control_keys(mode, typed_tokens)
+  if not TEXT_INPUT_MODES[mode] then
+    return
+  end
+  for _, key in ipairs(typed_tokens) do
+    if key_tokens.is_control_token(key) then
+      local mode_keys = self._control_keys[mode]
+      if mode_keys == nil then
+        mode_keys = {}
+        self._control_keys[mode] = mode_keys
+      end
+      if mode_keys[key] == nil then
+        if self._control_key_bucket_count >= MAX_CONTROL_KEY_BUCKETS then
+          self._last_error = CONTROL_KEY_LIMIT_ERROR
+          return
+        end
+        self._control_key_bucket_count = self._control_key_bucket_count + 1
+      end
+      mode_keys[key] = (mode_keys[key] or 0) + 1
+    end
+  end
 end
 
 function Collector:_elapsed_ms()
@@ -495,7 +576,8 @@ function Collector:_handle_key(mapped, typed)
     self:_schedule_mapping_reprime()
   end
 
-  local mode = normalize_mode(self._current_mode(), self._current_cmdtype())
+  local raw_mode = self._current_mode()
+  local mode = normalize_mode(raw_mode, self._current_cmdtype())
   if self._last_mode ~= nil and self._last_mode ~= mode then
     local previous_mode = self._last_mode
     self._last_mode = mode
@@ -520,7 +602,9 @@ function Collector:_handle_key(mapped, typed)
     end
     self:_record_mapping_use(mapped, typed, mode, typed_tokens, elapsed_ms)
   elseif mode == "insert" then
-    self:_record_text_keys(typed, elapsed_ms)
+    local typed_tokens = self:_typed_tokens(typed)
+    self:_record_text_keys(typed, elapsed_ms, typed_tokens)
+    self:_record_control_keys(normalize_text_input_mode(raw_mode), typed_tokens)
   end
 end
 
@@ -563,6 +647,8 @@ function Collector:_reset_session()
     pcall(self._mapping_resolver.reset, self._mapping_resolver)
   end
   self._sequence = nil
+  self._control_keys = {}
+  self._control_key_bucket_count = 0
   self._session_id = nil
   self._session_writer = nil
   self._started_at_ms = nil

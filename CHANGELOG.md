@@ -8,6 +8,10 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- Separate privacy-safe Insert/Replace/Select control-key aggregates from the existing text-run counts, including deterministic mode/key rankings and schema compatibility updates.
+
 ## [0.1.0] - 2026-09-02
 
 ### Added

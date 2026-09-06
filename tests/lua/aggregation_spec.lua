@@ -1,5 +1,6 @@
 local collector = require("key-insights.collector")
 local config = require("key-insights.config")
+local key_tokens = require("key-insights.key_tokens")
 local schema = require("key-insights.schema")
 local storage = require("key-insights.storage")
 
@@ -139,6 +140,41 @@ special_collector:stop()
 local special_sequences = events_of_type(special.events, "key_sequence")
 assert(#special_sequences == 1)
 assert(vim.deep_equal(special_sequences[1].keys, { "<C-X>", "a" }))
+
+assert(key_tokens.is_control_token("<C-Y>"))
+assert(key_tokens.is_control_token("<Tab>"))
+assert(not key_tokens.is_control_token("<lt>C-Y>"), "literal bracket text must remain text")
+
+local control_collector, control = new_harness("aggregation-control-keys")
+control_collector:start()
+control.mode = "i"
+control.now_ms = 10
+control.callback("mapped-text-secret", "a")
+control.now_ms = 20
+control.callback("mapped-control-secret", "<C-Y>")
+control.now_ms = 30
+control.callback("mapped-control-secret", "<C-Y>")
+control.mode = "R"
+control.now_ms = 40
+control.callback("mapped-replace-secret", "<Tab>")
+control.mode = "s"
+control.now_ms = 50
+control.callback("mapped-select-secret", "<Esc>")
+control.now_ms = 60
+control_collector:stop()
+
+local control_uses = events_of_type(control.events, "control_key_use")
+assert(#control_uses == 3)
+assert(control_uses[1].mode == "insert")
+assert(control_uses[1].key == "<C-Y>" and control_uses[1].count == 2)
+assert(control_uses[2].mode == "replace" and control_uses[2].key == "<Tab>")
+assert(control_uses[3].mode == "select" and control_uses[3].key == "<Esc>")
+local control_text_runs = events_of_type(control.events, "text_run")
+assert(#control_text_runs == 1, "existing text-run aggregation must remain unchanged")
+local control_json = vim.json.encode(control.events)
+for _, secret in ipairs({ "mapped-text-secret", "mapped-control-secret", "mapped-replace-secret", "mapped-select-secret" }) do
+  assert(string.find(control_json, secret, 1, true) == nil)
+end
 
 local text_collector, text = new_harness("aggregation-text")
 text_collector:start()

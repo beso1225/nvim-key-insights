@@ -274,9 +274,9 @@ def execute(workspace: Path, binary: Path) -> bytes:
         payload_document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ForwardTestError("generated JSON artifact is invalid") from error
-    if summary_document.get("schema_version") != 3:
+    if summary_document.get("schema_version") != 4:
         raise ForwardTestError("generated summary schema is unsupported")
-    if payload_document.get("payload_schema_version") != 1:
+    if payload_document.get("payload_schema_version") != 2:
         raise ForwardTestError("generated payload schema is unsupported")
     if not report.startswith(b"# Neovim Key Insights"):
         raise ForwardTestError("generated report contract is invalid")
@@ -284,7 +284,7 @@ def execute(workspace: Path, binary: Path) -> bytes:
     manifest = {
         "manifest_version": 1,
         "mode": "synthetic-offline",
-        "contracts": {"event_schema": 1, "payload_schema": 1, "summary_schema": 3},
+        "contracts": {"event_schema": 2, "payload_schema": 2, "summary_schema": 4},
         "artifacts": {
             "payload": artifact_metadata(payload),
             "report": artifact_metadata(report),
