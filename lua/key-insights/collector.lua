@@ -288,6 +288,7 @@ function Collector:_typed_tokens(typed)
   if type(canonical) ~= "string" or canonical == "" then
     return {}
   end
+  canonical = key_tokens.normalize_caret_notation(canonical, typed)
 
   local tokens = key_tokens.tokenize(canonical, {
     max_input_bytes = MAX_CALLBACK_INPUT_BYTES,

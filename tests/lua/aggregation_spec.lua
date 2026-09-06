@@ -4,7 +4,8 @@ local key_tokens = require("key-insights.key_tokens")
 local schema = require("key-insights.schema")
 local storage = require("key-insights.storage")
 
-local function new_harness(session_id, options)
+local function new_harness(session_id, options, overrides)
+  overrides = overrides or {}
   local state = {
     buffer = { buftype = "", filetype = "lua", name = "src/init.lua" },
     callback = nil,
@@ -27,7 +28,7 @@ local function new_harness(session_id, options)
     current_mode = function()
       return state.mode
     end,
-    keytrans = function(key)
+    keytrans = overrides.keytrans or function(key)
       return key
     end,
     new_session_id = function()
@@ -48,6 +49,14 @@ local function new_harness(session_id, options)
     end,
     register_on_key = function(callback)
       state.callback = callback
+      if overrides.real_on_key then
+        local namespace = vim.api.nvim_create_namespace("key-insights." .. session_id)
+        vim.on_key(callback, namespace)
+        return function()
+          vim.on_key(nil, namespace)
+          state.callback = nil
+        end
+      end
       return function()
         state.callback = nil
       end
@@ -180,6 +189,23 @@ local control_json = vim.json.encode(control.events)
 for _, secret in ipairs({ "mapped-text-secret", "mapped-control-secret", "mapped-replace-secret", "mapped-select-secret" }) do
   assert(string.find(control_json, secret, 1, true) == nil)
 end
+
+local real_collector, real = new_harness("aggregation-real-on-key", nil, {
+  keytrans = function(key)
+    if key == string.char(25) then
+      return "^Y"
+    end
+    return vim.fn.keytrans(key)
+  end,
+  real_on_key = true,
+})
+real_collector:start()
+real.mode = "i"
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-Y>", true, false, true), "xt", false)
+real_collector:stop()
+local real_control_uses = events_of_type(real.events, "control_key_use")
+assert(#real_control_uses == 1)
+assert(real_control_uses[1].mode == "insert" and real_control_uses[1].key == "<C-Y>")
 
 local control_limit_collector, control_limit = new_harness("aggregation-control-limit")
 control_limit_collector:start()

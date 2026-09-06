@@ -44,6 +44,25 @@ local SAFE_BRACKETED_CONTROL_TOKENS = {
   ["<S-\\>"] = true,
 }
 
+local CARET_MARKERS = {
+  [27] = "[",
+  [28] = "\\",
+  [29] = "]",
+  [30] = "^",
+  [31] = "_",
+  [127] = "?",
+}
+
+local function caret_marker(byte)
+  if byte == 0 then
+    return "@"
+  end
+  if byte >= 1 and byte <= 26 then
+    return string.char(byte + 64)
+  end
+  return CARET_MARKERS[byte]
+end
+
 local function valid_limit(value)
   return value == nil
     or (type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value))
@@ -100,6 +119,45 @@ local function valid_utf8(value)
     index = index + width
   end
   return true
+end
+
+function M.normalize_caret_notation(canonical, typed)
+  if type(canonical) ~= "string" or type(typed) ~= "string" or typed == "" then
+    return canonical
+  end
+
+  local caret_form = {}
+  local has_control = false
+  for index = 1, #typed do
+    local byte = string.byte(typed, index)
+    local marker = caret_marker(byte)
+    if marker ~= nil then
+      table.insert(caret_form, "^" .. marker)
+      has_control = true
+    else
+      table.insert(caret_form, string.sub(typed, index, index))
+    end
+  end
+  if not has_control or table.concat(caret_form) ~= canonical then
+    return canonical
+  end
+
+  local normalized = {}
+  for index = 1, #typed do
+    local marker = caret_marker(string.byte(typed, index))
+    if marker ~= nil then
+      if marker == "[" then
+        table.insert(normalized, "<Esc>")
+      elseif marker == "?" then
+        table.insert(normalized, "<Del>")
+      else
+        table.insert(normalized, "<C-" .. marker .. ">")
+      end
+    else
+      table.insert(normalized, string.sub(typed, index, index))
+    end
+  end
+  return table.concat(normalized)
 end
 
 function M.tokenize(canonical, limits)
