@@ -126,19 +126,32 @@ function M.normalize_caret_notation(canonical, typed)
     return canonical
   end
 
-  local caret_form = {}
+  -- Some Neovim versions expose C0 bytes from keytrans as caret pairs. Only
+  -- normalize when the raw callback input also contains a control byte so
+  -- literal text such as ^Y remains text.
   local has_control = false
+  for index = 1, #typed do
+    local byte = string.byte(typed, index)
+    if byte < 0x20 or byte == 0x7F then
+      has_control = true
+      break
+    end
+  end
+  if not has_control then
+    return canonical
+  end
+
+  local caret_form = {}
   for index = 1, #typed do
     local byte = string.byte(typed, index)
     local marker = caret_marker(byte)
     if marker ~= nil then
       table.insert(caret_form, "^" .. marker)
-      has_control = true
     else
       table.insert(caret_form, string.sub(typed, index, index))
     end
   end
-  if not has_control or table.concat(caret_form) ~= canonical then
+  if table.concat(caret_form) ~= canonical then
     return canonical
   end
 
