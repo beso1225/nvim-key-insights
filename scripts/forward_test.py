@@ -90,14 +90,14 @@ def write_private_new(path: Path, payload: bytes) -> None:
 def synthetic_jsonl() -> bytes:
     events = [
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "session_start",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 0,
             "project_id": PROJECT_CANARY,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 40,
@@ -106,7 +106,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 30,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "text_run",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 70,
@@ -114,19 +114,28 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 20,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "event_type": "control_key_use",
+            "session_id": SESSION_IDS[0],
+            "elapsed_ms": 80,
+            "mode": "insert",
+            "key": "<C-Y>",
+            "count": 2,
+        },
+        {
+            "schema_version": 2,
             "event_type": "session_end",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 100,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "session_start",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 0,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 10,
@@ -135,7 +144,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 0,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 20,
@@ -144,7 +153,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 4,
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "event_type": "session_end",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 30,
