@@ -48,7 +48,7 @@ Move the reviewed Unreleased notes under a dated release heading:
 ```sh
 UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" \
   uv run --python-preference only-system python scripts/release.py prepare-changelog \
-  --version 0.1.0 --date 2026-08-22
+  --version 0.2.0 --date 2026-09-06
 ```
 
 This command is also non-publishing and refuses a mismatched version, invalid
@@ -63,7 +63,7 @@ Run every local gate before committing the release preparation:
 nix develop --no-update-lock-file --command pkf run --no-cache check
 nix flake check --no-update-lock-file
 uv run --python-preference only-system python scripts/release.py \
-  check --tag v0.1.0 \
+  check --tag v0.2.0 \
   --nix-system aarch64-darwin \
   --nix-system aarch64-linux \
   --nix-system x86_64-linux
@@ -80,7 +80,7 @@ reproducible archive epoch. The output directory must not already exist:
 epoch="$(git show -s --format=%ct HEAD)"
 nix develop --no-update-lock-file --command \
   uv run --python-preference only-system python scripts/release.py build-artifacts \
-  --version 0.1.0 --epoch "$epoch" --output-dir dist
+  --version 0.2.0 --epoch "$epoch" --output-dir dist
 (cd dist && shasum -a 256 --check SHA256SUMS)
 ```
 
@@ -97,8 +97,8 @@ configuration, repository metadata, or build outputs.
 Create an annotated tag on the reviewed merge commit:
 
 ```sh
-git tag -a "v0.1.0" -m "nvim-key-insights 0.1.0"
-git push origin "v0.1.0"
+git tag -a "v0.2.0" -m "nvim-key-insights 0.2.0"
+git push origin "v0.2.0"
 ```
 
 The tag-only release workflow re-runs the version, schema, test, artifact, and

@@ -171,8 +171,10 @@
           default = pkgs.mkShell {
             packages = [
               pkgs.actionlint
+              pkgs.bash
               pkgs.cargo
               pkgs.clippy
+              pkgs.coreutils
               pkgs.neovim
               pkgs.pkl
               pkgs.uv
@@ -184,6 +186,8 @@
               pkgs.rustfmt
               pkfire.packages.${system}.default
             ];
+            KEY_INSIGHTS_TEST_SHELL = "${pkgs.bash}/bin/bash";
+            KEY_INSIGHTS_TEST_PATH = pkgs.lib.makeBinPath [ pkgs.bash pkgs.coreutils ];
           };
         });
     };

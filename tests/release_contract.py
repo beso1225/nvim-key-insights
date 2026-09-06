@@ -177,7 +177,7 @@ def build_artifacts(root: Path, output: Path, epoch: int = 1_700_000_000):
     return run_release(
         "build-artifacts",
         "--version",
-        "0.1.0",
+        "0.2.0",
         "--epoch",
         str(epoch),
         "--output-dir",
@@ -197,7 +197,7 @@ class ReleaseContractTest(unittest.TestCase):
         ).stdout
         result = run_release("check", "--nix-system", system)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "release contract 0.1.0: ok")
+        self.assertEqual(result.stdout.strip(), "release contract 0.2.0: ok")
 
         cargo = tomllib.loads(
             (ROOT / "crates/key-insights-cli/Cargo.toml").read_text()
@@ -212,7 +212,7 @@ class ReleaseContractTest(unittest.TestCase):
             "builtins.fromTOML (builtins.readFile ./crates/key-insights-cli/Cargo.toml)",
             flake,
         )
-        self.assertNotIn('version = "0.1.0";', flake)
+        self.assertNotIn('version = "0.2.0";', flake)
 
     def test_schema_versions_match_runtime_and_bundled_contracts(self) -> None:
         self.assertTrue(SCHEMA_COMPATIBILITY.is_file())
@@ -347,10 +347,10 @@ class ReleaseContractTest(unittest.TestCase):
                 )
 
     def test_release_tag_must_exactly_match_the_package_version(self) -> None:
-        accepted = run_release("check", "--tag", "v0.1.0")
+        accepted = run_release("check", "--tag", "v0.2.0")
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
-        for tag in ("0.1.0", "v0.1.1", "v0.1.0-rc.1", "refs/tags/v0.1.0"):
+        for tag in ("0.2.0", "v0.2.1", "v0.2.0-rc.1", "refs/tags/v0.2.0"):
             with self.subTest(tag=tag):
                 rejected = run_release("check", "--tag", tag)
                 self.assertNotEqual(rejected.returncode, 0)
@@ -386,25 +386,26 @@ class ReleaseContractTest(unittest.TestCase):
             result = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             changelog = (root / "CHANGELOG.md").read_text()
-            self.assertIn("## [Unreleased]\n\n## [0.1.0] - 2026-08-22", changelog)
+            self.assertIn("## [Unreleased]\n\n## [0.2.0] - 2026-09-06", changelog)
+            self.assertIn("## [0.1.0] - 2026-09-02", changelog)
             write_test_license(root)
             mark_release_documentation_published(root)
-            check = run_release("check", "--tag", "v0.1.0", root=root)
+            check = run_release("check", "--tag", "v0.2.0", root=root)
             self.assertEqual(check.returncode, 0, check.stderr)
 
             repeated = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertNotEqual(repeated.returncode, 0)
@@ -418,9 +419,9 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -436,7 +437,7 @@ class ReleaseContractTest(unittest.TestCase):
                     path = root / relative
                     published = path.read_text()
                     path.write_text(published + "\n" + wording + "\n")
-                    result = run_release("check", "--tag", "v0.1.0", root=root)
+                    result = run_release("check", "--tag", "v0.2.0", root=root)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("prerelease-only wording", result.stderr)
                     path.write_text(published)
@@ -449,9 +450,9 @@ class ReleaseContractTest(unittest.TestCase):
             changelog_path = root / "CHANGELOG.md"
             original = changelog_path.read_bytes()
             for version, date in (
-                ("0.2.0", "2026-08-22"),
-                ("0.1.0", "22-08-2026"),
-                ("0.1.0", "2026-02-30"),
+                ("0.3.0", "2026-09-06"),
+                ("0.2.0", "22-08-2026"),
+                ("0.2.0", "2026-02-30"),
             ):
                 with self.subTest(version=version, date=date):
                     result = run_release(
@@ -475,9 +476,9 @@ class ReleaseContractTest(unittest.TestCase):
             empty = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertNotEqual(empty.returncode, 0)
@@ -487,21 +488,21 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
             write_test_license(root)
             changed = changelog_path.read_text().replace(
-                "## [0.1.0] - 2026-08-22",
-                "## [0.2.0] - 2026-08-23\n\n### Added\n\n- Future.\n\n"
-                "## [0.1.0] - 2026-08-22",
+                "## [0.2.0] - 2026-09-06",
+                "## [0.3.0] - 2026-09-07\n\n### Added\n\n- Future.\n\n"
+                "## [0.2.0] - 2026-09-06",
                 1,
             )
             changelog_path.write_text(changed)
-            nonlatest = run_release("check", "--tag", "v0.1.0", root=root)
+            nonlatest = run_release("check", "--tag", "v0.2.0", root=root)
             self.assertNotEqual(nonlatest.returncode, 0)
             self.assertIn("latest changelog release", nonlatest.stderr)
 
@@ -524,10 +525,10 @@ class ReleaseContractTest(unittest.TestCase):
 
             with mock.patch.object(release, "stage_file", side_effect=edit_after_stage):
                 with self.assertRaises(release.ContractError):
-                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
-            self.assertNotIn("## [0.1.0]", changelog_path.read_text())
+            self.assertNotIn("## [0.2.0]", changelog_path.read_text())
             self.assertEqual(list(root.rglob(".release-new-CHANGELOG.md-*")), [])
 
     def test_changelog_edit_at_atomic_reservation_is_preserved(self) -> None:
@@ -553,10 +554,10 @@ class ReleaseContractTest(unittest.TestCase):
                 release.os, "replace", side_effect=edit_at_atomic_reservation
             ):
                 with self.assertRaises(release.ContractError):
-                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
-            self.assertNotIn("## [0.1.0]", changelog_path.read_text())
+            self.assertNotIn("## [0.2.0]", changelog_path.read_text())
             self.assertEqual(list(root.rglob(".release-*-CHANGELOG.md-*")), [])
 
     def test_tag_requires_an_owner_supplied_regular_license(self) -> None:
@@ -567,20 +568,20 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
 
-            missing = run_release("check", "--tag", "v0.1.0", root=root)
+            missing = run_release("check", "--tag", "v0.2.0", root=root)
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn("LICENSE", missing.stderr)
 
             license_path = root / "LICENSE"
             license_path.write_text(" \n")
-            empty = run_release("check", "--tag", "v0.1.0", root=root)
+            empty = run_release("check", "--tag", "v0.2.0", root=root)
             self.assertNotEqual(empty.returncode, 0)
             self.assertIn("nonempty", empty.stderr)
 
@@ -588,7 +589,7 @@ class ReleaseContractTest(unittest.TestCase):
             target = root / "license-target"
             target.write_text("test license\n")
             license_path.symlink_to(target)
-            linked = run_release("check", "--tag", "v0.1.0", root=root)
+            linked = run_release("check", "--tag", "v0.2.0", root=root)
             self.assertNotEqual(linked.returncode, 0)
             self.assertIn("not a symlink", linked.stderr)
 
@@ -600,9 +601,9 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -612,11 +613,11 @@ class ReleaseContractTest(unittest.TestCase):
 
             mutations = (
                 (
-                    original + "\n## [0.2.0] - 2026-08-21\n\n### Added\n\n- Out of order.\n",
+                    original + "\n## [0.3.0] - 2026-08-21\n\n### Added\n\n- Out of order.\n",
                     "version order",
                 ),
                 (
-                    original + "\n## [0.0.9] - 2026-08-23\n\n### Added\n\n- Future date.\n",
+                    original + "\n## [0.0.9] - 2026-09-07\n\n### Added\n\n- Future date.\n",
                     "date order",
                 ),
                 (
@@ -631,7 +632,7 @@ class ReleaseContractTest(unittest.TestCase):
             for changed, diagnostic in mutations:
                 with self.subTest(diagnostic=diagnostic):
                     changelog_path.write_text(changed)
-                    result = run_release("check", "--tag", "v0.1.0", root=root)
+                    result = run_release("check", "--tag", "v0.2.0", root=root)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(diagnostic, result.stderr)
 
@@ -643,9 +644,9 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -655,7 +656,7 @@ class ReleaseContractTest(unittest.TestCase):
             extracted = run_release(
                 "release-notes",
                 "--tag",
-                "v0.1.0",
+                "v0.2.0",
                 "--output",
                 str(output),
                 root=root,
@@ -663,14 +664,14 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertEqual(extracted.returncode, 0, extracted.stderr)
             notes = output.read_text()
             self.assertTrue(notes.startswith("### Added\n"))
-            self.assertIn("Privacy-first Neovim collection", notes)
+            self.assertIn("Separate privacy-safe Insert/Replace/Select control-key aggregates", notes)
             self.assertNotIn("Unreleased", notes)
-            self.assertNotIn("## [0.1.0]", notes)
+            self.assertNotIn("## [0.2.0]", notes)
 
             existing = run_release(
                 "release-notes",
                 "--tag",
-                "v0.1.0",
+                "v0.2.0",
                 "--output",
                 str(output),
                 root=root,
@@ -688,7 +689,7 @@ class ReleaseContractTest(unittest.TestCase):
             mismatch = run_release(
                 "release-notes",
                 "--tag",
-                "v0.2.0",
+                "v0.3.0",
                 "--output",
                 str(output),
                 root=root,
@@ -700,9 +701,9 @@ class ReleaseContractTest(unittest.TestCase):
             prepared = run_release(
                 "prepare-changelog",
                 "--version",
-                "0.1.0",
+                "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -714,7 +715,7 @@ class ReleaseContractTest(unittest.TestCase):
             linked = run_release(
                 "release-notes",
                 "--tag",
-                "v0.1.0",
+                "v0.2.0",
                 "--output",
                 str(output),
                 root=root,
@@ -763,7 +764,7 @@ class ReleaseContractTest(unittest.TestCase):
                 result = build_artifacts(root, output, epoch)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
-            archive_name = "nvim-key-insights-codex-plugin-v0.1.0.tar"
+            archive_name = "nvim-key-insights-codex-plugin-v0.2.0.tar"
             first = (outputs[0] / archive_name).read_bytes()
             second = (outputs[1] / archive_name).read_bytes()
             self.assertEqual(first, second)
@@ -774,7 +775,7 @@ class ReleaseContractTest(unittest.TestCase):
             )
             with tarfile.open(outputs[0] / archive_name, "r:") as archive:
                 entries = archive.getmembers()
-                prefix = "nvim-key-insights-codex-plugin-v0.1.0/"
+                prefix = "nvim-key-insights-codex-plugin-v0.2.0/"
                 self.assertEqual([entry.name for entry in entries], [prefix + path for path in expected_files])
                 for entry in entries:
                     self.assertTrue(entry.isfile())
@@ -798,11 +799,11 @@ class ReleaseContractTest(unittest.TestCase):
             path: f"fixture:{path.as_posix()}\n".encode()
             for path in release.PLUGIN_ARTIFACT_FILES
         }
-        archive = release.render_plugin_archive(files, "0.1.0", 1_700_000_000)
+        archive = release.render_plugin_archive(files, "0.2.0", 1_700_000_000)
         self.assertEqual(len(archive), 10_240)
         self.assertEqual(
             hashlib.sha256(archive).hexdigest(),
-            "29c6a22bcebcfde5e10119dcde2db2f8eb8890f2c78cf1b34473d7631c843c33",
+            "23ccec50a0e1a910e28dc53e5c947c0883d86db906929c7ce6125c25c333a85c",
         )
 
     def test_artifact_builder_rejects_non_allowlisted_plugin_trees(self) -> None:
@@ -856,7 +857,7 @@ class ReleaseContractTest(unittest.TestCase):
             mismatch = run_release(
                 "build-artifacts",
                 "--version",
-                "0.2.0",
+                "0.3.0",
                 "--epoch",
                 "1700000000",
                 "--output-dir",
@@ -901,7 +902,7 @@ class ReleaseContractTest(unittest.TestCase):
                 side_effect=competing_rename,
             ):
                 with self.assertRaises(release.ContractError):
-                    release.build_artifacts(root, output, "0.1.0", 1_700_000_000)
+                    release.build_artifacts(root, output, "0.2.0", 1_700_000_000)
 
             self.assertEqual((output / "competitor").read_text(), "preserve me\n")
             self.assertEqual(list(output.iterdir()), [output / "competitor"])
@@ -919,7 +920,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "git_commit",
                 wraps=release.git_commit,
             ) as resolve:
-                release.build_artifacts(root, output, "0.1.0", 1_700_000_000)
+                release.build_artifacts(root, output, "0.2.0", 1_700_000_000)
             self.assertEqual(resolve.call_count, 1)
 
     def test_version_bump_updates_only_the_explicit_mirrors(self) -> None:
@@ -929,7 +930,7 @@ class ReleaseContractTest(unittest.TestCase):
             copy_schema_contract(root)
 
             result = run_release(
-                "bump", "--from", "0.1.0", "--to", "0.2.0", root=root
+                "bump", "--from", "0.2.0", "--to", "0.3.0", root=root
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -945,10 +946,10 @@ class ReleaseContractTest(unittest.TestCase):
                 for package in lock["package"]
                 if package["name"] == "key-insights"
             }
-            self.assertEqual(cargo["package"]["version"], "0.2.0")
-            self.assertEqual(package_versions, {"0.2.0"})
-            self.assertEqual(plugin["version"], "0.2.0")
-            self.assertNotIn('version = "0.2.0";', (root / "flake.nix").read_text())
+            self.assertEqual(cargo["package"]["version"], "0.3.0")
+            self.assertEqual(package_versions, {"0.3.0"})
+            self.assertEqual(plugin["version"], "0.3.0")
+            self.assertNotIn('version = "0.3.0";', (root / "flake.nix").read_text())
 
             check = run_release("check", root=root)
             self.assertEqual(check.returncode, 0, check.stderr)
@@ -961,9 +962,9 @@ class ReleaseContractTest(unittest.TestCase):
             before = {path: path.read_bytes() for path in tracked}
 
             for arguments in (
-                ("bump", "--from", "0.1.0", "--to", "invalid"),
+                ("bump", "--from", "0.2.0", "--to", "invalid"),
                 ("bump", "--from", "9.9.9", "--to", "1.0.0"),
-                ("bump", "--from", "0.1.0", "--to", "0.1.0"),
+                ("bump", "--from", "0.2.0", "--to", "0.2.0"),
             ):
                 with self.subTest(arguments=arguments):
                     result = run_release(*arguments, root=root)
@@ -1014,7 +1015,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "install_staged_update", side_effect=fail_second_install
             ):
                 with self.assertRaises(OSError):
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
 
@@ -1044,7 +1045,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "install_staged_update", side_effect=interrupt_second_install
             ):
                 with self.assertRaises(KeyboardInterrupt):
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
 
@@ -1068,10 +1069,10 @@ class ReleaseContractTest(unittest.TestCase):
                 release.os, "replace", side_effect=edit_at_atomic_reservation
             ):
                 with self.assertRaises(release.ContractError):
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertTrue(cargo_path.read_text().endswith("# concurrent edit\n"))
-            self.assertIn('version = "0.1.0"', cargo_path.read_text())
+            self.assertIn('version = "0.2.0"', cargo_path.read_text())
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
     def test_edit_between_installs_is_preserved_and_prior_install_is_rolled_back(self) -> None:
@@ -1094,11 +1095,11 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "install_staged_update", side_effect=edit_lock_after_cargo_install
             ):
                 with self.assertRaises(release.ContractError):
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertEqual(cargo_path.read_bytes(), original_cargo)
             self.assertTrue(lock_path.read_text().endswith("# concurrent lock edit\n"))
-            self.assertIn('version = "0.1.0"', lock_path.read_text())
+            self.assertIn('version = "0.2.0"', lock_path.read_text())
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
     def test_in_place_edit_of_installed_file_is_preserved_as_recovery(self) -> None:
@@ -1124,7 +1125,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "install_staged_update", side_effect=edit_then_fail
             ):
                 with self.assertRaises(release.ContractError) as raised:
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertEqual(cargo_path.read_bytes(), original_cargo)
             recoveries = list(
@@ -1160,7 +1161,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "rollback_staged_update", side_effect=fail_rollback
             ):
                 with self.assertRaises(release.ContractError) as raised:
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             backups = list(cargo_path.parent.glob(".release-old-Cargo.toml-*"))
             self.assertEqual(len(backups), 1)
@@ -1186,7 +1187,7 @@ class ReleaseContractTest(unittest.TestCase):
 
             with mock.patch.object(release, "stage_file", side_effect=fail_second_stage):
                 with self.assertRaises(release.ContractError):
-                    release.bump(root, "0.1.0", "0.2.0")
+                    release.bump(root, "0.2.0", "0.3.0")
 
             self.assertEqual({path: path.read_bytes() for path in tracked}, before)
             self.assertEqual(list(root.rglob(".release-*-*")), [])
@@ -1208,7 +1209,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "stage_file", side_effect=fail_backup_stage
             ):
                 with self.assertRaises(OSError):
-                    release.prepare_changelog(root, "0.1.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
@@ -1219,8 +1220,8 @@ class ReleaseContractTest(unittest.TestCase):
             plugin_path = root / "plugins/nvim-key-insights/.codex-plugin/plugin.json"
             plugin_path.write_text(
                 plugin_path.read_text().replace(
-                    '"version": "0.1.0",',
-                    '"version": "9.9.9",\n  "version": "0.1.0",',
+                    '"version": "0.2.0",',
+                    '"version": "9.9.9",\n  "version": "0.2.0",',
                 )
             )
             result = run_release("check", root=root)
