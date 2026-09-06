@@ -180,6 +180,7 @@ misspelled privacy or storage settings cannot silently become no-ops.
 | Option | Default | Contract |
 | --- | --- | --- |
 | `privacy.raw_keylog` | `false` | Must remain `false`; raw logging is not implemented. |
+| `privacy.capture_control_keys` | `false` | Set to `true` to explicitly opt in to aggregated Insert/Replace/Select control-key tokens. |
 | `privacy.capture_insert_text` | `false` | Must remain `false`; Insert text is reduced to counts and timing. |
 | `privacy.capture_command_text` | `false` | Must remain `false`; command contents are discarded. |
 | `privacy.capture_search_text` | `false` | Must remain `false`; search contents are discarded. |
@@ -200,6 +201,9 @@ Example with every configurable local bound shown explicitly:
 
 ```lua
 require("key-insights").setup({
+  privacy = {
+    capture_control_keys = false,
+  },
   collection = {
     max_sequence_keys = 64,
     sequence_timeout_ms = 1000,

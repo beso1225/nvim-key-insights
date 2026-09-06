@@ -159,7 +159,16 @@ assert(not key_tokens.is_control_token("<C-/Users/alice/private>"), "path contro
 assert(not key_tokens.is_control_token("<C-\\private>"), "backslash control paths must be rejected")
 assert(not key_tokens.is_control_token("<lt>C-Y>"), "literal bracket text must remain text")
 
-local control_collector, control = new_harness("aggregation-control-keys")
+local disabled_collector, disabled = new_harness("aggregation-control-disabled")
+disabled_collector:start()
+disabled.mode = "i"
+disabled.now_ms = 10
+disabled.callback("mapped-control-disabled", "<C-Y>")
+disabled_collector:stop()
+assert(#events_of_type(disabled.events, "control_key_use") == 0, "control-key capture must be opt-in")
+
+local control_options = config.resolve({ privacy = { capture_control_keys = true } })
+local control_collector, control = new_harness("aggregation-control-keys", control_options)
 control_collector:start()
 control.mode = "i"
 control.now_ms = 10
@@ -190,7 +199,7 @@ for _, secret in ipairs({ "mapped-text-secret", "mapped-control-secret", "mapped
   assert(string.find(control_json, secret, 1, true) == nil)
 end
 
-local real_collector, real = new_harness("aggregation-real-on-key", nil, {
+local real_collector, real = new_harness("aggregation-real-on-key", control_options, {
   keytrans = function(key)
     if key == string.char(25) then
       return "^Y"
@@ -207,7 +216,7 @@ local real_control_uses = events_of_type(real.events, "control_key_use")
 assert(#real_control_uses == 1)
 assert(real_control_uses[1].mode == "insert" and real_control_uses[1].key == "<C-Y>")
 
-local control_limit_collector, control_limit = new_harness("aggregation-control-limit")
+local control_limit_collector, control_limit = new_harness("aggregation-control-limit", control_options)
 control_limit_collector:start()
 control_limit.mode = "i"
 for index = 1, 1024 do
@@ -221,6 +230,24 @@ assert(
   control_limit_collector:status().last_error == "collector control-key limit exceeded",
   "the collector must fail closed after the control-key bucket limit"
 )
+
+local queue_collector, queue = new_harness("aggregation-control-queue-boundary", control_options)
+queue_collector:start()
+queue.mode = "i"
+for index = 1, 1023 do
+  queue.now_ms = index
+  queue.callback("mapped-control-queue", string.format("<C-%04d>", index))
+end
+queue.mode = "n"
+queue.now_ms = 1024
+queue.callback("mapped-mode-transition", "j")
+assert(queue_collector:status().last_error == nil, "control buckets must leave room for mode transitions")
+queue_collector:stop()
+local queued_control_uses = events_of_type(queue.events, "control_key_use")
+assert(#queued_control_uses == 1023, "all control buckets must survive deferred queue chunking")
+local queued_transitions = events_of_type(queue.events, "mode_transition")
+assert(#queued_transitions == 1)
+assert(queued_transitions[1].from == "insert" and queued_transitions[1].to == "normal")
 
 local text_collector, text = new_harness("aggregation-text")
 text_collector:start()

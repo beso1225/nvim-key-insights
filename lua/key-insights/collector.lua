@@ -152,7 +152,10 @@ function M.new(spec)
 end
 
 function Collector:_emit_control_keys(elapsed_ms)
-  if next(self._control_keys) == nil then
+  if self._options.privacy == nil
+    or self._options.privacy.capture_control_keys ~= true
+    or next(self._control_keys) == nil
+  then
     return true
   end
 
@@ -179,12 +182,50 @@ function Collector:_emit_control_keys(elapsed_ms)
       entry.count
     ))
   end
-  local queued = self:_queue_many(events)
-  if queued then
+  local queued_count = 0
+  while queued_count < #events do
+    local reserve = self._in_callback and 1 or 0
+    local available = MAX_PENDING_EVENTS - #self._pending - reserve
+    if available <= 0 then
+      if self._in_callback and #self._pending < MAX_PENDING_EVENTS then
+        break
+      end
+      self._last_error = PENDING_LIMIT_ERROR
+      self._sequence = nil
+      self._text_run = nil
+      self:_mapping_boundary()
+      return false
+    end
+
+    local batch = {}
+    local batch_end = math.min(queued_count + available, #events)
+    for index = queued_count + 1, batch_end do
+      table.insert(batch, events[index])
+    end
+    if not self:_queue_many(batch) then
+      return false
+    end
+    queued_count = batch_end
+  end
+
+  if queued_count == #events then
     self._control_keys = {}
     self._control_key_bucket_count = 0
+  else
+    local remaining = {}
+    for index = queued_count + 1, #entries do
+      table.insert(remaining, entries[index])
+    end
+    self._control_keys = {}
+    for _, entry in ipairs(remaining) do
+      if self._control_keys[entry.mode] == nil then
+        self._control_keys[entry.mode] = {}
+      end
+      self._control_keys[entry.mode][entry.key] = entry.count
+    end
+    self._control_key_bucket_count = #remaining
   end
-  return queued
+  return true
 end
 
 function Collector:_emit_sequence(elapsed_ms)
@@ -348,7 +389,10 @@ function Collector:_record_text_keys(typed, elapsed_ms, typed_tokens)
 end
 
 function Collector:_record_control_keys(mode, typed_tokens)
-  if not TEXT_INPUT_MODES[mode] then
+  if self._options.privacy == nil
+    or self._options.privacy.capture_control_keys ~= true
+    or not TEXT_INPUT_MODES[mode]
+  then
     return
   end
   for _, key in ipairs(typed_tokens) do

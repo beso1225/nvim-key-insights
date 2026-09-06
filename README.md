@@ -14,8 +14,9 @@ Privacy-first Neovim usage collection and deterministic local analysis.
 
 Raw key logging, Insert-mode text, command/search text, and file paths are not
 captured by the default workflow. Canonical Insert/Replace/Select control-key
-tokens may be counted without retaining surrounding text. Terminal, prompt,
-special, and sensitive buffers are excluded from collection.
+tokens are also disabled by default; they may be counted without retaining
+surrounding text only after explicitly enabling `privacy.capture_control_keys`.
+Terminal, prompt, special, and sensitive buffers are excluded from collection.
 
 ## Status
 
