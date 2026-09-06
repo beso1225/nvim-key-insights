@@ -209,6 +209,25 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("one release version", invalid.stderr)
 
+            installation_path.write_text(installation)
+            readme_path = root / "README.md"
+            readme = readme_path.read_text()
+            readme_mixed = readme.replace(
+                'version = "v0.2.0"',
+                'version = "v0.2.1"',
+                1,
+            ).replace(
+                "?ref=v0.2.0#key-insights",
+                "?ref=v0.2.1#key-insights",
+                1,
+            )
+            self.assertNotEqual(readme_mixed, readme)
+            readme_path.write_text(readme_mixed)
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("README.md", invalid.stderr)
+            self.assertIn("does not match", invalid.stderr)
+
     def test_current_repository_has_one_release_version(self) -> None:
         system = subprocess.run(
             ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"],

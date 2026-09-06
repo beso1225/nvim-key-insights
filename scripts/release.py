@@ -783,32 +783,27 @@ def changelog_release_notes(contents: str, version: str) -> str:
     return notes + "\n"
 
 
-def validate_installation_release_version(installation: str) -> None:
-    references = (
-        (
-            "lazy.nvim",
-            rf'version = "v({VERSION_PATTERN.pattern})"',
-        ),
-        (
-            "Nix",
-            rf"\?ref=v({VERSION_PATTERN.pattern})#key-insights",
-        ),
-        (
-            "Codex",
-            rf"nvim-key-insights@v({VERSION_PATTERN.pattern})(?=\s|$)",
-        ),
-    )
+def validate_installation_release_version(
+    document: str,
+    contents: str,
+    required_references: tuple[str, ...],
+) -> str:
+    references = {
+        "lazy.nvim": rf'version = "v({VERSION_PATTERN.pattern})"',
+        "Nix": rf"\?ref=v({VERSION_PATTERN.pattern})#key-insights",
+        "Codex": rf"nvim-key-insights@v({VERSION_PATTERN.pattern})(?=\s|$)",
+    }
     versions: list[str] = []
-    for label, pattern in references:
-        matches = re.findall(pattern, installation)
+    for label in required_references:
+        matches = re.findall(references[label], contents)
         if not matches:
-            fail(f"installation documentation is missing a stable {label} release version")
+            fail(f"{document} is missing a stable {label} release version")
         versions.extend(matches)
     if len(set(versions)) != 1:
         fail(
-            "installation documentation must use one release version across "
-            "lazy.nvim, Nix, and Codex examples"
+            f"{document} must use one release version across its installation examples"
         )
+    return versions[0]
 
 
 def validate_release_documentation(root: Path, version: str, tag: str | None) -> None:
@@ -850,11 +845,21 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
         if phrase not in normalized_releasing:
             fail(f"release documentation is missing {phrase!r}")
     installation = documents[Path("docs/installation.md")]
-    validate_installation_release_version(installation)
+    installation_version = validate_installation_release_version(
+        "docs/installation.md", installation, ("lazy.nvim", "Nix", "Codex")
+    )
     for phrase in ("schema-compatibility.md", "releasing.md"):
         if phrase not in installation:
             fail(f"installation documentation is missing {phrase!r}")
     readme = documents[Path("README.md")]
+    readme_version = validate_installation_release_version(
+        "README.md", readme, ("lazy.nvim", "Nix")
+    )
+    if readme_version != installation_version:
+        fail(
+            f"README.md installation version {readme_version} does not match "
+            f"docs/installation.md version {installation_version}"
+        )
     for link in ("CHANGELOG.md", "docs/schema-compatibility.md", "docs/releasing.md"):
         if link not in readme:
             fail(f"README is missing release documentation link {link}")
