@@ -44,17 +44,12 @@ def run_release(*arguments: str, root: Path = ROOT) -> subprocess.CompletedProce
 
 def unreleased_changelog() -> str:
     contents = CHANGELOG.read_text()
-    release_headings = list(
-        re.finditer(
-            r"(?m)^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [^\n]+\n",
-            contents,
-        )
+    return re.sub(
+        r"(?m)^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [^\n]+\n",
+        "",
+        contents,
+        count=1,
     )
-    if not release_headings:
-        return contents
-    first = release_headings[0]
-    end = release_headings[1].start() if len(release_headings) > 1 else len(contents)
-    return contents[: first.start()] + contents[first.end() : end]
 
 
 def copy_version_contract(destination: Path) -> None:
@@ -393,12 +388,13 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             changelog = (root / "CHANGELOG.md").read_text()
-            self.assertIn("## [Unreleased]\n\n## [0.2.0] - 2026-08-22", changelog)
+            self.assertIn("## [Unreleased]\n\n## [0.2.0] - 2026-09-06", changelog)
+            self.assertIn("## [0.1.0] - 2026-09-02", changelog)
             write_test_license(root)
             mark_release_documentation_published(root)
             check = run_release("check", "--tag", "v0.2.0", root=root)
@@ -409,7 +405,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertNotEqual(repeated.returncode, 0)
@@ -425,7 +421,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -454,7 +450,7 @@ class ReleaseContractTest(unittest.TestCase):
             changelog_path = root / "CHANGELOG.md"
             original = changelog_path.read_bytes()
             for version, date in (
-                ("0.3.0", "2026-08-22"),
+                ("0.3.0", "2026-09-06"),
                 ("0.2.0", "22-08-2026"),
                 ("0.2.0", "2026-02-30"),
             ):
@@ -482,7 +478,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertNotEqual(empty.returncode, 0)
@@ -494,15 +490,15 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
             write_test_license(root)
             changed = changelog_path.read_text().replace(
-                "## [0.2.0] - 2026-08-22",
-                "## [0.3.0] - 2026-08-23\n\n### Added\n\n- Future.\n\n"
-                "## [0.2.0] - 2026-08-22",
+                "## [0.2.0] - 2026-09-06",
+                "## [0.3.0] - 2026-09-07\n\n### Added\n\n- Future.\n\n"
+                "## [0.2.0] - 2026-09-06",
                 1,
             )
             changelog_path.write_text(changed)
@@ -529,7 +525,7 @@ class ReleaseContractTest(unittest.TestCase):
 
             with mock.patch.object(release, "stage_file", side_effect=edit_after_stage):
                 with self.assertRaises(release.ContractError):
-                    release.prepare_changelog(root, "0.2.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
             self.assertNotIn("## [0.2.0]", changelog_path.read_text())
@@ -558,7 +554,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release.os, "replace", side_effect=edit_at_atomic_reservation
             ):
                 with self.assertRaises(release.ContractError):
-                    release.prepare_changelog(root, "0.2.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertTrue(changelog_path.read_text().endswith("<!-- concurrent edit -->\n"))
             self.assertNotIn("## [0.2.0]", changelog_path.read_text())
@@ -574,7 +570,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -607,7 +603,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -621,7 +617,7 @@ class ReleaseContractTest(unittest.TestCase):
                     "version order",
                 ),
                 (
-                    original + "\n## [0.0.9] - 2026-08-23\n\n### Added\n\n- Future date.\n",
+                    original + "\n## [0.0.9] - 2026-09-07\n\n### Added\n\n- Future date.\n",
                     "date order",
                 ),
                 (
@@ -650,7 +646,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -707,7 +703,7 @@ class ReleaseContractTest(unittest.TestCase):
                 "--version",
                 "0.2.0",
                 "--date",
-                "2026-08-22",
+                "2026-09-06",
                 root=root,
             )
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
@@ -1213,7 +1209,7 @@ class ReleaseContractTest(unittest.TestCase):
                 release, "stage_file", side_effect=fail_backup_stage
             ):
                 with self.assertRaises(OSError):
-                    release.prepare_changelog(root, "0.2.0", "2026-08-22")
+                    release.prepare_changelog(root, "0.2.0", "2026-09-06")
 
             self.assertEqual(list(root.rglob(".release-*-*")), [])
 
