@@ -43,8 +43,9 @@ boundary. See the Codex sections in [installation](installation.md) and
 - [Releasing](releasing.md) — release preparation, artifact checks, and
   publication steps.
 - [Release readiness](release-readiness.md) — the completed v0.1.0 candidate
-  audit and publication record.
+  audit and historical publication record.
 - [Changelog](../CHANGELOG.md) — user-visible changes and release history.
 
-The v0.1.0 release is published. Any tag, push, or release operation for a
-future version remains an explicit maintainer decision.
+The v0.2.0 release is published. See the [GitHub Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.2.0)
+for the Codex plugin archive and checksum file. Any tag, push, or release
+operation for a future version remains an explicit maintainer decision.

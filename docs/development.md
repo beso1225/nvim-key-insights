@@ -54,6 +54,7 @@ corresponding contract coverage and documentation updates.
 ## Documentation and release status
 
 Public documentation is in English. The [documentation index](README.md) lists
-the supported contracts. The v0.1.0 release is published. Publication actions
-for future releases remain explicit maintainer operations as described in
-[releasing](releasing.md).
+the supported contracts. The v0.2.0 release is published in the [GitHub
+Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.2.0).
+Publication actions for future releases remain explicit maintainer operations
+as described in [releasing](releasing.md).
