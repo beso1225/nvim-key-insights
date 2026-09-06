@@ -783,6 +783,34 @@ def changelog_release_notes(contents: str, version: str) -> str:
     return notes + "\n"
 
 
+def validate_installation_release_version(installation: str) -> None:
+    references = (
+        (
+            "lazy.nvim",
+            rf'version = "v({VERSION_PATTERN.pattern})"',
+        ),
+        (
+            "Nix",
+            rf"\?ref=v({VERSION_PATTERN.pattern})#key-insights",
+        ),
+        (
+            "Codex",
+            rf"nvim-key-insights@v({VERSION_PATTERN.pattern})(?=\s|$)",
+        ),
+    )
+    versions: list[str] = []
+    for label, pattern in references:
+        matches = re.findall(pattern, installation)
+        if not matches:
+            fail(f"installation documentation is missing a stable {label} release version")
+        versions.extend(matches)
+    if len(set(versions)) != 1:
+        fail(
+            "installation documentation must use one release version across "
+            "lazy.nvim, Nix, and Codex examples"
+        )
+
+
 def validate_release_documentation(root: Path, version: str, tag: str | None) -> None:
     documents = {
         relative: decode_document(root, relative, str(relative))
@@ -822,13 +850,8 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
         if phrase not in normalized_releasing:
             fail(f"release documentation is missing {phrase!r}")
     installation = documents[Path("docs/installation.md")]
-    for phrase in (
-        'version = "v0.1.0"',
-        "?ref=v0.1.0#key-insights",
-        "nvim-key-insights@v0.1.0",
-        "schema-compatibility.md",
-        "releasing.md",
-    ):
+    validate_installation_release_version(installation)
+    for phrase in ("schema-compatibility.md", "releasing.md"):
         if phrase not in installation:
             fail(f"installation documentation is missing {phrase!r}")
     readme = documents[Path("README.md")]

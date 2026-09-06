@@ -187,6 +187,28 @@ def build_artifacts(root: Path, output: Path, epoch: int = 1_700_000_000):
 
 
 class ReleaseContractTest(unittest.TestCase):
+    def test_installation_documentation_uses_one_stable_release_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            installation_path = root / "docs/installation.md"
+            installation = installation_path.read_text()
+
+            valid = run_release("check", root=root)
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+
+            mixed = installation.replace(
+                "?ref=v0.2.0#key-insights",
+                "?ref=v0.2.1#key-insights",
+                1,
+            )
+            self.assertNotEqual(mixed, installation)
+            installation_path.write_text(mixed)
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("one release version", invalid.stderr)
+
     def test_current_repository_has_one_release_version(self) -> None:
         system = subprocess.run(
             ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"],
