@@ -66,8 +66,8 @@ lazy.nvim-based configuration is:
    cargo install \
      --git https://github.com/beso1225/nvim-key-insights.git \
      --tag v0.2.0 \
-     --path crates/key-insights-cli \
-     --locked
+     --locked \
+     key-insights
    ```
 
    Collection itself does not require the analyzer. The executable is needed

@@ -42,9 +42,10 @@ UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" \
   bump --from 0.1.0 --to 0.2.0
 ```
 
-The command updates Cargo, Cargo.lock, and the Codex plugin manifest. Nix reads
-the Cargo version directly. It does not commit, tag, or publish. Inspect the
-complete diff before continuing.
+The command updates Cargo, Cargo.lock, the Codex plugin manifest, and the
+versioned installation references in `README.md` and `docs/installation.md`.
+Nix reads the Cargo version directly. It does not commit, tag, or publish.
+Inspect the complete diff before continuing.
 
 Move the reviewed Unreleased notes under a dated release heading:
 

@@ -59,6 +59,10 @@ def copy_version_contract(destination: Path) -> None:
         "flake.nix",
         "plugins/nvim-key-insights/.codex-plugin/plugin.json",
         ".agents/plugins/marketplace.json",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/installation.md",
+        "docs/releasing.md",
     ):
         source = ROOT / relative
         target = destination / relative
@@ -227,6 +231,45 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("README.md", invalid.stderr)
             self.assertIn("does not match", invalid.stderr)
+
+            installation_path.write_text(
+                installation.replace(
+                    'version = "v0.2.0"', 'version = "v9.9.9"'
+                ).replace(
+                    "?ref=v0.2.0#key-insights", "?ref=v9.9.9#key-insights"
+                ).replace(
+                    "nvim-key-insights@v0.2.0", "nvim-key-insights@v9.9.9"
+                )
+            )
+            readme_path.write_text(
+                readme.replace(
+                    'version = "v0.2.0"', 'version = "v9.9.9"'
+                ).replace(
+                    "?ref=v0.2.0#key-insights", "?ref=v9.9.9#key-insights"
+                )
+            )
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("does not match release version", invalid.stderr)
+
+    def test_readme_cargo_install_uses_a_fetchable_git_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            readme_path = root / "README.md"
+            readme = readme_path.read_text()
+            invalid_readme = readme.replace(
+                "     --locked \\\n",
+                "     --path crates/key-insights-cli \\\n     --locked \\\n",
+                1,
+            )
+            self.assertNotEqual(invalid_readme, readme)
+            readme_path.write_text(invalid_readme)
+
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("Cargo installation", invalid.stderr)
 
     def test_current_repository_has_one_release_version(self) -> None:
         system = subprocess.run(
@@ -991,6 +1034,14 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertEqual(package_versions, {"0.3.0"})
             self.assertEqual(plugin["version"], "0.3.0")
             self.assertNotIn('version = "0.3.0";', (root / "flake.nix").read_text())
+            updated_readme = (root / "README.md").read_text()
+            self.assertIn('version = "v0.3.0"', updated_readme)
+            self.assertIn("?ref=v0.3.0#key-insights", updated_readme)
+            self.assertIn("--tag v0.3.0", updated_readme)
+            updated_installation = (root / "docs/installation.md").read_text()
+            self.assertIn('version = "v0.3.0"', updated_installation)
+            self.assertIn("?ref=v0.3.0#key-insights", updated_installation)
+            self.assertIn("nvim-key-insights@v0.3.0", updated_installation)
 
             check = run_release("check", root=root)
             self.assertEqual(check.returncode, 0, check.stderr)
