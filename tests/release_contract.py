@@ -298,6 +298,13 @@ class ReleaseContractTest(unittest.TestCase):
         )
         self.assertNotIn('version = "0.2.0";', flake)
 
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(
+            "[release-readiness audit for the earlier v0.1.0 candidate]"
+            "(docs/release-readiness.md)",
+            readme,
+        )
+
     def test_schema_versions_match_runtime_and_bundled_contracts(self) -> None:
         self.assertTrue(SCHEMA_COMPATIBILITY.is_file())
         result = run_release("check")

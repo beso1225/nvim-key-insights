@@ -21,9 +21,9 @@ Terminal, prompt, special, and sensitive buffers are excluded from collection.
 ## Status
 
 The v0.2.0 release is published. See the [GitHub Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.2.0)
-for the Codex plugin archive and checksum file, and the
-[release-readiness audit](docs/release-readiness.md) for the verification
-record.
+for the Codex plugin archive and checksum file. The
+[release-readiness audit for the earlier v0.1.0 candidate](docs/release-readiness.md)
+is retained as a historical verification record.
 
 ## Installation
 
