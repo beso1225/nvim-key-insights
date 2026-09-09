@@ -22,7 +22,7 @@ The following specification remains lazy until one of the commands is used:
 ```lua
 {
   "beso1225/nvim-key-insights",
-  version = "v0.1.0",
+  version = "v0.2.0",
   cmd = {
     "KeyInsightsStart",
     "KeyInsightsPause",
@@ -57,8 +57,8 @@ nix profile install github:beso1225/nvim-key-insights#key-insights
 Pin the released revision explicitly:
 
 ```sh
-nix run 'github:beso1225/nvim-key-insights?ref=v0.1.0#key-insights' -- --version
-nix profile install 'github:beso1225/nvim-key-insights?ref=v0.1.0#key-insights'
+nix run 'github:beso1225/nvim-key-insights?ref=v0.2.0#key-insights' -- --version
+nix profile install 'github:beso1225/nvim-key-insights?ref=v0.2.0#key-insights'
 ```
 
 The flake also exports `packages.nvim-key-insights` for consumers that assemble
@@ -135,7 +135,7 @@ For a released installation, use the same immutable tag before installing the
 plugin:
 
 ```sh
-codex plugin marketplace add beso1225/nvim-key-insights@v0.1.0
+codex plugin marketplace add beso1225/nvim-key-insights@v0.2.0
 codex plugin add nvim-key-insights@nvim-key-insights
 ```
 

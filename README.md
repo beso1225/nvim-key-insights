@@ -20,10 +20,74 @@ Terminal, prompt, special, and sensitive buffers are excluded from collection.
 
 ## Status
 
-The v0.1.0 release is published. See the [GitHub Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.1.0)
-for the Codex plugin archive and checksum file, and the
-[release-readiness audit](docs/release-readiness.md) for the verification
-record.
+The v0.2.0 release is published. See the [GitHub Release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.2.0)
+for the Codex plugin archive and checksum file. The
+[release-readiness audit for the earlier v0.1.0 candidate](docs/release-readiness.md)
+is retained as a historical verification record.
+
+## Installation
+
+`nvim-key-insights` requires Neovim 0.10 or newer. The quickest setup for a
+lazy.nvim-based configuration is:
+
+1. Add the plugin to your lazy.nvim plugin specification:
+
+   ```lua
+   {
+     "beso1225/nvim-key-insights",
+     version = "v0.2.0",
+     cmd = {
+       "KeyInsightsStart",
+       "KeyInsightsPause",
+       "KeyInsightsStop",
+       "KeyInsightsStatus",
+       "KeyInsightsReport",
+       "KeyInsightsAnalyze",
+       "KeyInsightsOpenReport",
+       "KeyInsightsPurge",
+     },
+     opts = {
+       report = {
+         analyzer = "key-insights",
+       },
+     },
+   }
+   ```
+
+2. Install the optional Rust analyzer if you want to generate local reports.
+   Choose Nix or Cargo:
+
+   ```sh
+   nix profile install \
+     'github:beso1225/nvim-key-insights?ref=v0.2.0#key-insights'
+   ```
+
+   ```sh
+   cargo install \
+     --git https://github.com/beso1225/nvim-key-insights.git \
+     --tag v0.2.0 \
+     --locked \
+     key-insights
+   ```
+
+   Collection itself does not require the analyzer. The executable is needed
+   for `:KeyInsightsReport` and `:KeyInsightsAnalyze`, and must be available
+   on `PATH` or configured as an absolute `report.analyzer` path.
+
+3. Restart Neovim and start collection explicitly:
+
+   ```text
+   :KeyInsightsStart
+   :KeyInsightsStatus
+   ```
+
+   Stop collection with `:KeyInsightsStop`. It never starts automatically.
+   The default configuration is privacy-preserving: raw keys and Insert-mode
+   text are not stored. To count privacy-safe Insert/Replace/Select control
+   keys, explicitly set `privacy.capture_control_keys = true` in `opts`.
+
+For Nix overlays, the optional Codex plugin, configuration, and troubleshooting,
+see the full [Installation and configuration guide](docs/installation.md).
 
 ## Quick start
 

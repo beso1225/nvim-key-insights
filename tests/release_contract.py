@@ -59,6 +59,10 @@ def copy_version_contract(destination: Path) -> None:
         "flake.nix",
         "plugins/nvim-key-insights/.codex-plugin/plugin.json",
         ".agents/plugins/marketplace.json",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/installation.md",
+        "docs/releasing.md",
     ):
         source = ROOT / relative
         target = destination / relative
@@ -187,6 +191,86 @@ def build_artifacts(root: Path, output: Path, epoch: int = 1_700_000_000):
 
 
 class ReleaseContractTest(unittest.TestCase):
+    def test_installation_documentation_uses_one_stable_release_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            installation_path = root / "docs/installation.md"
+            installation = installation_path.read_text()
+
+            valid = run_release("check", root=root)
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+
+            mixed = installation.replace(
+                "?ref=v0.2.0#key-insights",
+                "?ref=v0.2.1#key-insights",
+                1,
+            )
+            self.assertNotEqual(mixed, installation)
+            installation_path.write_text(mixed)
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("one release version", invalid.stderr)
+
+            installation_path.write_text(installation)
+            readme_path = root / "README.md"
+            readme = readme_path.read_text()
+            readme_mixed = readme.replace(
+                'version = "v0.2.0"',
+                'version = "v0.2.1"',
+                1,
+            ).replace(
+                "?ref=v0.2.0#key-insights",
+                "?ref=v0.2.1#key-insights",
+                1,
+            )
+            self.assertNotEqual(readme_mixed, readme)
+            readme_path.write_text(readme_mixed)
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("README.md", invalid.stderr)
+            self.assertIn("does not match", invalid.stderr)
+
+            installation_path.write_text(
+                installation.replace(
+                    'version = "v0.2.0"', 'version = "v9.9.9"'
+                ).replace(
+                    "?ref=v0.2.0#key-insights", "?ref=v9.9.9#key-insights"
+                ).replace(
+                    "nvim-key-insights@v0.2.0", "nvim-key-insights@v9.9.9"
+                )
+            )
+            readme_path.write_text(
+                readme.replace(
+                    'version = "v0.2.0"', 'version = "v9.9.9"'
+                ).replace(
+                    "?ref=v0.2.0#key-insights", "?ref=v9.9.9#key-insights"
+                )
+            )
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("does not match release version", invalid.stderr)
+
+    def test_readme_cargo_install_uses_a_fetchable_git_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            copy_version_contract(root)
+            copy_schema_contract(root)
+            readme_path = root / "README.md"
+            readme = readme_path.read_text()
+            invalid_readme = readme.replace(
+                "     --locked \\\n",
+                "     --path crates/key-insights-cli \\\n     --locked \\\n",
+                1,
+            )
+            self.assertNotEqual(invalid_readme, readme)
+            readme_path.write_text(invalid_readme)
+
+            invalid = run_release("check", root=root)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("Cargo installation", invalid.stderr)
+
     def test_current_repository_has_one_release_version(self) -> None:
         system = subprocess.run(
             ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"],
@@ -213,6 +297,13 @@ class ReleaseContractTest(unittest.TestCase):
             flake,
         )
         self.assertNotIn('version = "0.2.0";', flake)
+
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(
+            "[release-readiness audit for the earlier v0.1.0 candidate]"
+            "(docs/release-readiness.md)",
+            readme,
+        )
 
     def test_schema_versions_match_runtime_and_bundled_contracts(self) -> None:
         self.assertTrue(SCHEMA_COMPATIBILITY.is_file())
@@ -950,6 +1041,14 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertEqual(package_versions, {"0.3.0"})
             self.assertEqual(plugin["version"], "0.3.0")
             self.assertNotIn('version = "0.3.0";', (root / "flake.nix").read_text())
+            updated_readme = (root / "README.md").read_text()
+            self.assertIn('version = "v0.3.0"', updated_readme)
+            self.assertIn("?ref=v0.3.0#key-insights", updated_readme)
+            self.assertIn("--tag v0.3.0", updated_readme)
+            updated_installation = (root / "docs/installation.md").read_text()
+            self.assertIn('version = "v0.3.0"', updated_installation)
+            self.assertIn("?ref=v0.3.0#key-insights", updated_installation)
+            self.assertIn("nvim-key-insights@v0.3.0", updated_installation)
 
             check = run_release("check", root=root)
             self.assertEqual(check.returncode, 0, check.stderr)

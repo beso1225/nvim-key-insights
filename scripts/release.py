@@ -783,6 +783,55 @@ def changelog_release_notes(contents: str, version: str) -> str:
     return notes + "\n"
 
 
+def validate_installation_release_version(
+    document: str,
+    contents: str,
+    required_references: tuple[str, ...],
+) -> str:
+    references = {
+        "lazy.nvim": rf'version = "v({VERSION_PATTERN.pattern})"',
+        "Nix": rf"\?ref=v({VERSION_PATTERN.pattern})#key-insights",
+        "Codex": rf"nvim-key-insights@v({VERSION_PATTERN.pattern})(?=\s|$)",
+    }
+    versions: list[str] = []
+    for label in required_references:
+        matches = re.findall(references[label], contents)
+        if not matches:
+            fail(f"{document} is missing a stable {label} release version")
+        versions.extend(matches)
+    if len(set(versions)) != 1:
+        fail(
+            f"{document} must use one release version across its installation examples"
+        )
+    return versions[0]
+
+
+def validate_readme_cargo_install(contents: str) -> str:
+    command = re.search(
+        r"(?ms)^   cargo install \\\n+(?P<arguments>(?:     [^\n]+\\\n)*     [^\n]+)\n   ```",
+        contents,
+    )
+    if command is None:
+        fail("README is missing a complete Cargo installation command")
+    arguments = command.group("arguments")
+    if "--path " in arguments:
+        fail("README Cargo installation must not combine --git and --path")
+    if not re.search(
+        r"(?m)^     --git https://github\.com/beso1225/nvim-key-insights\.git \\\n",
+        arguments,
+    ):
+        fail("README Cargo installation must use the repository Git source")
+    tag = re.search(
+        rf"(?m)^     --tag v({VERSION_PATTERN.pattern}) \\\n",
+        arguments,
+    )
+    if tag is None:
+        fail("README Cargo installation is missing a stable release tag")
+    if not re.search(r"(?m)^     key-insights$", arguments):
+        fail("README Cargo installation must name the key-insights package")
+    return tag.group(1)
+
+
 def validate_release_documentation(root: Path, version: str, tag: str | None) -> None:
     documents = {
         relative: decode_document(root, relative, str(relative))
@@ -822,16 +871,32 @@ def validate_release_documentation(root: Path, version: str, tag: str | None) ->
         if phrase not in normalized_releasing:
             fail(f"release documentation is missing {phrase!r}")
     installation = documents[Path("docs/installation.md")]
-    for phrase in (
-        'version = "v0.1.0"',
-        "?ref=v0.1.0#key-insights",
-        "nvim-key-insights@v0.1.0",
-        "schema-compatibility.md",
-        "releasing.md",
-    ):
+    installation_version = validate_installation_release_version(
+        "docs/installation.md", installation, ("lazy.nvim", "Nix", "Codex")
+    )
+    if installation_version != version:
+        fail(
+            f"installation documentation version {installation_version} does not "
+            f"match release version {version}"
+        )
+    for phrase in ("schema-compatibility.md", "releasing.md"):
         if phrase not in installation:
             fail(f"installation documentation is missing {phrase!r}")
     readme = documents[Path("README.md")]
+    readme_cargo_version = validate_readme_cargo_install(readme)
+    readme_version = validate_installation_release_version(
+        "README.md", readme, ("lazy.nvim", "Nix")
+    )
+    if readme_cargo_version != readme_version:
+        fail(
+            f"README.md Cargo installation version {readme_cargo_version} does not "
+            f"match README.md version {readme_version}"
+        )
+    if readme_version != installation_version:
+        fail(
+            f"README.md installation version {readme_version} does not match "
+            f"docs/installation.md version {installation_version}"
+        )
     for link in ("CHANGELOG.md", "docs/schema-compatibility.md", "docs/releasing.md"):
         if link not in readme:
             fail(f"README is missing release documentation link {link}")
@@ -843,12 +908,39 @@ def replace_once(data: bytes, old: bytes, new: bytes, field: str) -> bytes:
     return data.replace(old, new, 1)
 
 
+def replace_installation_release_references(
+    data: bytes, old_version: str, new_version: str, field: str
+) -> bytes:
+    old_tag = f"v{old_version}".encode()
+    new_tag = f"v{new_version}".encode()
+    markers = (
+        f'version = "{old_tag.decode()}"'.encode(),
+        f"?ref={old_tag.decode()}#key-insights".encode(),
+        f"--tag {old_tag.decode()}".encode(),
+        f"nvim-key-insights@{old_tag.decode()}".encode(),
+    )
+    replacements = 0
+    for marker in markers:
+        count = data.count(marker)
+        if count:
+            data = data.replace(marker, marker.replace(old_tag, new_tag))
+            replacements += count
+    if replacements == 0:
+        fail(
+            f"{field} did not contain an expected {old_tag.decode()} "
+            "installation reference"
+        )
+    return data
+
+
 def candidate_updates(
     root: Path, old_version: str, new_version: str
 ) -> dict[Path, VersionUpdate]:
     cargo = read_regular_file(root, CANONICAL_MANIFEST)
     lock = read_regular_file(root, LOCK_FILE)
     plugin = read_regular_file(root, PLUGIN_MANIFEST)
+    readme = read_regular_file(root, Path("README.md"))
+    installation = read_regular_file(root, Path("docs/installation.md"))
 
     cargo_new = replace_once(
         cargo,
@@ -868,10 +960,18 @@ def candidate_updates(
         f'"version": "{new_version}"'.encode(),
         str(PLUGIN_MANIFEST),
     )
+    readme_new = replace_installation_release_references(
+        readme, old_version, new_version, "README.md"
+    )
+    installation_new = replace_installation_release_references(
+        installation, old_version, new_version, "docs/installation.md"
+    )
     return {
         CANONICAL_MANIFEST: VersionUpdate(cargo, cargo_new),
         LOCK_FILE: VersionUpdate(lock, lock_new),
         PLUGIN_MANIFEST: VersionUpdate(plugin, plugin_new),
+        Path("README.md"): VersionUpdate(readme, readme_new),
+        Path("docs/installation.md"): VersionUpdate(installation, installation_new),
     }
 
 
@@ -880,7 +980,7 @@ def validate_candidates(
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="key-insights-release-check-") as temporary:
         candidate_root = Path(temporary)
-        for relative in REQUIRED_FILES:
+        for relative in (*REQUIRED_FILES, *RELEASE_DOCUMENTATION_FILES):
             destination = candidate_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             update = updates.get(relative)
@@ -889,6 +989,7 @@ def validate_candidates(
             )
         if validate_contract(candidate_root) != new_version:
             fail("updated files did not produce the requested release version")
+        validate_release_documentation(candidate_root, new_version, None)
 
 
 def stage_file(path: Path, data: bytes, label: str) -> Path:
@@ -993,7 +1094,7 @@ def write_updates_transactionally(
     assert_originals_unchanged(root, updates)
     staged: list[tuple[Path, Path, Path, Path]] = []
     try:
-        for relative in (CANONICAL_MANIFEST, LOCK_FILE, PLUGIN_MANIFEST):
+        for relative in updates:
             destination = root / relative
             update = updates[relative]
             replacement = stage_file(destination, update.replacement, "new")

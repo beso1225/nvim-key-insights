@@ -6,7 +6,10 @@ manifest. Creating a tag or GitHub release is always a deliberate maintainer
 operation.
 
 The repository is dual-licensed under either the MIT License or the Apache
-License, Version 2.0, at the user's option. The v0.1.0 release was published
+License, Version 2.0, at the user's option. The latest [v0.2.0
+release](https://github.com/beso1225/nvim-key-insights/releases/tag/v0.2.0) was
+published on 2026-09-06 from merged commit
+[`704db028`](https://github.com/beso1225/nvim-key-insights/commit/704db0284f7412266a9cf396a03f5d85c06e26e7)
 after explicit approval. Future releases still require explicit approval for
 the publication steps below; the release tooling does not choose or modify
 usage rights.
@@ -39,9 +42,10 @@ UV_CACHE_DIR="${TMPDIR:-/tmp}/nvim-key-insights-uv-cache" \
   bump --from 0.1.0 --to 0.2.0
 ```
 
-The command updates Cargo, Cargo.lock, and the Codex plugin manifest. Nix reads
-the Cargo version directly. It does not commit, tag, or publish. Inspect the
-complete diff before continuing.
+The command updates Cargo, Cargo.lock, the Codex plugin manifest, and the
+versioned installation references in `README.md` and `docs/installation.md`.
+Nix reads the Cargo version directly. It does not commit, tag, or publish.
+Inspect the complete diff before continuing.
 
 Move the reviewed Unreleased notes under a dated release heading:
 
@@ -112,14 +116,17 @@ Before pushing a release tag, configure one active repository tag ruleset named
 actors or exclusions, and enable both deletion and non-fast-forward update
 protection. The publication job verifies this ruleset through the GitHub API and
 fails closed when it is absent or weaker; this closes the tag check/use race.
-Create a protected GitHub environment named `release` with required reviewers,
-and add an expiring fine-grained secret named `RELEASE_RULESET_TOKEN`. The token
-needs repository Administration write permission because GitHub hides
-`bypass_actors` from callers without ruleset write access; grant no Contents
-permission. It is exposed only to the environment-gated, checkout-free ruleset
-verification step. The separate write-capable publication job also contains one
-repository-independent shell step and does not run a checkout or external
-action.
+Create a protected GitHub environment named `release` with required reviewers.
+Store an expiring fine-grained repository secret named
+`RELEASE_RULESET_TOKEN`; the token needs repository Administration write
+permission because GitHub hides `bypass_actors` from callers without ruleset
+write access, and it must have no Contents permission. The current workflow
+references this repository secret only from the environment-gated,
+checkout-free ruleset verification step. After the tagged validation job
+succeeds, approve the pending `release` deployment so that ruleset verification
+and publication can continue. The separate write-capable publication job also
+contains one repository-independent shell step and does not run a checkout or
+external action.
 
 Confirm the published archive checksum and release notes before announcing the
 release. Do not move or reuse a pushed release tag.
