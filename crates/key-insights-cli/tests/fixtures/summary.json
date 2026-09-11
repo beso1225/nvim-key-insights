@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "ranking_limit": 100,
   "sessions": 2,
   "events": 12,
@@ -12,6 +12,8 @@
   "unique_control_keys": 0,
   "mode_transitions": 1,
   "mapping_uses": 3,
+  "input_loss_events": 0,
+  "input_loss_keys": 0,
   "repeated_key_runs": 2,
   "repeated_key_presses": 4,
   "unique_keys": 4,

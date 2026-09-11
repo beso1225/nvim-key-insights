@@ -39,6 +39,15 @@ assert(vim.deep_equal(assert(key_tokens.tokenize("日", { max_tokens = 1, max_to
 assert_failure("日", { max_token_bytes = 2 }, "key_tokens:limit_exceeded")
 assert_failure(string.rep("<", 1024 * 1024), { max_input_bytes = 4096 }, "key_tokens:limit_exceeded")
 
+local unicode_chunks = assert(key_tokens.chunk(string.rep("日", 3), 4))
+assert(#unicode_chunks == 3)
+assert(table.concat(unicode_chunks) == string.rep("日", 3))
+local notation_chunks = assert(key_tokens.chunk("abc<C-Y>def", 8))
+assert(table.concat(notation_chunks) == "abc<C-Y>def")
+for _, chunk in ipairs(notation_chunks) do
+  assert(chunk ~= "<" and chunk ~= "C-Y" and chunk ~= ">")
+end
+
 local secret = "private-secret-token"
 local _, limit_error = key_tokens.tokenize("<" .. secret .. ">", { max_token_bytes = 4 })
 assert(limit_error == "key_tokens:limit_exceeded")

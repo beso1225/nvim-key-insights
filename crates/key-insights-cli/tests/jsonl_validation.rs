@@ -51,6 +51,44 @@ fn validates_schema_v2_control_key_usage_without_accepting_insert_text() {
 }
 
 #[test]
+fn validates_schema_v3_input_loss_without_retaining_input() {
+    let input = concat!(
+        r#"{"schema_version":3,"event_type":"session_start","session_id":"loss","elapsed_ms":0}"#,
+        "\n",
+        r#"{"schema_version":3,"event_type":"input_loss","session_id":"loss","elapsed_ms":5,"reason":"pending_queue_limit","key_count":12}"#,
+        "\n",
+        r#"{"schema_version":3,"event_type":"session_end","session_id":"loss","elapsed_ms":5}"#,
+        "\n",
+    );
+
+    let summary = validate(input).expect("schema-v3 input loss must be valid");
+    assert_eq!(summary.sessions, 1);
+    assert_eq!(summary.events, 3);
+}
+
+#[test]
+fn rejects_invalid_schema_v3_input_loss() {
+    for payload in [
+        r#"{"reason":"unknown","key_count":1}"#,
+        r#"{"reason":"pending_queue_limit","key_count":0}"#,
+        r#"{"reason":"pending_queue_limit","key_count":1,"text":"secret"}"#,
+    ] {
+        let input = format!(
+            concat!(
+                r#"{{"schema_version":3,"event_type":"session_start","session_id":"loss","elapsed_ms":0}}"#,
+                "\n",
+                r#"{{"schema_version":3,"event_type":"input_loss","session_id":"loss","elapsed_ms":5,{payload}}}"#,
+                "\n"
+            ),
+            payload = payload.trim_start_matches('{').trim_end_matches('}')
+        );
+        let error = validate(&input).expect_err("invalid input loss must fail closed");
+        assert_eq!(error.line, 2);
+        assert_eq!(error.kind, ValidationErrorKind::MalformedEvent);
+    }
+}
+
+#[test]
 fn rejects_schema_v1_control_key_usage() {
     let input = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"control-v1","elapsed_ms":0}"#,
@@ -197,14 +235,14 @@ fn rejects_key_sequence_durations_beyond_elapsed_session_time() {
 #[test]
 fn rejects_unsupported_versions_and_unclosed_sessions() {
     let unsupported = concat!(
-        r#"{"schema_version":3,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        r#"{"schema_version":4,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
         "\n",
     );
     let error = validate(unsupported).expect_err("schema version must be supported");
     assert_eq!(error.line, 1);
     assert_eq!(
         error.kind,
-        ValidationErrorKind::UnsupportedSchema { found: 3 }
+        ValidationErrorKind::UnsupportedSchema { found: 4 }
     );
 
     let unclosed = concat!(

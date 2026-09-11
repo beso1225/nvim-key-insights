@@ -54,6 +54,8 @@ fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
         "unique_control_keys",
         "mode_transitions",
         "mapping_uses",
+        "input_loss_events",
+        "input_loss_keys",
         "repeated_key_runs",
         "repeated_key_presses",
         "unique_keys",

@@ -173,6 +173,89 @@ function M.normalize_caret_notation(canonical, typed)
   return table.concat(normalized)
 end
 
+local function chunk_end(value, start, max_bytes, next_closing)
+  local limit = math.min(#value, start + max_bytes - 1)
+  local cursor = start
+  local end_index = start - 1
+  while cursor <= limit do
+    local width = character_bytes(value, cursor)
+    if width == nil or cursor + width - 1 > limit then
+      break
+    end
+
+    local next_end = cursor + width - 1
+    if string.byte(value, cursor) == string.byte("<") then
+      if next_closing ~= nil and next_closing <= cursor then
+        next_closing = string.find(value, ">", cursor + width, true)
+      end
+      local closing = next_closing
+      if closing ~= nil and closing - cursor + 1 <= MAX_KEY_NOTATION_BYTES then
+        -- Preserve bracketed notation only when the whole token fits in this
+        -- chunk. If the caller chooses a smaller byte bound, split it as
+        -- ordinary UTF-8 text rather than exceeding the requested bound.
+        if closing <= limit then
+          next_end = closing
+        elseif end_index >= start then
+          break
+        end
+      end
+    end
+
+    end_index = next_end
+    cursor = next_end + 1
+  end
+  return end_index, next_closing
+end
+
+function M.each_chunk(value, max_bytes, visitor)
+  if type(value) ~= "string" then
+    return nil, "key_tokens:invalid_input"
+  end
+  if type(max_bytes) ~= "number"
+    or max_bytes <= 0
+    or max_bytes == math.huge
+    or max_bytes ~= math.floor(max_bytes)
+  then
+    return nil, "key_tokens:invalid_limits"
+  end
+  if type(visitor) ~= "function" then
+    return nil, "key_tokens:invalid_visitor"
+  end
+  if value == "" then
+    return true
+  end
+  if not valid_utf8(value) then
+    return nil, "key_tokens:invalid_input"
+  end
+
+  local start = 1
+  local next_closing = string.find(value, ">", 2, true)
+  while start <= #value do
+    local ending
+    ending, next_closing = chunk_end(value, start, max_bytes, next_closing)
+    if ending < start then
+      return nil, "key_tokens:invalid_limits"
+    end
+    if visitor(string.sub(value, start, ending)) == false then
+      return false
+    end
+    start = ending + 1
+  end
+  return true
+end
+
+function M.chunk(value, max_bytes)
+  local chunks = {}
+  local ok, error_code = M.each_chunk(value, max_bytes, function(chunk)
+    table.insert(chunks, chunk)
+    return true
+  end)
+  if not ok then
+    return nil, error_code
+  end
+  return chunks
+end
+
 function M.tokenize(canonical, limits)
   if type(canonical) ~= "string" then
     return nil, "key_tokens:invalid_input"

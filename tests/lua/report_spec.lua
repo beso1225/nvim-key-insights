@@ -436,7 +436,7 @@ local valid_preview = vim.json.encode({
     privacy_boundary = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input.",
   },
   summary = {
-    schema_version = 4,
+    schema_version = 5,
     ranking_limit = 100,
     sessions = 1,
     events = 1,
@@ -449,6 +449,8 @@ local valid_preview = vim.json.encode({
     unique_control_keys = 0,
     mode_transitions = 0,
     mapping_uses = 0,
+    input_loss_events = 0,
+    input_loss_keys = 0,
     repeated_key_runs = 0,
     repeated_key_presses = 0,
     unique_keys = 1,
@@ -1035,7 +1037,7 @@ assert(vim.deep_equal(analysis_invocations[3], {
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":1,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"input_loss_keys","value":0}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")

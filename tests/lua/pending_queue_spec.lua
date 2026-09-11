@@ -34,7 +34,7 @@ assert(writes == 1, "scheduled storage I/O must not run inside the synchronous f
 
 local accepted_before_stop = status.pending_events
 assert(instance:stop())
-assert(writes == accepted_before_stop + 2, "stop must finalize the accepted prefix without an overflow tail")
+assert(writes == accepted_before_stop + 3, "stop must finalize the accepted prefix and sanitized loss event")
 vim.keymap.del("n", "z8")
 
 local callback = nil

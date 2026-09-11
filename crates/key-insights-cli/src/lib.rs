@@ -40,7 +40,7 @@ pub use ergonomics::{
     ModeTransitionCount, OPERATION_TOKEN_SET_VERSION, OperationEvidence, RepeatedMotionEvidence,
     RepeatedMotionSummary,
 };
-pub use event::{Event, Mode, SequenceMode, TextInputMode};
+pub use event::{Event, InputLossReason, Mode, SequenceMode, TextInputMode};
 pub use keymap_snapshot::{
     KeymapSnapshot, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_MAPPINGS, SNAPSHOT_VERSION, SnapshotError,
     SnapshotMapping, SnapshotMode, SnapshotScope, parse_keymap_snapshot,
@@ -52,11 +52,11 @@ pub use validator::{
 };
 
 /// Version of the collector/analyzer event contract.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub const LEGACY_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) fn is_supported_schema_version(version: u32) -> bool {
-    version == LEGACY_SCHEMA_VERSION || version == SCHEMA_VERSION
+    version == LEGACY_SCHEMA_VERSION || version == 2 || version == SCHEMA_VERSION
 }
 
 /// Sensitive data collection switches.

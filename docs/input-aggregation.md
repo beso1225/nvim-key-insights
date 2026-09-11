@@ -17,6 +17,12 @@ emits `mapping_use` with an opaque ID and the same canonical typed keys.
 Ambiguity, mutation, unsupported modes, and excluded buffers reduce attribution
 coverage instead of producing a guess.
 
+Callbacks larger than the per-callback input ceiling are processed as bounded
+UTF-8 and key-notation chunks. Normal, Visual, and Operator-pending keys remain
+countable across chunks; Insert, Replace, and Select text remains an aggregate
+key count. Oversized callbacks do not enable mapping attribution and never cause
+raw callback content to be persisted.
+
 Control-key aggregation is disabled by default. Enable it explicitly when the
 additional behavioral metric is desired:
 
@@ -68,12 +74,13 @@ chunk.
 An idle sequence is retained in memory until the next boundary; the collector
 does not create a timer for every key. Pause, stop, explicit flush, and Neovim
 shutdown all flush it. Deferred writes retain at most 1,024 events and 4 MiB.
-If a synchronous input burst reaches either limit before Neovim services the
-scheduled writer, collection records a fixed error and ignores later input until
-pause or stop flushes the bounded batch. Pausing and starting again resumes the
-same session after recovery. The batch that would cross a limit and any
-unpublished aggregate tail are dropped together, so a finalized log remains an
-accepted prefix rather than containing evidence from after a gap.
+If a synchronous input burst
+reaches either limit before Neovim services the scheduled writer, collection
+records a fixed error, aggregates the dropped key count without retaining input,
+and ignores later input until pause or stop flushes the bounded batch. The
+finalized log contains the accepted prefix followed by a sanitized
+`input_loss` event before `session_end`. Pausing and starting again resumes the
+same session after recovery.
 
 ## Timing
 

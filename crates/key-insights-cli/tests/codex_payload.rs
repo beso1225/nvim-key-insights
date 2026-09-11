@@ -51,7 +51,7 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "3a7d4f37ad75acb06cd73c9a3e6954ce2b33ac877202cba6173785f0d3ed7ec7"
+        "bcd92d310e83eface59d5e288acf8edd2015940a50a3e28b248efc97f360a0be"
     );
     assert!(first.starts_with(
         r#"{"payload_schema_version":2,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
@@ -174,7 +174,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "aef4536baeb914d80ebd4c90d5ca088cd4330bd651a751f8c119260768bad1bd"
+        "247b1f8170f91cbeff8f095d619ad66e69b7e67611de3f8f2dc1e9924517fb65"
     );
 }
 
