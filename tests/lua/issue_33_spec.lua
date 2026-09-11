@@ -181,4 +181,21 @@ local byte_losses = events_of_type(byte_state.events, "input_loss")
 assert(#byte_losses == 1 and byte_losses[1].key_count > 0)
 assert(string.find(vim.json.encode(byte_state.events), "mapped-byte-overflow-secret", 1, true) == nil)
 
+local split_overflow, split_overflow_state = new_harness(
+  "issue-33-sequence-split-overflow",
+  config.resolve({ collection = { max_sequence_keys = 64 } }),
+  { auto_flush = false }
+)
+for index = 1, 1024 do
+  split_overflow_state.now_ms = index * 1001
+  split_overflow_state.callback("mapped-split-overflow-secret", "j")
+end
+split_overflow_state.now_ms = 1025 * 1001
+split_overflow_state.callback("mapped-split-overflow-secret", string.rep("j", 100))
+assert(split_overflow:status().last_error == "collector pending queue limit exceeded")
+assert(split_overflow:stop())
+local split_losses = events_of_type(split_overflow_state.events, "input_loss")
+assert(#split_losses == 1 and split_losses[1].key_count == 100)
+assert(string.find(vim.json.encode(split_overflow_state.events), "mapped-split-overflow-secret", 1, true) == nil)
+
 print("Lua issue #33 contract: ok")

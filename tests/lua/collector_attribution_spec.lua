@@ -1,4 +1,5 @@
 local collector = require("key-insights.collector")
+local config = require("key-insights.config")
 
 local function memory_session(events, on_write)
   return {
@@ -258,5 +259,50 @@ assert(unavailable:status().last_error == nil, "an unavailable baseline must not
 assert(count(unavailable_events, "mapping_use") == 0)
 assert(count(unavailable_events, "key_sequence") == 1)
 unavailable:stop()
+
+local mapping_overflow, mapping_overflow_events, _, mapping_overflow_controls = fixture({
+  auto_flush = false,
+  options = config.resolve({ collection = { max_sequence_keys = 65536 } }),
+})
+mapping_overflow:start()
+for _ = 1, 1025 do
+  mapping_overflow_controls.callback("private mapped value", "zq")
+end
+assert(mapping_overflow:status().last_error == "collector pending queue limit exceeded")
+assert(mapping_overflow:stop())
+local mapping_losses = {}
+for _, event in ipairs(mapping_overflow_events) do
+  if event.event_type == "input_loss" then
+    table.insert(mapping_losses, event)
+  end
+end
+assert(#mapping_losses == 1)
+assert(mapping_losses[1].key_count == 2050, "mapping overflow must account for buffered sequence keys")
+
+local excluded_overflow, excluded_overflow_events, _, excluded_overflow_controls = fixture({
+  auto_flush = false,
+  options = config.resolve({ collection = { max_sequence_keys = 65536 } }),
+})
+excluded_overflow:start()
+for _ = 1, 1025 do
+  excluded_overflow_controls.callback("private mapped value", "zq")
+end
+assert(excluded_overflow:status().last_error == "collector pending queue limit exceeded")
+local loss_before_excluded_input = excluded_overflow._input_loss_key_count
+excluded_overflow_controls.set_buffer({ id = 8, buftype = "terminal", filetype = "", name = "" })
+excluded_overflow_controls.callback("private terminal input", "zq")
+assert(
+  excluded_overflow._input_loss_key_count == loss_before_excluded_input,
+  "excluded input must not be added to the loss metric after overflow"
+)
+assert(excluded_overflow:stop())
+local excluded_losses = {}
+for _, event in ipairs(excluded_overflow_events) do
+  if event.event_type == "input_loss" then
+    table.insert(excluded_losses, event)
+  end
+end
+assert(#excluded_losses == 1)
+assert(excluded_losses[1].key_count == loss_before_excluded_input)
 
 print("Lua collector attribution: ok")

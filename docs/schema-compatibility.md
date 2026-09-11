@@ -48,7 +48,7 @@ supports those logs. Existing outputs remain untouched when regeneration
 fails.
 
 For compatibility with a configured older analyzer, Neovim's report freshness
-check may recognize summary schemas 1, 2, and 3, plus the current schema 5,
+check may recognize summary schemas 1, 2, 3, and 4, plus the current schema 5,
 only to confirm that a fresh summary/report pair was published. It does not
 interpret their nested data or send them to Codex. `key-insights preview` and
 the Neovim Codex boundary require the complete current summary schema 5 and

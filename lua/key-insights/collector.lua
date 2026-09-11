@@ -386,11 +386,12 @@ function Collector:_visit_typed_chunks(typed, visitor)
   local ok, error_code = key_tokens.each_chunk(typed, MAX_TYPED_CHUNK_BYTES, function(chunk)
     local tokens = self:_typed_tokens(chunk)
     if visiting then
-      if visitor(tokens) then
+      local visited, remaining_key_count = visitor(tokens)
+      if visited then
         processed = processed + #tokens
       else
         visiting = false
-        lost = lost + #tokens
+        lost = lost + (remaining_key_count or #tokens)
       end
     else
       -- Keep counting after a failure without retaining the remaining chunks.
@@ -415,7 +416,8 @@ function Collector:_record_typed_input_loss(typed)
 end
 
 function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
-  for _, key in ipairs(typed_tokens or self:_typed_tokens(typed)) do
+  typed_tokens = typed_tokens or self:_typed_tokens(typed)
+  for index, key in ipairs(typed_tokens) do
     local sequence = self._sequence
     local timeout_ms = self._options.collection.sequence_timeout_ms
     local max_keys = self._options.collection.max_sequence_keys
@@ -425,7 +427,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
         or #sequence.keys >= max_keys)
     then
       if not self:_emit_sequence(elapsed_ms) then
-        return false
+        return false, #typed_tokens - index + 1
       end
       sequence = nil
     end
@@ -444,7 +446,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
     table.insert(sequence.key_elapsed_ms, elapsed_ms)
     sequence.last_ms = elapsed_ms
   end
-  return true
+  return true, 0
 end
 
 function Collector:_record_text_keys(typed, elapsed_ms, typed_tokens)
@@ -678,20 +680,18 @@ function Collector:_record_mapping_use(mapped, typed, mode, typed_tokens, elapse
   then
     return
   end
-  self:_queue(schema.mapping_use(self._session_id, elapsed_ms, mode, mapping_id, typed_tokens))
+  local buffered_key_count = #typed_tokens
+  if self._sequence ~= nil then
+    buffered_key_count = #self._sequence.keys
+  end
+  self:_queue(
+    schema.mapping_use(self._session_id, elapsed_ms, mode, mapping_id, typed_tokens),
+    buffered_key_count
+  )
 end
 
 function Collector:_handle_key(mapped, typed)
   if self._state ~= "recording" then
-    return
-  end
-  if self._last_error ~= nil then
-    if self._last_error == PENDING_LIMIT_ERROR then
-      local _, key_count = self:_visit_typed_chunks(typed, function()
-        return true
-      end)
-      self:_record_input_loss(key_count)
-    end
     return
   end
 
@@ -702,6 +702,17 @@ function Collector:_handle_key(mapped, typed)
     self:_flush_input(elapsed_ms)
     return
   end
+
+  if self._last_error ~= nil then
+    if self._last_error == PENDING_LIMIT_ERROR then
+      local _, key_count = self:_visit_typed_chunks(typed, function()
+        return true
+      end)
+      self:_record_input_loss(key_count)
+    end
+    return
+  end
+
   if self._mapping_reprime_needed then
     self:_schedule_mapping_reprime()
   end
@@ -739,9 +750,10 @@ function Collector:_handle_key(mapped, typed)
     local typed_bytes = type(typed) == "string" and #typed or 0
     if typed_bytes <= MAX_CALLBACK_INPUT_BYTES then
       local typed_tokens = self:_typed_tokens(typed)
-      if not self:_record_sequence(mode, typed, elapsed_ms, typed_tokens) then
+      local recorded, lost_key_count = self:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
+      if not recorded then
         if self._last_error == PENDING_LIMIT_ERROR then
-          self:_record_input_loss(#typed_tokens)
+          self:_record_input_loss(lost_key_count or #typed_tokens)
         end
         return
       end
