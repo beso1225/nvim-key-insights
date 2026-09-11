@@ -19,7 +19,9 @@ local TEXT_INPUT_MODES = {
   select = true,
 }
 local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
-local MAX_TYPED_CHUNK_BYTES = math.floor(MAX_CALLBACK_INPUT_BYTES / 4)
+-- C0 bytes can become five-byte `<C-X>` tokens after keytrans normalization.
+local MAX_CANONICAL_BYTES_PER_RAW_BYTE = 5
+local MAX_TYPED_CHUNK_BYTES = math.floor(MAX_CALLBACK_INPUT_BYTES / MAX_CANONICAL_BYTES_PER_RAW_BYTE)
 local MAX_PENDING_EVENTS = 1024
 local MAX_PENDING_BYTES = 4 * 1024 * 1024
 local MAX_CONTROL_KEY_BUCKETS = 1024
@@ -705,10 +707,13 @@ function Collector:_handle_key(mapped, typed)
 
   if self._last_error ~= nil then
     if self._last_error == PENDING_LIMIT_ERROR then
-      local _, key_count = self:_visit_typed_chunks(typed, function()
-        return true
-      end)
-      self:_record_input_loss(key_count)
+      local mode = normalize_mode(self._current_mode(), self._current_cmdtype())
+      if SEQUENCE_MODES[mode] or mode == "insert" then
+        local _, key_count = self:_visit_typed_chunks(typed, function()
+          return true
+        end)
+        self:_record_input_loss(key_count)
+      end
     end
     return
   end

@@ -33,6 +33,7 @@ local function fixture(overrides)
   local in_callback = false
   local writes_in_callback = 0
   local mode = "n"
+  local cmdtype = ""
   local buffer = { id = 7, buftype = "", filetype = "lua", name = "" }
   local resolver = {
     prime = function(_, resolved_buffer)
@@ -59,7 +60,7 @@ local function fixture(overrides)
       return buffer
     end,
     current_cmdtype = function()
-      return ""
+      return cmdtype
     end,
     current_mode = function()
       return mode
@@ -98,6 +99,9 @@ local function fixture(overrides)
     end,
     set_mode = function(value)
       mode = value
+    end,
+    set_cmdtype = function(value)
+      cmdtype = value
     end,
     writes_in_callback = function()
       return writes_in_callback
@@ -259,6 +263,30 @@ assert(unavailable:status().last_error == nil, "an unavailable baseline must not
 assert(count(unavailable_events, "mapping_use") == 0)
 assert(count(unavailable_events, "key_sequence") == 1)
 unavailable:stop()
+
+local mode_overflow, _, _, mode_overflow_controls = fixture({
+  auto_flush = false,
+  options = config.resolve({ collection = { max_sequence_keys = 65536 } }),
+})
+mode_overflow:start()
+for _ = 1, 1025 do
+  mode_overflow_controls.callback("private mapped value", "zq")
+end
+assert(mode_overflow:status().last_error == "collector pending queue limit exceeded")
+local loss_before_unsupported_input = mode_overflow._input_loss_key_count
+mode_overflow_controls.set_mode("c")
+mode_overflow_controls.set_cmdtype(":")
+mode_overflow_controls.callback("private command input", "abc")
+mode_overflow_controls.set_cmdtype("/")
+mode_overflow_controls.callback("private search input", "abc")
+mode_overflow_controls.set_mode("t")
+mode_overflow_controls.set_cmdtype("")
+mode_overflow_controls.callback("private terminal input", "abc")
+assert(
+  mode_overflow._input_loss_key_count == loss_before_unsupported_input,
+  "unsupported input modes must not inflate post-overflow loss counts"
+)
+mode_overflow:stop()
 
 local mapping_overflow, mapping_overflow_events, _, mapping_overflow_controls = fixture({
   auto_flush = false,

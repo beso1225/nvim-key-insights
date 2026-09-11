@@ -24,7 +24,7 @@ local function new_harness(session_id, options, overrides)
     current_mode = function()
       return state.mode
     end,
-    keytrans = function(value)
+    keytrans = overrides.keytrans or function(value)
       return value
     end,
     mapping_resolver = {
@@ -107,6 +107,26 @@ local oversized_unicode = string.rep("日", 90000)
 assert_sequence_count("normal", "n", oversized_unicode, 90000)
 assert_sequence_count("visual", "v", oversized_unicode, 90000)
 assert_sequence_count("operator-pending", "no", oversized_unicode, 90000)
+
+local expanded_control, expanded_control_state = new_harness(
+  "issue-33-expanded-control",
+  config.resolve({ collection = { max_sequence_keys = 65536 } }),
+  {
+    keytrans = function(value)
+      return string.rep("^Y", #value)
+    end,
+  }
+)
+local oversized_c0_controls = string.rep(string.char(25), 300000)
+expanded_control_state.callback("mapped-expanded-control-secret", oversized_c0_controls)
+assert(expanded_control:pause())
+local expanded_control_sequences = events_of_type(expanded_control_state.events, "key_sequence")
+local expanded_control_key_count = 0
+for _, event in ipairs(expanded_control_sequences) do
+  expanded_control_key_count = expanded_control_key_count + #event.keys
+end
+assert(expanded_control_key_count == 300000, "expanded control input must preserve every typed key")
+assert(string.find(vim.json.encode(expanded_control_state.events), "mapped-expanded-control-secret", 1, true) == nil)
 
 local insert, insert_state = new_harness("issue-33-insert", config.defaults(), { mode = "i" })
 insert_state.callback("mapped-insert-secret", oversized_unicode)
