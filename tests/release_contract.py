@@ -771,7 +771,7 @@ class ReleaseContractTest(unittest.TestCase):
             self.assertEqual(extracted.returncode, 0, extracted.stderr)
             notes = output.read_text()
             self.assertTrue(notes.startswith("### Added\n"))
-            self.assertIn("Versioned the macOS Command slash/backslash control-key tokens", notes)
+            self.assertIn("Use Codex's built-in read-only sandbox", notes)
             self.assertNotIn("Unreleased", notes)
             self.assertNotIn(f"## [{CURRENT_VERSION}]", notes)
 

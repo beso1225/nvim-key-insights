@@ -8,6 +8,14 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-12
+
+### Added
+
+- Use Codex's built-in read-only sandbox for analysis subprocesses, avoiding
+  failures caused by the former custom filesystem and network profile while
+  documenting the broader local-read boundary.
+
 ## [0.2.1] - 2026-09-12
 
 ### Added
