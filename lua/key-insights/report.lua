@@ -1099,8 +1099,14 @@ local function validate_codex_suggestions(contents, preview_payload)
       then
         return false, "Codex returned invalid evidence"
       end
-      if expected_metric(preview_payload.summary, evidence.metric) ~= evidence.value then
-        return false, "Codex evidence does not match the sanitized summary"
+      local expected = expected_metric(preview_payload.summary, evidence.metric)
+      if expected ~= evidence.value then
+        return false, string.format(
+          "Codex evidence does not match the sanitized summary (metric=%s, received=%s, expected=%s)",
+          tostring(evidence.metric),
+          tostring(evidence.value),
+          tostring(expected)
+        )
       end
       for key in pairs(evidence) do
         if key ~= "metric" and key ~= "value" then

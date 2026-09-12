@@ -930,6 +930,7 @@ local analysis_confirm_binary = nil
 local analysis_invocations = {}
 local analysis_opened = {}
 local analysis_markdown_opened = false
+local analysis_notification = nil
 local analysis = report.new({
   analyzer = "key-insights",
   output_directory = "/state/analyze-reports",
@@ -940,6 +941,9 @@ local analysis = report.new({
     working_directory = "/state/empty-codex-workspace",
   },
 }, {
+  notify = function(message)
+    analysis_notification = message
+  end,
   collect_snapshot_payload = function()
     return '{"snapshot_version":1,"mappings":[]}'
   end,
@@ -1066,6 +1070,9 @@ analysis_codex_callback({
 })
 assert(analysis:status().running == false)
 assert(#analysis_opened == 5, "invalid Codex output must not be opened")
+assert(string.find(analysis_notification, "metric=sessions", 1, true) ~= nil)
+assert(string.find(analysis_notification, "received=999", 1, true) ~= nil)
+assert(string.find(analysis_notification, "expected=1", 1, true) ~= nil)
 
 assert(analysis:analyze() == true)
 analysis_preview_callback({ code = 0, signal = 0, stdout = shown_preview, stderr = "" })
