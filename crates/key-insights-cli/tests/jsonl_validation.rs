@@ -51,6 +51,33 @@ fn validates_schema_v2_control_key_usage_without_accepting_insert_text() {
 }
 
 #[test]
+fn validates_schema_v3_command_slash_control_key_usage() {
+    for (index, key) in ["<D-/>", r#"<D-\>"#].into_iter().enumerate() {
+        let session_id = format!("control-v3-{index}");
+        let input = format!(
+            "{{\"schema_version\":3,\"event_type\":\"session_start\",\"session_id\":\"{session_id}\",\"elapsed_ms\":0}}\n{{\"schema_version\":3,\"event_type\":\"control_key_use\",\"session_id\":\"{session_id}\",\"elapsed_ms\":5,\"mode\":\"insert\",\"key\":{key:?},\"count\":1}}\n{{\"schema_version\":3,\"event_type\":\"session_end\",\"session_id\":\"{session_id}\",\"elapsed_ms\":5}}\n"
+        );
+
+        let summary = validate(&input).expect("schema-v3 command slash usage must be valid");
+        assert_eq!(summary.sessions, 1);
+        assert_eq!(summary.events, 3);
+    }
+}
+
+#[test]
+fn rejects_schema_v2_command_slash_control_key_usage() {
+    for key in ["<D-/>", r#"<D-\>"#] {
+        let input = format!(
+            "{{\"schema_version\":2,\"event_type\":\"session_start\",\"session_id\":\"control-v2\",\"elapsed_ms\":0}}\n{{\"schema_version\":2,\"event_type\":\"control_key_use\",\"session_id\":\"control-v2\",\"elapsed_ms\":5,\"mode\":\"insert\",\"key\":{key:?},\"count\":1}}\n"
+        );
+
+        let error = validate(&input).expect_err("schema-v2 must reject command slash usage");
+        assert_eq!(error.line, 2);
+        assert_eq!(error.kind, ValidationErrorKind::MalformedEvent);
+    }
+}
+
+#[test]
 fn rejects_schema_v1_control_key_usage() {
     let input = concat!(
         r#"{"schema_version":1,"event_type":"session_start","session_id":"control-v1","elapsed_ms":0}"#,
@@ -197,14 +224,14 @@ fn rejects_key_sequence_durations_beyond_elapsed_session_time() {
 #[test]
 fn rejects_unsupported_versions_and_unclosed_sessions() {
     let unsupported = concat!(
-        r#"{"schema_version":3,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
+        r#"{"schema_version":4,"event_type":"session_start","session_id":"one","elapsed_ms":0}"#,
         "\n",
     );
     let error = validate(unsupported).expect_err("schema version must be supported");
     assert_eq!(error.line, 1);
     assert_eq!(
         error.kind,
-        ValidationErrorKind::UnsupportedSchema { found: 3 }
+        ValidationErrorKind::UnsupportedSchema { found: 4 }
     );
 
     let unclosed = concat!(

@@ -61,8 +61,8 @@ Legacy filenames can still be selected explicitly.
 - cautious, sample-guarded repeated-motion and current-mapping coverage
   candidates, capped at 100 total rows.
 
-Every analysis emits summary schema v4. Collector events use schema v2 while
-the reader remains compatible with schema v1, and
+Every analysis emits summary schema v4. Collector events use schema v3 while
+the reader remains compatible with schemas v1 and v2, and
 the optional snapshot document remains version 1; these are independent
 contracts. The supported versions and regeneration paths are defined in the
 [schema compatibility policy](schema-compatibility.md). With a snapshot, the

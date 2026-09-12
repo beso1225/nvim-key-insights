@@ -357,7 +357,7 @@ def execute(
     manifest = {
         "manifest_version": 1,
         "mode": "real-local-performance",
-        "contracts": {"event_schema": 2, "summary_schema": 4, "ergonomics": 2},
+        "contracts": {"event_schema": 3, "summary_schema": 4, "ergonomics": 2},
         "tools": {
             "key_insights": analyzer_version,
             "neovim": nvim_version,

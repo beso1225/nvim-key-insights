@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Version of the sanitized subprocess payload contract.
-pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 2;
+pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 3;
 /// Hard upper bound for bytes sent to an optional Codex subprocess.
 pub const MAX_CODEX_PAYLOAD_BYTES: usize = 256 * 1024;
 

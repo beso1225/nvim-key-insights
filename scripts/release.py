@@ -72,10 +72,10 @@ SCHEMA_REQUIRED_FILES = (
     ),
 )
 SCHEMA_VERSIONS = {
-    "Event log": 2,
+    "Event log": 3,
     "Analysis summary": 4,
     "Keymap snapshot": 1,
-    "Codex payload": 2,
+    "Codex payload": 3,
     "Codex suggestions": 1,
     "Ergonomics contract": 2,
     "Histogram layout": 1,

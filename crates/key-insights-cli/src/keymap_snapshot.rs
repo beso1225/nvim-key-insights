@@ -346,6 +346,17 @@ pub(crate) fn is_control_token(token: &str) -> bool {
             .all(|byte| (0x20..=0x7e).contains(&byte) && !matches!(byte, b'>' | b'/' | b'\\'))
 }
 
+pub(crate) fn is_control_token_for_event_schema(token: &str, schema_version: u32) -> bool {
+    if !is_control_token(token) {
+        return false;
+    }
+    match schema_version {
+        crate::PREVIOUS_SCHEMA_VERSION => !matches!(token, "<D-/>" | r#"<D-\>"#),
+        crate::SCHEMA_VERSION => true,
+        _ => false,
+    }
+}
+
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {
     let mut preimage = String::new();
     append_length_prefixed(&mut preimage, "mapping-v1");

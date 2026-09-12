@@ -52,11 +52,19 @@ pub use validator::{
 };
 
 /// Version of the collector/analyzer event contract.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub const LEGACY_SCHEMA_VERSION: u32 = 1;
+pub const PREVIOUS_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) fn is_supported_schema_version(version: u32) -> bool {
-    version == LEGACY_SCHEMA_VERSION || version == SCHEMA_VERSION
+    matches!(
+        version,
+        LEGACY_SCHEMA_VERSION | PREVIOUS_SCHEMA_VERSION | SCHEMA_VERSION
+    )
+}
+
+pub(crate) fn is_supported_control_key_schema_version(version: u32) -> bool {
+    matches!(version, PREVIOUS_SCHEMA_VERSION | SCHEMA_VERSION)
 }
 
 /// Sensitive data collection switches.

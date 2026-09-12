@@ -1,12 +1,12 @@
 # Event schema contract
 
-The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `2` is the current compatibility boundary between the Lua collector and Rust analyzer; the analyzer continues to read event schema `1` logs. Its support lifetime and any future upgrade path are defined in the [schema compatibility policy](schema-compatibility.md).
+The collector writes newline-delimited JSON (JSONL). Each line is one complete event. Schema version `3` is the current compatibility boundary between the Lua collector and Rust analyzer; the analyzer continues to read event schemas `1` and `2` logs. Its support lifetime and any future upgrade path are defined in the [schema compatibility policy](schema-compatibility.md).
 
 ## Envelope
 
 Every event will contain:
 
-- `schema_version`: integer, currently `2`;
+- `schema_version`: integer, currently `3`;
 - `event_type`: a stable event discriminator;
 - `session_id`: a random identifier created for one Neovim collection session;
 - `elapsed_ms`: monotonic milliseconds since the session began.
@@ -32,7 +32,7 @@ The collector stores one session per finalized `.jsonl` file. The validator acce
 
 - Raw per-key logging is disabled unless explicitly opted in.
 - Insert-mode text and command/search contents are never present under default settings.
-- Control-key aggregates contain only canonical control tokens such as `<C-Y>` or `<Tab>`; literal text that resembles a notation is retained as text and is not promoted into this event.
+- Control-key aggregates contain only canonical control tokens such as `<C-Y>`, `<Tab>`, or the schema-3-only macOS Command slash tokens `<D-/>` and `<D-\>`; literal text that resembles a notation is retained as text and is not promoted into this event.
 - Terminal, prompt, `nofile`, and other special buffers are excluded.
 - Sensitive filenames and filetypes are force-excluded and cannot be enabled through ordinary configuration.
 - File paths are absent by default.

@@ -56,7 +56,7 @@ assert(config.is_sensitive_buffer({ name = "credentials.json", filetype = "json"
 assert(config.is_sensitive_buffer({ name = "src/main.rs", filetype = "rust" }) == false)
 
 local start = schema.session_start("session-one", "project-one")
-assert(start.schema_version == 2)
+assert(start.schema_version == 3)
 assert(start.event_type == "session_start")
 assert(start.session_id == "session-one")
 assert(start.elapsed_ms == 0)

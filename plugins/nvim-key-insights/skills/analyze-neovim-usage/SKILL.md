@@ -37,7 +37,7 @@ Require all of the following before analysis:
 - The top-level payload keys are exactly `payload_schema_version`, `purpose`,
   `instructions`, `summary`, and the optional `keymap_snapshot`. Reject any
   additional top-level key.
-- `payload_schema_version` is `2`;
+- `payload_schema_version` is `3`;
 - `purpose` is `analyze-neovim-usage`;
 - `summary.schema_version` is `4`;
 - `keymap_snapshot.snapshot_version` is `1` when a snapshot is present;

@@ -1,8 +1,8 @@
 local M = {
-  event_log = 2,
+  event_log = 3,
   analysis_summary = 4,
   keymap_snapshot = 1,
-  codex_payload = 2,
+  codex_payload = 3,
   codex_suggestions = 1,
   ergonomics = 2,
   histogram = 1,

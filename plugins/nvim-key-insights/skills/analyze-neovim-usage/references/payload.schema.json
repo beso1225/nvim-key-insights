@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["payload_schema_version", "purpose", "instructions", "summary"],
   "properties": {
-    "payload_schema_version": { "const": 2 },
+    "payload_schema_version": { "const": 3 },
     "purpose": { "const": "analyze-neovim-usage" },
     "instructions": { "$ref": "#/$defs/instructions" },
     "summary": { "$ref": "#/$defs/summary" },

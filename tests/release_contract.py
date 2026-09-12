@@ -222,11 +222,11 @@ class ReleaseContractTest(unittest.TestCase):
     def test_schema_contract_rejects_runtime_documentation_and_copy_drift(self) -> None:
         mutations = {
             "crates/key-insights-cli/src/lib.rs": (
-                "pub const SCHEMA_VERSION: u32 = 2;",
+                "pub const SCHEMA_VERSION: u32 = 3;",
                 "pub const SCHEMA_VERSION: u32 = 1;",
             ),
             "lua/key-insights/contract_versions.lua": (
-                "event_log = 2",
+                "event_log = 3",
                 "event_log = 1",
             ),
             "lua/key-insights/report.lua": (
@@ -238,7 +238,7 @@ class ReleaseContractTest(unittest.TestCase):
                 'append_length_prefixed(&mut preimage, "mapping-v2");',
             ),
             "docs/schema-compatibility.md": (
-                "| Event log | `2` |",
+                "| Event log | `3` |",
                 "| Event log | `1` |",
             ),
             "codex/suggestions.schema.json": (
@@ -246,7 +246,7 @@ class ReleaseContractTest(unittest.TestCase):
                 '"schema_version": { "type": "integer", "const": 2 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
-                '"payload_schema_version": { "const": 2 }',
+                '"payload_schema_version": { "const": 3 }',
                 '"payload_schema_version": { "const": 1 }',
             ),
         }

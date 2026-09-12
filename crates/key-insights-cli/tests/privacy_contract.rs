@@ -2,7 +2,7 @@ use key_insights::{PrivacyPolicy, SCHEMA_VERSION};
 
 #[test]
 fn schema_uses_the_current_event_log_version() {
-    assert_eq!(SCHEMA_VERSION, 2);
+    assert_eq!(SCHEMA_VERSION, 3);
 }
 
 #[test]

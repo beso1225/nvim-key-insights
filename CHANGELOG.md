@@ -8,6 +8,12 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- Versioned the macOS Command slash/backslash control-key tokens as event
+  schema 3 and Codex payload schema 3 while retaining readers for event
+  schemas 1 and 2.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added

@@ -119,7 +119,7 @@ class LocalPerformanceTestContract(unittest.TestCase):
         self.assertEqual(manifest["mode"], "real-local-performance")
         self.assertEqual(
             manifest["contracts"],
-            {"event_schema": 2, "summary_schema": 4, "ergonomics": 2},
+            {"event_schema": 3, "summary_schema": 4, "ergonomics": 2},
         )
         self.assertEqual(manifest["observations"]["session_count"], 1)
         analyzer = manifest["observations"]["analyzer"]
