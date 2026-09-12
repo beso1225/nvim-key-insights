@@ -8,6 +8,13 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-13
+
+### Fixed
+
+- Include the metric name and received/expected aggregate values when rejecting
+  Codex evidence that does not match the sanitized summary.
+
 ## [0.2.2] - 2026-09-12
 
 ### Added

@@ -770,8 +770,8 @@ class ReleaseContractTest(unittest.TestCase):
             )
             self.assertEqual(extracted.returncode, 0, extracted.stderr)
             notes = output.read_text()
-            self.assertTrue(notes.startswith("### Added\n"))
-            self.assertIn("Use Codex's built-in read-only sandbox", notes)
+            self.assertTrue(notes.startswith("### Fixed\n"))
+            self.assertIn("Include the metric name and received/expected aggregate values", notes)
             self.assertNotIn("Unreleased", notes)
             self.assertNotIn(f"## [{CURRENT_VERSION}]", notes)
 
