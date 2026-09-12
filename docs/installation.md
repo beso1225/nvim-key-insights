@@ -22,7 +22,7 @@ The following specification remains lazy until one of the commands is used:
 ```lua
 {
   "beso1225/nvim-key-insights",
-  version = "v0.2.1",
+  version = "v0.2.2",
   cmd = {
     "KeyInsightsStart",
     "KeyInsightsPause",
@@ -57,8 +57,8 @@ nix profile install github:beso1225/nvim-key-insights#key-insights
 Pin the released revision explicitly:
 
 ```sh
-nix run 'github:beso1225/nvim-key-insights?ref=v0.2.1#key-insights' -- --version
-nix profile install 'github:beso1225/nvim-key-insights?ref=v0.2.1#key-insights'
+nix run 'github:beso1225/nvim-key-insights?ref=v0.2.2#key-insights' -- --version
+nix profile install 'github:beso1225/nvim-key-insights?ref=v0.2.2#key-insights'
 ```
 
 The flake also exports `packages.nvim-key-insights` for consumers that assemble
@@ -135,7 +135,7 @@ For a released installation, use the same immutable tag before installing the
 plugin:
 
 ```sh
-codex plugin marketplace add beso1225/nvim-key-insights@v0.2.1
+codex plugin marketplace add beso1225/nvim-key-insights@v0.2.2
 codex plugin add nvim-key-insights@nvim-key-insights
 ```
 
@@ -249,6 +249,12 @@ not guaranteed on Linux because D-Bus and runtime-directory variables are not
 forwarded. API keys, editor variables, proxy settings, custom-CA variables, and
 unrelated credentials are also not inherited; installations that require a
 proxy or custom CA are not supported by this strict subprocess profile yet.
+
+The subprocess uses Codex's built-in `read-only` sandbox. It cannot modify
+files, but this is broader than the former custom root-deny profile and may
+allow Codex to inspect local files permitted by the current read-only policy.
+The empty working directory and sanitized stdin remain the intended analysis
+boundary, but they are not a guarantee that no other local file can be read.
 
 The deterministic analyzer is a separate trusted local executable and continues
 to inherit the editor environment; it never sends data to an AI service.

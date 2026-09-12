@@ -144,24 +144,28 @@ boundary by construction. No Codex process is launched by this renderer. The
 Neovim `:KeyInsightsAnalyze` command opens the bounded JSON in a scratch buffer
 and requests explicit confirmation; only confirmation launches the non-shell
 `codex exec` runner. Cancelling leaves the workflow local-only, and raw
-JSONL/report artifacts are never sent.
+JSONL/report artifacts are not included in the payload. Because the built-in
+read-only sandbox may permit local reads beyond stdin, users should treat the
+confirmed subprocess as a broader local read boundary.
 
 ## Optional Codex exec runner
 
 The library also provides a non-shell `codex exec` runner for the next explicit
 approval step. It inherits saved Codex authentication, supplies `--ephemeral`,
 ignores user configuration and rules, clears the shell environment inheritance,
-starts in an owner-only empty directory, and selects a permission profile that
-denies filesystem-root and tool-network access while retaining only Codex's
-minimal runtime reads. Approval prompts are disabled for this bounded
-non-interactive run. `--output-schema` constrains the response, and the exact
-previewed payload is written only to stdin. Input and output are bounded to
-256 KiB, stderr is not returned as a publishable result, and timeout/overflow
-termination kills the dedicated process group. The runner fails closed on
-non-Unix platforms until equivalent process-tree termination is available. It
-is wired into
-`:KeyInsightsAnalyze`; real Codex invocations remain opt-in and are not run by
-ordinary CI.
+starts in an owner-only empty directory, and selects Codex's built-in
+`read-only` sandbox. This prevents the subprocess from modifying files, but it
+is broader than the former custom root-deny profile: the read-only sandbox may
+allow Codex to inspect local files according to Codex's current policy. Treat
+the subprocess as a trusted local read boundary and do not assume that the
+stdin payload is the only data it could ever read. Approval prompts are
+disabled for this bounded non-interactive run. `--output-schema` constrains the
+response, and the exact previewed payload is written only to stdin. Input and
+output are bounded to 256 KiB, stderr is not returned as a publishable result,
+and timeout/overflow termination kills the dedicated process group. The runner
+fails closed on non-Unix platforms until equivalent process-tree termination is
+available. It is wired into `:KeyInsightsAnalyze`; real Codex invocations
+remain opt-in and are not run by ordinary CI.
 
 The response schema stays within the Codex structured-output subset: object
 properties are explicitly typed and required, absent mapping proposals use

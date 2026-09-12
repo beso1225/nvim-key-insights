@@ -35,7 +35,7 @@ lazy.nvim-based configuration is:
    ```lua
    {
      "beso1225/nvim-key-insights",
-     version = "v0.2.1",
+     version = "v0.2.2",
      cmd = {
        "KeyInsightsStart",
        "KeyInsightsPause",
@@ -59,13 +59,13 @@ lazy.nvim-based configuration is:
 
    ```sh
    nix profile install \
-     'github:beso1225/nvim-key-insights?ref=v0.2.1#key-insights'
+     'github:beso1225/nvim-key-insights?ref=v0.2.2#key-insights'
    ```
 
    ```sh
    cargo install \
      --git https://github.com/beso1225/nvim-key-insights.git \
-     --tag v0.2.1 \
+     --tag v0.2.2 \
      --locked \
      key-insights
    ```

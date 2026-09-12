@@ -81,7 +81,7 @@ printf '%s\n%s' "$CODEX_HOME" "$PATH""#,
 }
 
 #[test]
-fn builds_a_non_shell_codex_exec_argv_with_privacy_flags() {
+fn builds_a_non_shell_codex_exec_argv_with_read_only_sandbox() {
     let argv = build_codex_exec_argv(&config(Path::new("/private/codex with spaces")));
     assert_eq!(
         argv,
@@ -98,12 +98,8 @@ fn builds_a_non_shell_codex_exec_argv_with_privacy_flags() {
             "shell_environment_policy.inherit=\"none\"",
             "--config",
             "approval_policy=\"never\"",
-            "--config",
-            "default_permissions=\"key-insights-payload-only\"",
-            "--config",
-            "permissions.key-insights-payload-only.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\"}",
-            "--config",
-            "permissions.key-insights-payload-only.network.enabled=false",
+            "--sandbox",
+            "read-only",
             "--output-schema",
             "/private/schema with spaces.json",
         ]
