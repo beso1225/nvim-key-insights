@@ -90,7 +90,11 @@ snapshot from other files.
 4. Choose exactly one supported action for each suggestion:
    `learn_existing`, `add_mapping`, `change_mapping`, or `no_change`.
 5. Cite one or more metric/value pairs exactly as they appear in the payload.
-   Never invent, round, combine, or infer a measurement.
+   Never invent, round, combine, or infer a measurement. Copy evidence metric
+   values exactly from top-level `summary` scalars; never derive, sum, or
+   recompute them from ranked arrays, histograms, candidates, or other
+   truncated collections. In particular, never derive `repeated_key_runs` from
+   `repeated_keys`.
 6. For `add_mapping` or `change_mapping`, require a verified snapshot, provide a
    canonical mode/scope/left-hand-side proposal, and report the complete exact
    set of mapping IDs whose left-hand sides collide exactly or by prefix. For

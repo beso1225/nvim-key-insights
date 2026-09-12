@@ -42,6 +42,10 @@ fn renders_a_versioned_payload_from_sanitized_inputs_only() {
     assert!(!payload.contains("project_id"));
     assert!(!payload.contains("mapping_rhs_secret"));
     assert_eq!(value["summary"]["schema_version"], 5);
+    assert_eq!(
+        value["instructions"]["privacy_boundary"],
+        "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections."
+    );
 }
 
 #[test]
@@ -52,7 +56,7 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "a95e5c5d788ed9e0d2ed38fc98b1ad8a5975f1c4d9c903e59cd40c680afd4cc5"
+        "571c83d7603f65d27f274b3c590f393892958db4cc581f9c4c49beb98acf4312"
     );
     assert!(first.starts_with(
         r#"{"payload_schema_version":3,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
@@ -179,7 +183,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "550a3570fa681080fe9d559bd2d14fe0f11b3177f9a4d8b2781705ead8d5b62b"
+        "f52039a97843d0ee2d623f455dc951f1253c84798487c7e1d9b84103ca282537"
     );
 }
 

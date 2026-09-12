@@ -58,6 +58,8 @@ class CodexSkillContractTests(unittest.TestCase):
         self.assert_contract_text(
             "`learn_existing`, `add_mapping`, `change_mapping`, or `no_change`",
             "Never invent, round, combine, or infer a measurement",
+            "Copy evidence metric values exactly from top-level `summary` scalars",
+            "never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections",
             "complete exact set of mapping IDs",
             "Without a snapshot, emit only `learn_existing` or `no_change`",
         )
@@ -75,7 +77,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_security_critical_skill_instructions_are_canonical(self) -> None:
         self.assertEqual(
             hashlib.sha256(SKILL.encode()).hexdigest(),
-            "40a7fe1b033598bd96853c9b64367fef2758461bd202219d8c5bd66d20b488e1",
+            "ffce071b0d51750cc3ffbd654e2c60c6d57fb3a9ebe1c06c7788996400d5441d",
         )
 
     def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:
