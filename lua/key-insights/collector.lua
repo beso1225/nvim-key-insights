@@ -19,9 +19,6 @@ local TEXT_INPUT_MODES = {
   select = true,
 }
 local MAX_CALLBACK_INPUT_BYTES = schema.MAX_EVENT_LINE_BYTES * 4
--- C0 bytes can become five-byte `<C-X>` tokens after keytrans normalization.
-local MAX_CANONICAL_BYTES_PER_RAW_BYTE = 5
-local MAX_TYPED_CHUNK_BYTES = math.floor(MAX_CALLBACK_INPUT_BYTES / MAX_CANONICAL_BYTES_PER_RAW_BYTE)
 local MAX_PENDING_EVENTS = 1024
 local MAX_PENDING_BYTES = 4 * 1024 * 1024
 local MAX_CONTROL_KEY_BUCKETS = 1024
@@ -359,16 +356,21 @@ function Collector:_flush_input(elapsed_ms)
   return self:_emit_control_keys(elapsed_ms)
 end
 
-function Collector:_typed_tokens(typed)
-  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
-    return {}
+function Collector:_canonicalize_typed(typed)
+  if type(typed) ~= "string" or typed == "" then
+    return ""
   end
   local canonical = self._keytrans(typed)
   if type(canonical) ~= "string" or canonical == "" then
+    return ""
+  end
+  return key_tokens.normalize_caret_notation(canonical, typed)
+end
+
+function Collector:_canonical_tokens(canonical)
+  if type(canonical) ~= "string" or canonical == "" then
     return {}
   end
-  canonical = key_tokens.normalize_caret_notation(canonical, typed)
-
   local tokens = key_tokens.tokenize(canonical, {
     max_input_bytes = MAX_CALLBACK_INPUT_BYTES,
     max_token_bytes = 256,
@@ -377,16 +379,24 @@ function Collector:_typed_tokens(typed)
   return tokens or {}
 end
 
+function Collector:_typed_tokens(typed)
+  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
+    return {}
+  end
+  return self:_canonical_tokens(self:_canonicalize_typed(typed))
+end
+
 function Collector:_visit_typed_chunks(typed, visitor)
   if type(typed) ~= "string" or typed == "" then
     return true, 0
   end
 
+  local canonical = self:_canonicalize_typed(typed)
   local processed = 0
   local lost = 0
   local visiting = true
-  local ok, error_code = key_tokens.each_chunk(typed, MAX_TYPED_CHUNK_BYTES, function(chunk)
-    local tokens = self:_typed_tokens(chunk)
+  local ok, error_code = key_tokens.each_chunk(canonical, MAX_CALLBACK_INPUT_BYTES, function(chunk)
+    local tokens = self:_canonical_tokens(chunk)
     if visiting then
       local visited, remaining_key_count = visitor(tokens)
       if visited then

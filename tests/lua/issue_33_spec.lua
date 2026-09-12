@@ -128,6 +128,27 @@ end
 assert(expanded_control_key_count == 300000, "expanded control input must preserve every typed key")
 assert(string.find(vim.json.encode(expanded_control_state.events), "mapped-expanded-control-secret", 1, true) == nil)
 
+local internal_codes, internal_codes_state = new_harness(
+  "issue-33-internal-key-codes",
+  config.resolve({ collection = { max_sequence_keys = 65536 } }),
+  {
+    keytrans = function(value)
+      assert(#value % 3 == 0)
+      return string.rep("<C-Y>", #value / 3)
+    end,
+  }
+)
+local oversized_internal_codes = string.rep(string.char(0x80, 0x81, 0x82), 100000)
+internal_codes_state.callback("mapped-internal-code-secret", oversized_internal_codes)
+assert(internal_codes:pause())
+local internal_code_sequences = events_of_type(internal_codes_state.events, "key_sequence")
+local internal_code_key_count = 0
+for _, event in ipairs(internal_code_sequences) do
+  internal_code_key_count = internal_code_key_count + #event.keys
+end
+assert(internal_code_key_count == 100000, "internal key-code input must survive UTF-8 chunking")
+assert(string.find(vim.json.encode(internal_codes_state.events), "mapped-internal-code-secret", 1, true) == nil)
+
 local insert, insert_state = new_harness("issue-33-insert", config.defaults(), { mode = "i" })
 insert_state.callback("mapped-insert-secret", oversized_unicode)
 assert(insert:pause())
