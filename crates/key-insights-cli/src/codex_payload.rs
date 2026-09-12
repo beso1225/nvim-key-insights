@@ -116,7 +116,7 @@ pub fn render_codex_payload_json(
             action_kinds: ACTION_KINDS,
             evidence_required: true,
             collision_check_required: true,
-            privacy_boundary: "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input.",
+            privacy_boundary: "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections.",
         },
         summary,
         keymap_snapshot: snapshot.map(|value| CodexKeymapSnapshot {

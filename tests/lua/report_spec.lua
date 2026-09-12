@@ -433,7 +433,7 @@ local valid_preview = vim.json.encode({
     action_kinds = { "learn_existing", "add_mapping", "change_mapping", "no_change" },
     evidence_required = true,
     collision_check_required = true,
-    privacy_boundary = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input.",
+    privacy_boundary = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections.",
   },
   summary = {
     schema_version = 5,

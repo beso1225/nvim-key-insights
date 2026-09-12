@@ -52,7 +52,7 @@
         "evidence_required": { "const": true },
         "collision_check_required": { "const": true },
         "privacy_boundary": {
-          "const": "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."
+          "const": "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections."
         }
       }
     },
