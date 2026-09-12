@@ -8,6 +8,15 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-09-13
+
+### Fixed
+
+- Include the metric name and received/expected aggregate values when rejecting
+  Codex evidence, and bind evidence citations to exact top-level summary
+  metrics instead of allowing values to be recomputed from truncated ranked
+  collections.
+
 ## [0.2.3] - 2026-09-13
 
 ### Fixed
