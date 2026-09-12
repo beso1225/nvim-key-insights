@@ -8,6 +8,8 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-12
+
 ### Added
 
 - Versioned the macOS Command slash/backslash control-key tokens as event
