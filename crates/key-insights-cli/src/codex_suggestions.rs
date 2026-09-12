@@ -506,7 +506,16 @@ fn is_slash_separated_key_alternative(token: &str) -> bool {
 fn is_safe_slash_token(token: &str) -> bool {
     matches!(
         token,
-        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+        "<C-/>"
+            | "<A-/>"
+            | "<M-/>"
+            | "<S-/>"
+            | "<D-/>"
+            | "<C-\\>"
+            | "<A-\\>"
+            | "<M-\\>"
+            | "<S-\\>"
+            | "<D-\\>"
     ) || is_slash_separated_key_alternative(token)
 }
 

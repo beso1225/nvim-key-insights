@@ -455,7 +455,7 @@ local valid_preview = vim.json.encode({
     unique_mappings = 0,
     unique_repeated_keys = 0,
     modes = {},
-    keys = { { key = "/", count = 1 } },
+    keys = { { key = "<D-/>", count = 1 } },
     control_keys = {},
     mappings = {},
     repeated_keys = {},

@@ -75,7 +75,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_security_critical_skill_instructions_are_canonical(self) -> None:
         self.assertEqual(
             hashlib.sha256(SKILL.encode()).hexdigest(),
-            "9de3ded1ccb0e1ccc63a2fb6a800ae104647c68f02128d573ca0bcf2890a3c6e",
+            "ba1ebe302c5bb58bd25f0adde33165a97dd3dbaa9d51d3fe4c2de369a7a70ba7",
         )
 
     def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:

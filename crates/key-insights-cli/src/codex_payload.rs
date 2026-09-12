@@ -477,7 +477,16 @@ pub(crate) fn validate_token(token: &str, field: &'static str) -> Result<(), Cod
     let lower = token.to_ascii_lowercase();
     let safe_bracket_token = matches!(
         token,
-        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+        "<C-/>"
+            | "<A-/>"
+            | "<M-/>"
+            | "<S-/>"
+            | "<D-/>"
+            | "<C-\\>"
+            | "<A-\\>"
+            | "<M-\\>"
+            | "<S-\\>"
+            | "<D-\\>"
     );
     let path_like =
         (token.contains('/') || token.contains('\\')) && token != "/" && !safe_bracket_token;

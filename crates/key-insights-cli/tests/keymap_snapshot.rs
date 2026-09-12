@@ -37,6 +37,17 @@ fn parses_a_strict_canonical_snapshot() {
 }
 
 #[test]
+fn accepts_modifier_tokens_with_slashes_in_snapshots() {
+    let lhs = ["<D-/>"];
+    let mapping_id = mapping_id("normal", "global", &lhs);
+    let input = snapshot(&mapping(&mapping_id, "normal", "global", r#"["<D-/>"]"#));
+
+    let parsed = parse_keymap_snapshot(Cursor::new(input)).expect("valid snapshot");
+
+    assert_eq!(parsed.mappings[0].lhs, vec![lhs[0].to_owned()]);
+}
+
+#[test]
 fn rejects_unknown_fields_versions_duplicates_invalid_ids_tokens_and_order() {
     let cases = [
         r#"{"snapshot_version":1,"mappings":[],"path":"/secret"}"#.to_owned(),

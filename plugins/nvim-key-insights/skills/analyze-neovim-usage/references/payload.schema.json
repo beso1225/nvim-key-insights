@@ -14,7 +14,7 @@
     "counter": { "type": "integer", "minimum": 0 },
     "token": {
       "anyOf": [
-        { "enum": ["/", "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        { "enum": ["/", "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>", "<D-\\>"] },
         {
           "type": "string",
           "minLength": 1,
@@ -78,7 +78,7 @@
     "control_token": {
       "anyOf": [
         { "enum": ["<Nul>", "<BS>", "<Tab>", "<NL>", "<CR>", "<Return>", "<Enter>", "<Esc>", "<Space>", "<Del>", "<Delete>", "<Insert>", "<Home>", "<End>", "<PageUp>", "<PageDown>", "<Up>", "<Down>", "<Left>", "<Right>", "<kHome>", "<kEnd>", "<kPageUp>", "<kPageDown>", "<kUp>", "<kDown>", "<kLeft>", "<kRight>"] },
-        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>", "<D-\\>"] },
         {
           "type": "string",
           "minLength": 1,

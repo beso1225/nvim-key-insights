@@ -48,7 +48,7 @@ Require all of the following before analysis:
 - every key or left-hand-side token is canonical, at most 256 UTF-8 bytes, and
   is either one Unicode scalar or one bracket token ending at its first `>`;
   reject controls, path-like `/` or `\` content except the literal `/` and the
-  eight modifier slash/backslash tokens, and reject case-insensitive `.env`,
+  ten modifier slash/backslash tokens, and reject case-insensitive `.env`,
   `secret`, or `credential` content;
 - every mapping ID has the exact `mapping-v1:` plus 64 lowercase hexadecimal
   form. For snapshot entries, recompute the SHA-256 ID from the byte-length

@@ -99,6 +99,10 @@ fn rejects_mutated_sanitized_fields_and_nested_contract_versions() {
     let mut modifier_summary = summary();
     modifier_summary.keys[0].key = r"<C-\>".to_owned();
     assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-/>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-\>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
     secret_summary.keys[0].key = "<file:///home/alice/project>".to_owned();
     assert!(matches!(
         render_codex_payload_json(&secret_summary, None),

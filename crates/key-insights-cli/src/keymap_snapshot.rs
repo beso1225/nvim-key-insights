@@ -311,7 +311,8 @@ pub(crate) fn is_control_token(token: &str) -> bool {
         "<kRight>",
     ];
     const SAFE_BRACKETED: &[&str] = &[
-        "<C-/>", "<A-/>", "<M-/>", "<S-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#, r#"<S-\>"#,
+        "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#,
+        r#"<S-\>"#, r#"<D-\>"#,
     ];
     if NAMED.contains(&token) {
         return true;

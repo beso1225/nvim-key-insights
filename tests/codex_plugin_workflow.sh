@@ -52,6 +52,8 @@ control_token_validator = jsonschema.Draft202012Validator(schema["$defs"]["contr
 assert control_token_validator.is_valid("<C-Y>")
 assert control_token_validator.is_valid("<C-/>")
 assert control_token_validator.is_valid("<C-\\>")
+assert control_token_validator.is_valid("<D-/>")
+assert control_token_validator.is_valid("<D-\\>")
 assert not control_token_validator.is_valid("<C-" + ("x" * 300) + ">")
 assert not control_token_validator.is_valid("<C-é>")
 assert not control_token_validator.is_valid("<C-secret>")
