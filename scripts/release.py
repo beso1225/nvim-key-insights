@@ -72,11 +72,11 @@ SCHEMA_REQUIRED_FILES = (
     ),
 )
 SCHEMA_VERSIONS = {
-    "Event log": 2,
-    "Analysis summary": 4,
+    "Event log": 3,
+    "Analysis summary": 5,
     "Keymap snapshot": 1,
-    "Codex payload": 2,
-    "Codex suggestions": 1,
+    "Codex payload": 3,
+    "Codex suggestions": 2,
     "Ergonomics contract": 2,
     "Histogram layout": 1,
     "Operation token set": 1,
@@ -381,7 +381,7 @@ def validate_schema_contract(root: Path) -> None:
     body = summary_table.group("body")
     summary_entries = re.findall(r"^\s*\[([0-9]+)\] = true,$", body, re.MULTILINE)
     remainder = re.sub(r"^\s*\[[0-9]+\] = true,\s*$", "", body, flags=re.MULTILINE)
-    expected_summary_versions = {1, 2, 3, SCHEMA_VERSIONS["Analysis summary"]}
+    expected_summary_versions = set(range(1, SCHEMA_VERSIONS["Analysis summary"] + 1))
     if (
         remainder.strip()
         or len(summary_entries) != len(set(summary_entries))
@@ -686,7 +686,7 @@ def validate_schema_contract(root: Path) -> None:
         "Removing an event reader requires a package major release.",
         "Regenerate",
         "Do not reuse an existing schema number",
-        "freshness check may recognize summary schemas 1, 2, and 3",
+        "freshness check may recognize summary schemas 1, 2, 3, and 4",
     )
     normalized_documentation = " ".join(documentation.split())
     for statement in required_policy:

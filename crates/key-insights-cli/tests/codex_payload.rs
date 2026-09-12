@@ -41,6 +41,7 @@ fn renders_a_versioned_payload_from_sanitized_inputs_only() {
     assert!(!payload.contains("/Users/private/project"));
     assert!(!payload.contains("project_id"));
     assert!(!payload.contains("mapping_rhs_secret"));
+    assert_eq!(value["summary"]["schema_version"], 5);
 }
 
 #[test]
@@ -51,10 +52,10 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "3a7d4f37ad75acb06cd73c9a3e6954ce2b33ac877202cba6173785f0d3ed7ec7"
+        "a95e5c5d788ed9e0d2ed38fc98b1ad8a5975f1c4d9c903e59cd40c680afd4cc5"
     );
     assert!(first.starts_with(
-        r#"{"payload_schema_version":2,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
+        r#"{"payload_schema_version":3,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
     ));
     let instruction_position = first.find("\"instructions\"").expect("instructions field");
     let summary_position = first.find("\"summary\"").expect("summary field");
@@ -98,6 +99,10 @@ fn rejects_mutated_sanitized_fields_and_nested_contract_versions() {
     ));
     let mut modifier_summary = summary();
     modifier_summary.keys[0].key = r"<C-\>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-/>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-\>".to_owned();
     assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
     secret_summary.keys[0].key = "<file:///home/alice/project>".to_owned();
     assert!(matches!(
@@ -174,7 +179,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "aef4536baeb914d80ebd4c90d5ca088cd4330bd651a751f8c119260768bad1bd"
+        "550a3570fa681080fe9d559bd2d14fe0f11b3177f9a4d8b2781705ead8d5b62b"
     );
 }
 

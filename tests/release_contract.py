@@ -313,31 +313,31 @@ class ReleaseContractTest(unittest.TestCase):
     def test_schema_contract_rejects_runtime_documentation_and_copy_drift(self) -> None:
         mutations = {
             "crates/key-insights-cli/src/lib.rs": (
-                "pub const SCHEMA_VERSION: u32 = 2;",
+                "pub const SCHEMA_VERSION: u32 = 3;",
                 "pub const SCHEMA_VERSION: u32 = 1;",
             ),
             "lua/key-insights/contract_versions.lua": (
-                "event_log = 2",
+                "event_log = 3",
                 "event_log = 1",
             ),
             "lua/key-insights/report.lua": (
                 "summary.schema_version ~= contract_versions.analysis_summary",
-                "summary.schema_version ~= 4",
+                "summary.schema_version ~= 5",
             ),
             "crates/key-insights-cli/src/keymap_snapshot.rs": (
                 'append_length_prefixed(&mut preimage, "mapping-v1");',
                 'append_length_prefixed(&mut preimage, "mapping-v2");',
             ),
             "docs/schema-compatibility.md": (
-                "| Event log | `2` |",
+                "| Event log | `3` |",
                 "| Event log | `1` |",
             ),
             "codex/suggestions.schema.json": (
-                '"schema_version": { "type": "integer", "const": 1 }',
                 '"schema_version": { "type": "integer", "const": 2 }',
+                '"schema_version": { "type": "integer", "const": 1 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
-                '"payload_schema_version": { "const": 2 }',
+                '"payload_schema_version": { "const": 3 }',
                 '"payload_schema_version": { "const": 1 }',
             ),
         }

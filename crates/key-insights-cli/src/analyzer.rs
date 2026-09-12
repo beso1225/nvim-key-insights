@@ -9,7 +9,7 @@ use crate::{
     keymap_snapshot::mapping_order, validator::JsonlValidator,
 };
 
-const SUMMARY_SCHEMA_VERSION: u32 = 4;
+const SUMMARY_SCHEMA_VERSION: u32 = 5;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;

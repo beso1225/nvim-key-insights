@@ -294,10 +294,12 @@ local function validate_preview(contents)
         or value == "<A-/>"
         or value == "<M-/>"
         or value == "<S-/>"
+        or value == "<D-/>"
         or value == "<C-\\>"
         or value == "<A-\\>"
         or value == "<M-\\>"
         or value == "<S-\\>"
+        or value == "<D-\\>"
       if (string.sub(value, 1, 1) == "/" and value ~= "/")
         or string.match(value, "^%a:[/\\]")
         or (value ~= "/"
@@ -678,10 +680,12 @@ local SAFE_MODIFIER_SLASH_TOKENS = {
   ["<A-/>"] = true,
   ["<M-/>"] = true,
   ["<S-/>"] = true,
+  ["<D-/>"] = true,
   ["<C-\\>"] = true,
   ["<A-\\>"] = true,
   ["<M-\\>"] = true,
   ["<S-\\>"] = true,
+  ["<D-\\>"] = true,
 }
 
 local function first_utf8_character(value)
@@ -784,10 +788,12 @@ safe_preview_token = function(value)
     or value == "<A-/>"
     or value == "<M-/>"
     or value == "<S-/>"
+    or value == "<D-/>"
     or value == "<C-\\>"
     or value == "<A-\\>"
     or value == "<M-\\>"
     or value == "<S-\\>"
+    or value == "<D-\\>"
     or safe_output_text(value, 256)
 end
 

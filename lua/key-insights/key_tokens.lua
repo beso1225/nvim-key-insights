@@ -38,10 +38,12 @@ local SAFE_BRACKETED_CONTROL_TOKENS = {
   ["<A-/>"] = true,
   ["<M-/>"] = true,
   ["<S-/>"] = true,
+  ["<D-/>"] = true,
   ["<C-\\>"] = true,
   ["<A-\\>"] = true,
   ["<M-\\>"] = true,
   ["<S-\\>"] = true,
+  ["<D-\\>"] = true,
 }
 
 local CARET_MARKERS = {

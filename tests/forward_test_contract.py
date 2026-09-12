@@ -65,7 +65,7 @@ class ForwardTestContract(unittest.TestCase):
             {
                 "manifest_version": 1,
                 "mode": "synthetic-offline",
-                "contracts": {"event_schema": 2, "payload_schema": 2, "summary_schema": 4},
+                "contracts": {"event_schema": 3, "payload_schema": 3, "summary_schema": 5},
                 "artifacts": manifest["artifacts"],
                 "checks": {
                     "codex_invoked": False,
@@ -100,10 +100,10 @@ class ForwardTestContract(unittest.TestCase):
         self.assertTrue(all(session_id in session_log_text for session_id in SESSION_IDS))
         session_events = [json.loads(line) for line in session_log_text.splitlines()]
         self.assertTrue(session_events)
-        self.assertTrue(all(event["schema_version"] == 2 for event in session_events))
+        self.assertTrue(all(event["schema_version"] == 3 for event in session_events))
         self.assertIn(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "event_type": "control_key_use",
                 "session_id": "forward-session-alpha",
                 "elapsed_ms": 80,

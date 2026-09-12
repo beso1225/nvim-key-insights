@@ -14,7 +14,7 @@ const GLOBAL_G: &str =
     "mapping-v1:494845698ff45708f6996ca041b292cbe37a38c30e46af662058ec44d0ba2e67";
 
 const VALID: &str = r#"{
-  "schema_version": 1,
+  "schema_version": 2,
   "suggestions": [{
     "action": "learn_existing",
     "title": "Use the existing motion",
@@ -99,6 +99,23 @@ fn output_schema_mirrors_the_rust_measurement_and_mapping_contract() {
 }
 
 #[test]
+fn accepts_command_slash_tokens_in_v2_mapping_proposals() {
+    let mapping = r#"{
+  "schema_version": 2,
+  "suggestions": [{
+    "action": "add_mapping",
+    "title": "Use the Command slash mapping",
+    "rationale": "The mapping is safe to consider.",
+    "mapping": {"mode": "normal", "scope": "global", "lhs": ["<D-/>", "<D-\\>"]},
+    "evidence": [{"metric": "repeated_key_runs", "value": 8}],
+    "collision_check": {"checked": true, "conflicting_mapping_ids": []}
+  }]
+}"#;
+    let document = validate_codex_suggestions_json(mapping.as_bytes()).expect("v2 suggestions");
+    assert_eq!(document.schema_version, 2);
+}
+
+#[test]
 fn accepts_null_optional_fields_from_strict_codex_schema() {
     let strict = VALID.replace("\"evidence\"", "\"mapping\":null,\"evidence\"");
     let document = validate_codex_suggestions_json(strict.as_bytes()).expect("strict suggestions");
@@ -118,8 +135,8 @@ fn validates_a_bounded_evidence_bound_suggestion_document() {
 #[test]
 fn rejects_unknown_fields_and_missing_evidence() {
     let unknown = VALID.replace(
-        "\"schema_version\": 1",
-        "\"schema_version\": 1, \"secret\": \"/Users/private\"",
+        "\"schema_version\": 2",
+        "\"schema_version\": 2, \"secret\": \"/Users/private\"",
     );
     assert!(matches!(
         validate_codex_suggestions_json(unknown.as_bytes()),
@@ -333,8 +350,8 @@ fn binds_mapping_proposals_to_actual_snapshot_collisions() {
 #[test]
 fn rejects_duplicate_keys_and_deep_json_before_deserialization() {
     let duplicate = VALID.replace(
-        "\"schema_version\": 1",
-        "\"schema_version\": 1, \"schema_version\": 1",
+        "\"schema_version\": 2",
+        "\"schema_version\": 2, \"schema_version\": 2",
     );
     assert!(matches!(
         validate_codex_suggestions_json(duplicate.as_bytes()),
@@ -433,7 +450,7 @@ fn renders_expanded_markdown_within_its_separate_bound() {
         })
         .collect::<Vec<_>>();
     let json = serde_json::to_vec(&serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "suggestions": suggestions,
     }))
     .expect("serialize suggestions");

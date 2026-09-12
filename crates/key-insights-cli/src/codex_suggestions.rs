@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::{AnalysisSummary, KeymapSnapshot, MAX_CODEX_PAYLOAD_BYTES};
 
 /// Version of the structured response expected from the optional Codex step.
-pub const CODEX_SUGGESTIONS_SCHEMA_VERSION: u32 = 1;
+pub const CODEX_SUGGESTIONS_SCHEMA_VERSION: u32 = 2;
 pub const MAX_CODEX_SUGGESTIONS: usize = 100;
 pub const MAX_SUGGESTION_EVIDENCE: usize = 32;
 pub const MAX_SUGGESTION_CONFLICTS: usize = 4096;
@@ -506,7 +506,16 @@ fn is_slash_separated_key_alternative(token: &str) -> bool {
 fn is_safe_slash_token(token: &str) -> bool {
     matches!(
         token,
-        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+        "<C-/>"
+            | "<A-/>"
+            | "<M-/>"
+            | "<S-/>"
+            | "<D-/>"
+            | "<C-\\>"
+            | "<A-\\>"
+            | "<M-\\>"
+            | "<S-\\>"
+            | "<D-\\>"
     ) || is_slash_separated_key_alternative(token)
 }
 

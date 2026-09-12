@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["payload_schema_version", "purpose", "instructions", "summary"],
   "properties": {
-    "payload_schema_version": { "const": 2 },
+    "payload_schema_version": { "const": 3 },
     "purpose": { "const": "analyze-neovim-usage" },
     "instructions": { "$ref": "#/$defs/instructions" },
     "summary": { "$ref": "#/$defs/summary" },
@@ -14,7 +14,7 @@
     "counter": { "type": "integer", "minimum": 0 },
     "token": {
       "anyOf": [
-        { "enum": ["/", "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        { "enum": ["/", "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>", "<D-\\>"] },
         {
           "type": "string",
           "minLength": 1,
@@ -78,7 +78,7 @@
     "control_token": {
       "anyOf": [
         { "enum": ["<Nul>", "<BS>", "<Tab>", "<NL>", "<CR>", "<Return>", "<Enter>", "<Esc>", "<Space>", "<Del>", "<Delete>", "<Insert>", "<Home>", "<End>", "<PageUp>", "<PageDown>", "<Up>", "<Down>", "<Left>", "<Right>", "<kHome>", "<kEnd>", "<kPageUp>", "<kPageDown>", "<kUp>", "<kDown>", "<kLeft>", "<kRight>"] },
-        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>"] },
+        { "enum": ["<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", "<C-\\>", "<A-\\>", "<M-\\>", "<S-\\>", "<D-\\>"] },
         {
           "type": "string",
           "minLength": 1,
@@ -359,7 +359,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "ranking_limit", "sessions", "events", "total_session_duration_ms", "key_sequences", "sequence_keys", "text_runs", "text_keys", "control_key_uses", "unique_control_keys", "mode_transitions", "mapping_uses", "repeated_key_runs", "repeated_key_presses", "unique_keys", "unique_mappings", "unique_repeated_keys", "modes", "keys", "control_keys", "mappings", "repeated_keys", "ergonomics"],
       "properties": {
-        "schema_version": { "const": 4 },
+        "schema_version": { "const": 5 },
         "ranking_limit": { "const": 100 },
         "sessions": { "$ref": "#/$defs/counter" },
         "events": { "$ref": "#/$defs/counter" },

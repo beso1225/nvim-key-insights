@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
   fclose(existing_count);
 
   const char *output =
-      "{\"schema_version\":1,\"suggestions\":[{\"action\":\"no_change\","
+      "{\"schema_version\":2,\"suggestions\":[{\"action\":\"no_change\","
       "\"title\":\"Keep the measured workflow\","
       "\"rationale\":\"The sanitized aggregate does not justify a mapping change.\","
       "\"evidence\":[{\"metric\":\"sessions\",\"value\":1}],"

@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "suggestions"],
   "properties": {
-    "schema_version": { "type": "integer", "const": 1 },
+    "schema_version": { "type": "integer", "const": 2 },
     "suggestions": {
       "type": "array",
       "maxItems": 100,

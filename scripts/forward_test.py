@@ -90,14 +90,14 @@ def write_private_new(path: Path, payload: bytes) -> None:
 def synthetic_jsonl() -> bytes:
     events = [
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "session_start",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 0,
             "project_id": PROJECT_CANARY,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 40,
@@ -106,7 +106,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 30,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "text_run",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 70,
@@ -114,7 +114,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 20,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "control_key_use",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 80,
@@ -123,19 +123,19 @@ def synthetic_jsonl() -> bytes:
             "count": 2,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "session_end",
             "session_id": SESSION_IDS[0],
             "elapsed_ms": 100,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "session_start",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 0,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 10,
@@ -144,7 +144,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 0,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "key_sequence",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 20,
@@ -153,7 +153,7 @@ def synthetic_jsonl() -> bytes:
             "duration_ms": 4,
         },
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "event_type": "session_end",
             "session_id": SESSION_IDS[1],
             "elapsed_ms": 30,
@@ -283,9 +283,9 @@ def execute(workspace: Path, binary: Path) -> bytes:
         payload_document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ForwardTestError("generated JSON artifact is invalid") from error
-    if summary_document.get("schema_version") != 4:
+    if summary_document.get("schema_version") != 5:
         raise ForwardTestError("generated summary schema is unsupported")
-    if payload_document.get("payload_schema_version") != 2:
+    if payload_document.get("payload_schema_version") != 3:
         raise ForwardTestError("generated payload schema is unsupported")
     if not report.startswith(b"# Neovim Key Insights"):
         raise ForwardTestError("generated report contract is invalid")
@@ -293,7 +293,7 @@ def execute(workspace: Path, binary: Path) -> bytes:
     manifest = {
         "manifest_version": 1,
         "mode": "synthetic-offline",
-        "contracts": {"event_schema": 2, "payload_schema": 2, "summary_schema": 4},
+        "contracts": {"event_schema": 3, "payload_schema": 3, "summary_schema": 5},
         "artifacts": {
             "payload": artifact_metadata(payload),
             "report": artifact_metadata(report),

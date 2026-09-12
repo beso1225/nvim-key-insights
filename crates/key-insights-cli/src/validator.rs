@@ -4,7 +4,7 @@ use std::{
     io::{self, BufRead, Read},
 };
 
-use crate::{Event, SCHEMA_VERSION, is_supported_schema_version};
+use crate::{Event, is_supported_control_key_schema_version, is_supported_schema_version};
 
 pub const MAX_EVENT_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_SESSION_ID_BYTES: usize = 128;
@@ -195,7 +195,7 @@ fn validate_event(
         ));
     }
     if let Event::ControlKeyUse { schema_version, .. } = event
-        && *schema_version != SCHEMA_VERSION
+        && !is_supported_control_key_schema_version(*schema_version)
     {
         return Err(error(
             line,
@@ -275,13 +275,16 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
     ) {
         return Err(error(line, ValidationErrorKind::EmptyMappingId));
     }
-    if matches!(
-        event,
-        Event::ControlKeyUse { key, count, .. }
-            if *count == 0
-                || !crate::keymap_snapshot::is_canonical_token(key)
-                || !crate::keymap_snapshot::is_control_token(key)
-    ) {
+    if let Event::ControlKeyUse {
+        schema_version,
+        key,
+        count,
+        ..
+    } = event
+        && (*count == 0
+            || !crate::keymap_snapshot::is_canonical_token(key)
+            || !crate::keymap_snapshot::is_control_token_for_event_schema(key, *schema_version))
+    {
         return Err(error(line, ValidationErrorKind::MalformedEvent));
     }
     if matches!(

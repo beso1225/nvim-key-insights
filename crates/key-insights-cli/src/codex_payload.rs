@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Version of the sanitized subprocess payload contract.
-pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 2;
+pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 3;
 /// Hard upper bound for bytes sent to an optional Codex subprocess.
 pub const MAX_CODEX_PAYLOAD_BYTES: usize = 256 * 1024;
 
@@ -92,7 +92,7 @@ pub fn render_codex_payload_json(
     summary: &AnalysisSummary,
     snapshot: Option<&KeymapSnapshot>,
 ) -> Result<String, CodexPayloadError> {
-    if summary.schema_version != 4 {
+    if summary.schema_version != 5 {
         return Err(CodexPayloadError::UnsupportedSummarySchema {
             found: summary.schema_version,
         });
@@ -477,7 +477,16 @@ pub(crate) fn validate_token(token: &str, field: &'static str) -> Result<(), Cod
     let lower = token.to_ascii_lowercase();
     let safe_bracket_token = matches!(
         token,
-        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+        "<C-/>"
+            | "<A-/>"
+            | "<M-/>"
+            | "<S-/>"
+            | "<D-/>"
+            | "<C-\\>"
+            | "<A-\\>"
+            | "<M-\\>"
+            | "<S-\\>"
+            | "<D-\\>"
     );
     let path_like =
         (token.contains('/') || token.contains('\\')) && token != "/" && !safe_bracket_token;
