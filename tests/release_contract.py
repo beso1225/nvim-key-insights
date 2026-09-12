@@ -231,7 +231,7 @@ class ReleaseContractTest(unittest.TestCase):
             ),
             "lua/key-insights/report.lua": (
                 "summary.schema_version ~= contract_versions.analysis_summary",
-                "summary.schema_version ~= 4",
+                "summary.schema_version ~= 5",
             ),
             "crates/key-insights-cli/src/keymap_snapshot.rs": (
                 'append_length_prefixed(&mut preimage, "mapping-v1");',
@@ -242,8 +242,8 @@ class ReleaseContractTest(unittest.TestCase):
                 "| Event log | `1` |",
             ),
             "codex/suggestions.schema.json": (
-                '"schema_version": { "type": "integer", "const": 1 }',
                 '"schema_version": { "type": "integer", "const": 2 }',
+                '"schema_version": { "type": "integer", "const": 1 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
                 '"payload_schema_version": { "const": 3 }',

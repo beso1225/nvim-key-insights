@@ -145,7 +145,7 @@ class LocalForwardTestContract(unittest.TestCase):
         self.assertEqual(manifest["observations"], {"session_count": 1})
         self.assertEqual(
             manifest["contracts"],
-            {"event_schema": 3, "payload_schema": 3, "summary_schema": 4},
+            {"event_schema": 3, "payload_schema": 3, "summary_schema": 5},
         )
         self.assertEqual(set(manifest["tools"]), {"key_insights", "neovim", "python"})
         for value in manifest["tools"].values():

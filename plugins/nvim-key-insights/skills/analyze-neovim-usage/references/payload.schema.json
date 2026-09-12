@@ -359,7 +359,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "ranking_limit", "sessions", "events", "total_session_duration_ms", "key_sequences", "sequence_keys", "text_runs", "text_keys", "control_key_uses", "unique_control_keys", "mode_transitions", "mapping_uses", "repeated_key_runs", "repeated_key_presses", "unique_keys", "unique_mappings", "unique_repeated_keys", "modes", "keys", "control_keys", "mappings", "repeated_keys", "ergonomics"],
       "properties": {
-        "schema_version": { "const": 4 },
+        "schema_version": { "const": 5 },
         "ranking_limit": { "const": 100 },
         "sessions": { "$ref": "#/$defs/counter" },
         "events": { "$ref": "#/$defs/counter" },

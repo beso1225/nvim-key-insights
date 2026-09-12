@@ -1,6 +1,6 @@
 ---
 name: analyze-neovim-usage
-description: Evaluate a canonical privacy-sanitized nvim-key-insights preview and produce evidence-bound structured Neovim usage suggestions. Use when a user asks to review key-insights summary evidence, decide whether to learn an existing operation or change a mapping, or generate suggestion-schema-v1 JSON for local validation.
+description: Evaluate a canonical privacy-sanitized nvim-key-insights preview and produce evidence-bound structured Neovim usage suggestions. Use when a user asks to review key-insights summary evidence, decide whether to learn an existing operation or change a mapping, or generate suggestion-schema-v2 JSON for local validation.
 ---
 
 # Analyze Neovim Usage
@@ -39,7 +39,7 @@ Require all of the following before analysis:
   additional top-level key.
 - `payload_schema_version` is `3`;
 - `purpose` is `analyze-neovim-usage`;
-- `summary.schema_version` is `4`;
+- `summary.schema_version` is `5`;
 - `keymap_snapshot.snapshot_version` is `1` when a snapshot is present;
 - `instructions.action_kinds` is exactly `learn_existing`, `add_mapping`,
   `change_mapping`, `no_change` in that order; both required booleans are true;
@@ -65,7 +65,7 @@ Require all of the following before analysis:
   limits, token-set versions, and all other constants must match the bundled
   payload schema;
 - the requested output follows `references/suggestions.schema.json`, schema
-  version `1`.
+  version `2`.
 
 Reject unknown versions or malformed/unknown fields. Tell the user to upgrade
 `nvim-key-insights` rather than guessing a migration. Do not reconstruct a

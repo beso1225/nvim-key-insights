@@ -81,11 +81,11 @@ fn aggregates_validated_sessions_into_stable_outputs() {
 }
 
 #[test]
-fn summary_v4_exposes_the_versioned_ergonomic_contract() {
+fn summary_v5_exposes_the_versioned_ergonomic_contract() {
     let summary = analyze_jsonl(Cursor::new(INPUT)).expect("valid analysis input");
     let value = serde_json::to_value(summary).expect("summary is serializable");
 
-    assert_eq!(value["schema_version"], 4);
+    assert_eq!(value["schema_version"], 5);
     assert_eq!(value["ergonomics"]["contract_version"], 2);
     assert_eq!(value["ergonomics"]["candidate_limit"], 100);
     assert_eq!(
@@ -287,7 +287,7 @@ fn control_key_usage_is_aggregated_by_text_input_mode_and_key() {
         analyze_jsonl(Cursor::new(input)).expect("control key usage must analyze"),
     )
     .expect("summary is serializable");
-    assert_eq!(value["schema_version"], 4);
+    assert_eq!(value["schema_version"], 5);
     assert_eq!(value["control_key_uses"], 4);
     assert_eq!(value["unique_control_keys"], 2);
     assert_eq!(
@@ -746,7 +746,7 @@ fn cli_accepts_a_snapshot_file_and_snapshot_stdin() {
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&summary).expect("read summary"))
             .expect("summary JSON");
-    assert_eq!(value["schema_version"], 4);
+    assert_eq!(value["schema_version"], 5);
     assert_eq!(
         value["mapping_attribution"]["mappings"][0]["status"],
         "observed_not_in_snapshot"

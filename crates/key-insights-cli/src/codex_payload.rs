@@ -92,7 +92,7 @@ pub fn render_codex_payload_json(
     summary: &AnalysisSummary,
     snapshot: Option<&KeymapSnapshot>,
 ) -> Result<String, CodexPayloadError> {
-    if summary.schema_version != 4 {
+    if summary.schema_version != 5 {
         return Err(CodexPayloadError::UnsupportedSummarySchema {
             found: summary.schema_version,
         });

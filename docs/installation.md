@@ -159,7 +159,7 @@ key-insights suggestions summary.json \
 ```
 
 Do not provide `summary.json`, collector JSONL, `report.md`, project files, or
-dotfiles to the skill. It returns suggestion-schema-v1 JSON only. The output is
+dotfiles to the skill. It returns suggestion-schema-v2 JSON only. The output is
 not trusted until `key-insights suggestions` binds every evidence value and
 collision claim to the exact private summary and optional sanitized snapshot,
 then renders Markdown locally.

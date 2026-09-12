@@ -41,6 +41,7 @@ fn renders_a_versioned_payload_from_sanitized_inputs_only() {
     assert!(!payload.contains("/Users/private/project"));
     assert!(!payload.contains("project_id"));
     assert!(!payload.contains("mapping_rhs_secret"));
+    assert_eq!(value["summary"]["schema_version"], 5);
 }
 
 #[test]
@@ -51,7 +52,7 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "4a36a742a63565678310cb122027d932a400af62e427f60592b9cdae50e9b915"
+        "a95e5c5d788ed9e0d2ed38fc98b1ad8a5975f1c4d9c903e59cd40c680afd4cc5"
     );
     assert!(first.starts_with(
         r#"{"payload_schema_version":3,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
@@ -178,7 +179,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "839c7f59175e2573fd7f132eb9ef9282d89452bb6342381e3fca33a4f67f3c5e"
+        "550a3570fa681080fe9d559bd2d14fe0f11b3177f9a4d8b2781705ead8d5b62b"
     );
 }
 

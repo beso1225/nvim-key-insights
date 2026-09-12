@@ -283,7 +283,7 @@ def execute(workspace: Path, binary: Path) -> bytes:
         payload_document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ForwardTestError("generated JSON artifact is invalid") from error
-    if summary_document.get("schema_version") != 4:
+    if summary_document.get("schema_version") != 5:
         raise ForwardTestError("generated summary schema is unsupported")
     if payload_document.get("payload_schema_version") != 3:
         raise ForwardTestError("generated payload schema is unsupported")
@@ -293,7 +293,7 @@ def execute(workspace: Path, binary: Path) -> bytes:
     manifest = {
         "manifest_version": 1,
         "mode": "synthetic-offline",
-        "contracts": {"event_schema": 3, "payload_schema": 3, "summary_schema": 4},
+        "contracts": {"event_schema": 3, "payload_schema": 3, "summary_schema": 5},
         "artifacts": {
             "payload": artifact_metadata(payload),
             "report": artifact_metadata(report),

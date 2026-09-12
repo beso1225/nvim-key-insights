@@ -92,7 +92,7 @@ for canary in "$private_session_canary" "$private_project_canary" "$private_repo
 done
 
 cat >"$suggestions" <<'EOF'
-{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current workflow","rationale":"The aggregate sample is too small to justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
+{"schema_version":2,"suggestions":[{"action":"no_change","title":"Keep the current workflow","rationale":"The aggregate sample is too small to justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
 EOF
 chmod 600 "$suggestions"
 
@@ -110,7 +110,7 @@ done
 
 cp "$rendered" "$work_dir/preserved.md"
 cat >"$work_dir/tampered.json" <<'EOF'
-{"schema_version":1,"suggestions":[{"action":"no_change","title":"Forged evidence","rationale":"This value is not bound to the summary.","evidence":[{"metric":"sessions","value":2}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
+{"schema_version":2,"suggestions":[{"action":"no_change","title":"Forged evidence","rationale":"This value is not bound to the summary.","evidence":[{"metric":"sessions","value":2}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
 EOF
 chmod 600 "$work_dir/tampered.json"
 if "$key_insights" suggestions "$summary" --input "$work_dir/tampered.json" --output "$rendered"; then
@@ -120,7 +120,7 @@ fi
 cmp "$rendered" "$work_dir/preserved.md"
 
 cat >"$work_dir/no-snapshot-mapping.json" <<'EOF'
-{"schema_version":1,"suggestions":[{"action":"add_mapping","title":"Unsafe mapping proposal","rationale":"A mapping proposal requires a sanitized snapshot.","mapping":{"mode":"normal","scope":"global","lhs":["g","g"]},"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
+{"schema_version":2,"suggestions":[{"action":"add_mapping","title":"Unsafe mapping proposal","rationale":"A mapping proposal requires a sanitized snapshot.","mapping":{"mode":"normal","scope":"global","lhs":["g","g"]},"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}
 EOF
 chmod 600 "$work_dir/no-snapshot-mapping.json"
 if "$key_insights" suggestions "$summary" --input "$work_dir/no-snapshot-mapping.json" --output "$rendered"; then
@@ -132,13 +132,13 @@ cmp "$rendered" "$work_dir/preserved.md"
 for invalid in unknown-field unknown-version malformed; do
   case "$invalid" in
     unknown-field)
-      printf '%s\n' '{"schema_version":1,"suggestions":[],"unexpected":true}' >"$work_dir/$invalid.json"
+      printf '%s\n' '{"schema_version":2,"suggestions":[],"unexpected":true}' >"$work_dir/$invalid.json"
       ;;
     unknown-version)
-      printf '%s\n' '{"schema_version":2,"suggestions":[]}' >"$work_dir/$invalid.json"
+      printf '%s\n' '{"schema_version":1,"suggestions":[]}' >"$work_dir/$invalid.json"
       ;;
     malformed)
-      printf '%s\n' '{"schema_version":1,"suggestions":[' >"$work_dir/$invalid.json"
+      printf '%s\n' '{"schema_version":2,"suggestions":[' >"$work_dir/$invalid.json"
       ;;
   esac
   chmod 600 "$work_dir/$invalid.json"
@@ -171,7 +171,7 @@ assert not jsonschema.Draft202012Validator(schema).is_valid(invalid_attribution_
 PY
 
 cat >"$snapshot_suggestions" <<EOF
-{"schema_version":1,"suggestions":[{"action":"add_mapping","title":"Consider a longer mapping","rationale":"The proposal accounts for the existing prefix before local validation.","mapping":{"mode":"normal","scope":"global","lhs":["g","g"]},"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":["$global_g"]}}]}
+{"schema_version":2,"suggestions":[{"action":"add_mapping","title":"Consider a longer mapping","rationale":"The proposal accounts for the existing prefix before local validation.","mapping":{"mode":"normal","scope":"global","lhs":["g","g"]},"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":["$global_g"]}}]}
 EOF
 chmod 600 "$snapshot_suggestions"
 "$key_insights" suggestions "$snapshot_summary" --input "$snapshot_suggestions" --output "$work_dir/snapshot-suggestions.md"

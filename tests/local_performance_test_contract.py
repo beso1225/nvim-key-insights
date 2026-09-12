@@ -119,7 +119,7 @@ class LocalPerformanceTestContract(unittest.TestCase):
         self.assertEqual(manifest["mode"], "real-local-performance")
         self.assertEqual(
             manifest["contracts"],
-            {"event_schema": 3, "summary_schema": 4, "ergonomics": 2},
+            {"event_schema": 3, "summary_schema": 5, "ergonomics": 2},
         )
         self.assertEqual(manifest["observations"]["session_count"], 1)
         analyzer = manifest["observations"]["analyzer"]
@@ -190,7 +190,7 @@ class LocalPerformanceTestContract(unittest.TestCase):
             "else:\n"
             "    summary = pathlib.Path(sys.argv[sys.argv.index('--summary') + 1])\n"
             "    report = pathlib.Path(sys.argv[sys.argv.index('--report') + 1])\n"
-            "    summary.write_text(json.dumps({'schema_version': 4, 'ergonomics': {'contract_version': 2}}))\n"
+            "    summary.write_text(json.dumps({'schema_version': 5, 'ergonomics': {'contract_version': 2}}))\n"
             "    report.write_text('# report\\n')\n"
             "    summary.chmod(0o600)\n"
             "    report.chmod(0o600)\n"
