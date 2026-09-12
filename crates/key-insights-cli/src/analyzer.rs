@@ -9,7 +9,7 @@ use crate::{
     keymap_snapshot::mapping_order, validator::JsonlValidator,
 };
 
-const SUMMARY_SCHEMA_VERSION: u32 = 4;
+const SUMMARY_SCHEMA_VERSION: u32 = 5;
 
 pub const MAX_RANKED_ITEMS: usize = 100;
 pub const MAX_DISTINCT_ITEMS: usize = 4096;
@@ -111,6 +111,8 @@ pub struct AnalysisSummary {
     pub unique_control_keys: u64,
     pub mode_transitions: u64,
     pub mapping_uses: u64,
+    pub input_loss_events: u64,
+    pub input_loss_keys: u64,
     pub repeated_key_runs: u64,
     pub repeated_key_presses: u64,
     pub unique_keys: u64,
@@ -231,6 +233,8 @@ struct Accumulator {
     control_keys: BTreeMap<(String, String), u64>,
     mode_transitions: u64,
     mapping_uses: u64,
+    input_loss_events: u64,
+    input_loss_keys: u64,
     repeated_key_runs: u64,
     repeated_key_presses: u64,
     modes: BTreeMap<String, ModeAccumulator>,
@@ -431,6 +435,10 @@ impl Accumulator {
                     }
                 }
             }
+            Event::InputLoss { key_count, .. } => {
+                self.input_loss_events = self.input_loss_events.saturating_add(1);
+                self.input_loss_keys = self.input_loss_keys.saturating_add(*key_count);
+            }
             Event::SessionStart { .. } => {}
         }
         if self.ergonomics.has_overflowed() {
@@ -535,6 +543,8 @@ impl Accumulator {
             unique_control_keys,
             mode_transitions: self.mode_transitions,
             mapping_uses: self.mapping_uses,
+            input_loss_events: self.input_loss_events,
+            input_loss_keys: self.input_loss_keys,
             repeated_key_runs: self.repeated_key_runs,
             repeated_key_presses: self.repeated_key_presses,
             unique_keys,
@@ -759,6 +769,8 @@ pub fn render_markdown(summary: &AnalysisSummary) -> String {
     writeln!(output, "- Control key uses: {}", summary.control_key_uses).unwrap();
     writeln!(output, "- Mode transitions: {}", summary.mode_transitions).unwrap();
     writeln!(output, "- Mapping uses: {}", summary.mapping_uses).unwrap();
+    writeln!(output, "- Input loss events: {}", summary.input_loss_events).unwrap();
+    writeln!(output, "- Input loss keys: {}", summary.input_loss_keys).unwrap();
     writeln!(
         output,
         "- Repeated key runs: {} ({} presses)\n",

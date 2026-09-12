@@ -8,6 +8,11 @@ derived from package SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- Bounded oversized callback chunking and privacy-safe `input_loss` events for
+  pending-queue overflow, with event schema v3 and summary schema v5.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added

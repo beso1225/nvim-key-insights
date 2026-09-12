@@ -9,12 +9,12 @@ unknown versions fail closed before output publication or a Codex handoff.
 
 | Contract | Current version | Persistence | Upgrade or regeneration path |
 | --- | ---: | --- | --- |
-| Event log | `2` | Durable collector input | New analyzers read event schemas 1 and 2; keep private finalized JSONL and regenerate derived artifacts. |
-| Analysis summary | `4` | Derived private artifact | Regenerate from supported event logs; do not rewrite an old summary in place. |
+| Event log | `3` | Durable collector input | New analyzers read event schemas 1, 2, and 3; keep private finalized JSONL and regenerate derived artifacts. |
+| Analysis summary | `5` | Derived private artifact | Regenerate from supported event logs; do not rewrite an old summary in place. |
 | Keymap snapshot | `1` | Ephemeral report input | Capture a fresh snapshot from Neovim. |
 | Codex payload | `2` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
 | Codex suggestions | `1` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
-| Ergonomics contract | `2` | Nested in summary 4 | Regenerate the containing summary. |
+| Ergonomics contract | `2` | Nested in summary 5 | Regenerate the containing summary. |
 | Histogram layout | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Operation token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Count-prefix token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
@@ -29,7 +29,7 @@ compatibility authority.
 
 ## Durable event logs
 
-Event schemas 1 and 2 are supported durable input contracts in the current release. The
+Event schemas 1, 2, and 3 are supported durable input contracts in the current release. The
 analyzer accepts those versions exactly; it does not guess field names,
 drop unknown fields, or partially analyze a newer stream. Preserve finalized
 event logs when upgrading if they may need to be analyzed again.
@@ -42,17 +42,17 @@ ordering, resource-limit, and crash-recovery tests.
 ## Derived and ephemeral artifacts
 
 `summary.json` and `report.md` are a deterministic pair published from the same
-in-memory analysis. They are not migration inputs. When summary schema 4 is no
+in-memory analysis. They are not migration inputs. When summary schema 5 is no
 longer current, regenerate both files from retained event logs using a CLI that
 supports those logs. Existing outputs remain untouched when regeneration
 fails.
 
 For compatibility with a configured older analyzer, Neovim's report freshness
-check may recognize summary schemas 1, 2, and 3 only to confirm that a fresh
-summary/report pair was published. It does not interpret their nested data or
-send them to Codex. `key-insights preview` and the Neovim Codex boundary require
-the complete current summary schema 4 and fail closed for schemas 1, 2, 3, or an
-unknown version.
+check may recognize summary schemas 1, 2, 3, and 4, plus the current schema 5,
+only to confirm that a fresh summary/report pair was published. It does not
+interpret their nested data or send them to Codex. `key-insights preview` and
+the Neovim Codex boundary require the complete current summary schema 5 and
+fail closed for historical or unknown versions.
 
 Keymap snapshots are captured at report time and are never persisted by the
 default Neovim workflow. Capture a new snapshot after upgrading instead of

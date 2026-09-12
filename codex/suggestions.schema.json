@@ -58,6 +58,8 @@
                     "unique_control_keys",
                     "mode_transitions",
                     "mapping_uses",
+                    "input_loss_events",
+                    "input_loss_keys",
                     "repeated_key_runs",
                     "repeated_key_presses",
                     "unique_keys",

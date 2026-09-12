@@ -212,7 +212,7 @@ class PublicWorkflowE2E(unittest.TestCase):
         summary_contents = (reports / "summary.json").read_text()
         report_contents = (reports / "report.md").read_text()
         public_summary = json.loads(summary_contents)
-        self.assertEqual(public_summary["schema_version"], 4)
+        self.assertEqual(public_summary["schema_version"], 5)
         self.assertEqual(public_summary["sessions"], 2)
         self.assertGreaterEqual(public_summary["text_runs"], 1)
         self.assertTrue(report_contents.startswith("# Neovim Key Insights"))

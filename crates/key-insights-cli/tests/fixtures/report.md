@@ -12,6 +12,8 @@
 - Control key uses: 0
 - Mode transitions: 1
 - Mapping uses: 3
+- Input loss events: 0
+- Input loss keys: 0
 - Repeated key runs: 2 (4 presses)
 
 _Ranked tables show at most 100 items._

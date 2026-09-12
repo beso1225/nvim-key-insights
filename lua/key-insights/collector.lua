@@ -134,6 +134,7 @@ function M.new(spec)
     _options = options,
     _pending = {},
     _pending_bytes = 0,
+    _input_loss_key_count = 0,
     _register_on_key = dependencies.register_on_key or default_register_on_key,
     _schedule = dependencies.schedule or vim.schedule,
     _started_at_ms = nil,
@@ -182,6 +183,12 @@ function Collector:_emit_control_keys(elapsed_ms)
       entry.count
     ))
   end
+
+  local function clear_remaining_control_keys()
+    self._control_keys = {}
+    self._control_key_bucket_count = 0
+  end
+
   local queued_count = 0
   while queued_count < #events do
     local reserve = self._in_callback and 1 or 0
@@ -194,6 +201,7 @@ function Collector:_emit_control_keys(elapsed_ms)
       self._sequence = nil
       self._text_run = nil
       self:_mapping_boundary()
+      clear_remaining_control_keys()
       return false
     end
 
@@ -203,14 +211,14 @@ function Collector:_emit_control_keys(elapsed_ms)
       table.insert(batch, events[index])
     end
     if not self:_queue_many(batch) then
+      clear_remaining_control_keys()
       return false
     end
     queued_count = batch_end
   end
 
   if queued_count == #events then
-    self._control_keys = {}
-    self._control_key_bucket_count = 0
+    clear_remaining_control_keys()
   else
     local remaining = {}
     for index = queued_count + 1, #entries do
@@ -225,6 +233,33 @@ function Collector:_emit_control_keys(elapsed_ms)
     end
     self._control_key_bucket_count = #remaining
   end
+  return true
+end
+
+function Collector:_record_input_loss(key_count)
+  if type(key_count) ~= "number" or key_count <= 0 then
+    return
+  end
+  local maximum = 9007199254740991
+  self._input_loss_key_count = math.min(maximum, self._input_loss_key_count + key_count)
+end
+
+function Collector:_emit_input_loss(elapsed_ms)
+  if self._input_loss_key_count <= 0 then
+    return true
+  end
+
+  local key_count = self._input_loss_key_count
+  local event = schema.input_loss(
+    self._session_id,
+    elapsed_ms,
+    "pending_queue_limit",
+    key_count
+  )
+  if not self:_queue_many({ event }) then
+    return false
+  end
+  self._input_loss_key_count = 0
   return true
 end
 
@@ -293,7 +328,7 @@ function Collector:_emit_sequence(elapsed_ms)
     end
   end
   finish_chunk()
-  return self:_queue_many(events)
+  return self:_queue_many(events, #sequence.keys)
 end
 
 function Collector:_emit_text_run(elapsed_ms)
@@ -307,7 +342,7 @@ function Collector:_emit_text_run(elapsed_ms)
     elapsed_ms,
     text_run.key_count,
     text_run.last_ms - text_run.started_ms
-  ))
+  ), text_run.key_count)
 end
 
 function Collector:_flush_input(elapsed_ms)
@@ -321,16 +356,21 @@ function Collector:_flush_input(elapsed_ms)
   return self:_emit_control_keys(elapsed_ms)
 end
 
-function Collector:_typed_tokens(typed)
-  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
-    return {}
+function Collector:_canonicalize_typed(typed)
+  if type(typed) ~= "string" or typed == "" then
+    return ""
   end
   local canonical = self._keytrans(typed)
   if type(canonical) ~= "string" or canonical == "" then
+    return ""
+  end
+  return key_tokens.normalize_caret_notation(canonical, typed)
+end
+
+function Collector:_canonical_tokens(canonical)
+  if type(canonical) ~= "string" or canonical == "" then
     return {}
   end
-  canonical = key_tokens.normalize_caret_notation(canonical, typed)
-
   local tokens = key_tokens.tokenize(canonical, {
     max_input_bytes = MAX_CALLBACK_INPUT_BYTES,
     max_token_bytes = 256,
@@ -339,8 +379,57 @@ function Collector:_typed_tokens(typed)
   return tokens or {}
 end
 
+function Collector:_typed_tokens(typed)
+  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
+    return {}
+  end
+  return self:_canonical_tokens(self:_canonicalize_typed(typed))
+end
+
+function Collector:_visit_typed_chunks(typed, visitor)
+  if type(typed) ~= "string" or typed == "" then
+    return true, 0
+  end
+
+  local canonical = self:_canonicalize_typed(typed)
+  local processed = 0
+  local lost = 0
+  local visiting = true
+  local ok, error_code = key_tokens.each_chunk(canonical, MAX_CALLBACK_INPUT_BYTES, function(chunk)
+    local tokens = self:_canonical_tokens(chunk)
+    if visiting then
+      local visited, remaining_key_count = visitor(tokens)
+      if visited then
+        processed = processed + #tokens
+      else
+        visiting = false
+        lost = lost + (remaining_key_count or #tokens)
+      end
+    else
+      -- Keep counting after a failure without retaining the remaining chunks.
+      lost = lost + #tokens
+    end
+    return true
+  end)
+  if not ok then
+    return false, 0, error_code
+  end
+  if not visiting then
+    return false, lost
+  end
+  return true, processed
+end
+
+function Collector:_record_typed_input_loss(typed)
+  local _, key_count = self:_visit_typed_chunks(typed, function()
+    return true
+  end)
+  self:_record_input_loss(key_count)
+end
+
 function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
-  for _, key in ipairs(typed_tokens or self:_typed_tokens(typed)) do
+  typed_tokens = typed_tokens or self:_typed_tokens(typed)
+  for index, key in ipairs(typed_tokens) do
     local sequence = self._sequence
     local timeout_ms = self._options.collection.sequence_timeout_ms
     local max_keys = self._options.collection.max_sequence_keys
@@ -350,7 +439,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
         or #sequence.keys >= max_keys)
     then
       if not self:_emit_sequence(elapsed_ms) then
-        return false
+        return false, #typed_tokens - index + 1
       end
       sequence = nil
     end
@@ -369,7 +458,7 @@ function Collector:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
     table.insert(sequence.key_elapsed_ms, elapsed_ms)
     sequence.last_ms = elapsed_ms
   end
-  return true
+  return true, 0
 end
 
 function Collector:_record_text_keys(typed, elapsed_ms, typed_tokens)
@@ -480,7 +569,7 @@ function Collector:_schedule_mapping_reprime()
   end
 end
 
-function Collector:_queue_many(events)
+function Collector:_queue_many(events, input_key_count)
   if self._in_callback and self._last_error ~= nil then
     return false
   end
@@ -495,6 +584,7 @@ function Collector:_queue_many(events)
     or self._pending_bytes + encoded_bytes > MAX_PENDING_BYTES
   then
     self._last_error = PENDING_LIMIT_ERROR
+    self:_record_input_loss(input_key_count)
     self._sequence = nil
     self._text_run = nil
     self:_mapping_boundary()
@@ -514,8 +604,8 @@ function Collector:_queue_many(events)
   return true
 end
 
-function Collector:_queue(event)
-  return self:_queue_many({ event })
+function Collector:_queue(event, input_key_count)
+  return self:_queue_many({ event }, input_key_count)
 end
 
 function Collector:_write_pending()
@@ -602,11 +692,18 @@ function Collector:_record_mapping_use(mapped, typed, mode, typed_tokens, elapse
   then
     return
   end
-  self:_queue(schema.mapping_use(self._session_id, elapsed_ms, mode, mapping_id, typed_tokens))
+  local buffered_key_count = #typed_tokens
+  if self._sequence ~= nil then
+    buffered_key_count = #self._sequence.keys
+  end
+  self:_queue(
+    schema.mapping_use(self._session_id, elapsed_ms, mode, mapping_id, typed_tokens),
+    buffered_key_count
+  )
 end
 
 function Collector:_handle_key(mapped, typed)
-  if self._state ~= "recording" or self._last_error ~= nil then
+  if self._state ~= "recording" then
     return
   end
 
@@ -617,6 +714,20 @@ function Collector:_handle_key(mapped, typed)
     self:_flush_input(elapsed_ms)
     return
   end
+
+  if self._last_error ~= nil then
+    if self._last_error == PENDING_LIMIT_ERROR then
+      local mode = normalize_mode(self._current_mode(), self._current_cmdtype())
+      if SEQUENCE_MODES[mode] or mode == "insert" then
+        local _, key_count = self:_visit_typed_chunks(typed, function()
+          return true
+        end)
+        self:_record_input_loss(key_count)
+      end
+    end
+    return
+  end
+
   if self._mapping_reprime_needed then
     self:_schedule_mapping_reprime()
   end
@@ -627,10 +738,20 @@ function Collector:_handle_key(mapped, typed)
     local previous_mode = self._last_mode
     self._last_mode = mode
     if not self:_flush_input(elapsed_ms) then
+      if self._last_error == PENDING_LIMIT_ERROR
+        and (SEQUENCE_MODES[mode] or mode == "insert")
+      then
+        self:_record_typed_input_loss(typed)
+      end
       return
     end
     self:_mapping_boundary()
     if not self:_queue(schema.mode_transition(self._session_id, elapsed_ms, previous_mode, mode)) then
+      if self._last_error == PENDING_LIMIT_ERROR
+        and (SEQUENCE_MODES[mode] or mode == "insert")
+      then
+        self:_record_typed_input_loss(typed)
+      end
       return
     end
   else
@@ -641,15 +762,39 @@ function Collector:_handle_key(mapped, typed)
   end
 
   if SEQUENCE_MODES[mode] then
-    local typed_tokens = self:_typed_tokens(typed)
-    if not self:_record_sequence(mode, typed, elapsed_ms, typed_tokens) then
-      return
+    local typed_bytes = type(typed) == "string" and #typed or 0
+    if typed_bytes <= MAX_CALLBACK_INPUT_BYTES then
+      local typed_tokens = self:_typed_tokens(typed)
+      local recorded, lost_key_count = self:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
+      if not recorded then
+        if self._last_error == PENDING_LIMIT_ERROR then
+          self:_record_input_loss(lost_key_count or #typed_tokens)
+        end
+        return
+      end
+      self:_record_mapping_use(mapped, typed, mode, typed_tokens, elapsed_ms)
+    else
+      local ok, lost_key_count = self:_visit_typed_chunks(typed, function(tokens)
+        return self:_record_sequence(mode, typed, elapsed_ms, tokens)
+      end)
+      if not ok then
+        self:_record_input_loss(lost_key_count)
+        return
+      end
     end
-    self:_record_mapping_use(mapped, typed, mode, typed_tokens, elapsed_ms)
   elseif mode == "insert" then
-    local typed_tokens = self:_typed_tokens(typed)
-    self:_record_text_keys(typed, elapsed_ms, typed_tokens)
-    self:_record_control_keys(normalize_text_input_mode(raw_mode), typed_tokens)
+    local typed_bytes = type(typed) == "string" and #typed or 0
+    if typed_bytes <= MAX_CALLBACK_INPUT_BYTES then
+      local typed_tokens = self:_typed_tokens(typed)
+      self:_record_text_keys(typed, elapsed_ms, typed_tokens)
+      self:_record_control_keys(normalize_text_input_mode(raw_mode), typed_tokens)
+    else
+      self:_visit_typed_chunks(typed, function(tokens)
+        self:_record_text_keys(typed, elapsed_ms, tokens)
+        self:_record_control_keys(normalize_text_input_mode(raw_mode), tokens)
+        return true
+      end)
+    end
   end
 end
 
@@ -684,6 +829,7 @@ function Collector:_reset_session()
   self._end_queued = false
   self._pending = {}
   self._pending_bytes = 0
+  self._input_loss_key_count = 0
   self._last_mode = nil
   self._mapping_reprime_needed = false
   self._mapping_reprime_scheduled = false
@@ -784,6 +930,7 @@ function Collector:stop()
     self:_write_pending()
     if not self._end_queued then
       self:_flush_input(self:_elapsed_ms())
+      self:_emit_input_loss(self:_elapsed_ms())
       self._end_queued = true
       self:_queue(schema.session_end(self._session_id, self:_elapsed_ms()))
     end
@@ -807,6 +954,7 @@ function Collector:flush()
 
   local count = self:_write_pending()
   self:_flush_input(self:_elapsed_ms())
+  self:_emit_input_loss(self:_elapsed_ms())
   self._mapping_ready = false
   if self._mapping_resolver ~= nil and type(self._mapping_resolver.reset) == "function" then
     pcall(self._mapping_resolver.reset, self._mapping_resolver)
