@@ -741,8 +741,6 @@ function Collector:_handle_key(mapped, typed)
 
   local raw_mode = self._current_mode()
   local mode = normalize_mode(raw_mode, self._current_cmdtype())
-  local canonical_typed = self:_canonicalize_typed(typed)
-  local requires_typed_chunks = self:_requires_typed_chunks(typed, canonical_typed)
   if self._last_mode ~= nil and self._last_mode ~= mode then
     local previous_mode = self._last_mode
     self._last_mode = mode
@@ -768,6 +766,13 @@ function Collector:_handle_key(mapped, typed)
       self:_mapping_boundary()
     end
     self._last_mode = mode
+  end
+
+  local canonical_typed
+  local requires_typed_chunks
+  if SEQUENCE_MODES[mode] or mode == "insert" then
+    canonical_typed = self:_canonicalize_typed(typed)
+    requires_typed_chunks = self:_requires_typed_chunks(typed, canonical_typed)
   end
 
   if SEQUENCE_MODES[mode] then

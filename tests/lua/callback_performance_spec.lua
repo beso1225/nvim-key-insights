@@ -12,6 +12,7 @@ local function new_harness(use_real_resolver)
     callback_active = false,
     clock_calls = 0,
     cmdtype_calls = 0,
+    cmdtype = "",
     current_buffer_calls = 0,
     current_mode_calls = 0,
     events = {},
@@ -48,7 +49,7 @@ local function new_harness(use_real_resolver)
     end,
     current_cmdtype = function()
       state.cmdtype_calls = state.cmdtype_calls + 1
-      return ""
+      return state.cmdtype
     end,
     current_mode = function()
       state.current_mode_calls = state.current_mode_calls + 1
@@ -235,6 +236,23 @@ assert(excluded.boundary_calls == 1)
 assert(excluded.storage_calls_in_callback == 0)
 assert(excluded_instance:pause())
 assert(#excluded.events == 0)
+
+for _, discarded_mode in ipairs({
+  { mode = "c", cmdtype = ":", name = "command" },
+  { mode = "c", cmdtype = "/", name = "search" },
+  { mode = "t", cmdtype = "", name = "other" },
+}) do
+  local discarded_instance, discarded = new_harness()
+  discarded.mode = discarded_mode.mode
+  discarded.cmdtype = discarded_mode.cmdtype
+  discarded:invoke("private-mapped-output", string.rep("x", 300000))
+  assert(
+    discarded.keytrans_calls == 0,
+    discarded_mode.name .. " input must skip canonicalization"
+  )
+  assert(discarded_instance:pause())
+  assert(#discarded.events == 0)
+end
 
 local ordinary_instance, ordinary = new_harness()
 ordinary:invoke("h", "h")
