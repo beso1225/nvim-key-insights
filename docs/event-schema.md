@@ -33,7 +33,7 @@ The collector stores one session per finalized `.jsonl` file. The validator acce
 
 - Raw per-key logging is disabled unless explicitly opted in.
 - Insert-mode text and command/search contents are never present under default settings.
-- Control-key aggregates contain only canonical control tokens such as `<C-Y>` or `<Tab>`; literal text that resembles a notation is retained as text and is not promoted into this event.
+- Control-key aggregates contain only canonical control tokens such as `<C-Y>`, `<Tab>`, or the schema-3-only macOS Command slash tokens `<D-/>` and `<D-\>`; literal text that resembles a notation is retained as text and is not promoted into this event.
 - Terminal, prompt, `nofile`, and other special buffers are excluded.
 - Sensitive filenames and filetypes are force-excluded and cannot be enabled through ordinary configuration.
 - File paths are absent by default.

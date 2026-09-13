@@ -41,6 +41,11 @@ fn renders_a_versioned_payload_from_sanitized_inputs_only() {
     assert!(!payload.contains("/Users/private/project"));
     assert!(!payload.contains("project_id"));
     assert!(!payload.contains("mapping_rhs_secret"));
+    assert_eq!(value["summary"]["schema_version"], 5);
+    assert_eq!(
+        value["instructions"]["privacy_boundary"],
+        "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections."
+    );
 }
 
 #[test]
@@ -51,10 +56,10 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "bcd92d310e83eface59d5e288acf8edd2015940a50a3e28b248efc97f360a0be"
+        "f8130fefecf69a255fc35f202834a2a4ec229cd38c6a4c3ab15a756169350974"
     );
     assert!(first.starts_with(
-        r#"{"payload_schema_version":2,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
+        r#"{"payload_schema_version":3,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
     ));
     let instruction_position = first.find("\"instructions\"").expect("instructions field");
     let summary_position = first.find("\"summary\"").expect("summary field");
@@ -98,6 +103,10 @@ fn rejects_mutated_sanitized_fields_and_nested_contract_versions() {
     ));
     let mut modifier_summary = summary();
     modifier_summary.keys[0].key = r"<C-\>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-/>".to_owned();
+    assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
+    modifier_summary.keys[0].key = r"<D-\>".to_owned();
     assert!(render_codex_payload_json(&modifier_summary, None).is_ok());
     secret_summary.keys[0].key = "<file:///home/alice/project>".to_owned();
     assert!(matches!(
@@ -174,7 +183,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "247b1f8170f91cbeff8f095d619ad66e69b7e67611de3f8f2dc1e9924517fb65"
+        "a2fc4c6a89cffd12cd72d637bec136a404e96ef5350c4b13aa4b33dc9022e101"
     );
 }
 

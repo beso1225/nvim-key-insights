@@ -1728,7 +1728,7 @@ fn suggestions_command_validates_and_renders_deterministic_markdown() {
     fs::write(&summary_path, summary_json).expect("write summary over the snapshot-size bound");
     fs::write(
         &suggestions_path,
-        r#"{"schema_version":1,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}"#,
+        r#"{"schema_version":2,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}"#,
     )
     .expect("write suggestions");
     fs::set_permissions(&summary_path, fs::Permissions::from_mode(0o600)).expect("protect summary");

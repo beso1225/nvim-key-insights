@@ -152,6 +152,8 @@ assert(vim.deep_equal(special_sequences[1].keys, { "<C-X>", "a" }))
 
 assert(key_tokens.is_control_token("<C-Y>"))
 assert(key_tokens.is_control_token("<Tab>"))
+assert(key_tokens.is_control_token("<D-/>"))
+assert(key_tokens.is_control_token("<D-\\>"))
 assert(not key_tokens.is_control_token("<C-é>"), "control-token payloads must be ASCII")
 assert(not key_tokens.is_control_token("<C-secret>"), "sensitive control tokens must be rejected")
 assert(not key_tokens.is_control_token("<C-.env>"), "environment control tokens must be rejected")

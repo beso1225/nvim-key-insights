@@ -12,8 +12,8 @@ unknown versions fail closed before output publication or a Codex handoff.
 | Event log | `3` | Durable collector input | New analyzers read event schemas 1, 2, and 3; keep private finalized JSONL and regenerate derived artifacts. |
 | Analysis summary | `5` | Derived private artifact | Regenerate from supported event logs; do not rewrite an old summary in place. |
 | Keymap snapshot | `1` | Ephemeral report input | Capture a fresh snapshot from Neovim. |
-| Codex payload | `2` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
-| Codex suggestions | `1` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
+| Codex payload | `3` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
+| Codex suggestions | `2` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
 | Ergonomics contract | `2` | Nested in summary 5 | Regenerate the containing summary. |
 | Histogram layout | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Operation token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
@@ -33,6 +33,10 @@ Event schemas 1, 2, and 3 are supported durable input contracts in the current r
 analyzer accepts those versions exactly; it does not guess field names,
 drop unknown fields, or partially analyze a newer stream. Preserve finalized
 event logs when upgrading if they may need to be analyzed again.
+
+Event schema 3 adds the macOS Command slash and backslash control-key tokens
+`<D-/>` and `<D-\>`. Schema 2 remains readable with its original token set and
+rejects those new values; only schema 3 may carry them.
 
 Removing an event reader requires a package major release. Before event schema
 1 can be removed, a release must provide either a parallel reader covering the
@@ -59,8 +63,9 @@ default Neovim workflow. Capture a new snapshot after upgrading instead of
 converting an old snapshot document.
 
 Codex payloads and suggestion JSON are bounded exchange artifacts, not durable
-records. Regenerate a payload with the matching CLI, inspect it again, and ask
-for new suggestion-schema-1 JSON. Suggestion JSON is never trusted or rendered
+records. Payload schema 3 is the current token contract; regenerate a payload
+with the matching CLI, inspect it again, and ask
+for new suggestion-schema-2 JSON. Suggestion JSON is never trusted or rendered
 until the local validator binds every evidence value and collision claim to the
 exact private summary and optional sanitized snapshot.
 

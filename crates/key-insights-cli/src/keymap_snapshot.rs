@@ -311,7 +311,8 @@ pub(crate) fn is_control_token(token: &str) -> bool {
         "<kRight>",
     ];
     const SAFE_BRACKETED: &[&str] = &[
-        "<C-/>", "<A-/>", "<M-/>", "<S-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#, r#"<S-\>"#,
+        "<C-/>", "<A-/>", "<M-/>", "<S-/>", "<D-/>", r#"<C-\>"#, r#"<A-\>"#, r#"<M-\>"#,
+        r#"<S-\>"#, r#"<D-\>"#,
     ];
     if NAMED.contains(&token) {
         return true;
@@ -343,6 +344,17 @@ pub(crate) fn is_control_token(token: &str) -> bool {
         && key
             .bytes()
             .all(|byte| (0x20..=0x7e).contains(&byte) && !matches!(byte, b'>' | b'/' | b'\\'))
+}
+
+pub(crate) fn is_control_token_for_event_schema(token: &str, schema_version: u32) -> bool {
+    if !is_control_token(token) {
+        return false;
+    }
+    match schema_version {
+        crate::PREVIOUS_SCHEMA_VERSION => !matches!(token, "<D-/>" | r#"<D-\>"#),
+        crate::SCHEMA_VERSION => true,
+        _ => false,
+    }
 }
 
 fn mapping_id(mode: SnapshotMode, scope: SnapshotScope, lhs: &[String]) -> String {

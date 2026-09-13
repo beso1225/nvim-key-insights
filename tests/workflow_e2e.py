@@ -465,7 +465,7 @@ class PublicWorkflowE2E(unittest.TestCase):
         stdin_bytes = (mock_directory / "codex-stdin.json").read_bytes()
         self.assertEqual(preview_bytes, stdin_bytes)
         payload = json.loads(stdin_bytes)
-        self.assertEqual(payload["payload_schema_version"], 2)
+        self.assertEqual(payload["payload_schema_version"], 3)
         self.assertEqual(payload["summary"]["sessions"], 1)
 
         codex_environment = dict(
@@ -494,12 +494,8 @@ class PublicWorkflowE2E(unittest.TestCase):
             'shell_environment_policy.inherit="none"',
             "--config",
             'approval_policy="never"',
-            "--config",
-            'default_permissions="key-insights-payload-only"',
-            "--config",
-            'permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}',
-            "--config",
-            "permissions.key-insights-payload-only.network.enabled=false",
+            "--sandbox",
+            "read-only",
             "--output-schema",
             str(ROOT / "lua/key-insights/../../codex/suggestions.schema.json"),
         ])

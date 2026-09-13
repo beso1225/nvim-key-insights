@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Version of the sanitized subprocess payload contract.
-pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 2;
+pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 3;
 /// Hard upper bound for bytes sent to an optional Codex subprocess.
 pub const MAX_CODEX_PAYLOAD_BYTES: usize = 256 * 1024;
 
@@ -116,7 +116,7 @@ pub fn render_codex_payload_json(
             action_kinds: ACTION_KINDS,
             evidence_required: true,
             collision_check_required: true,
-            privacy_boundary: "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input.",
+            privacy_boundary: "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections.",
         },
         summary,
         keymap_snapshot: snapshot.map(|value| CodexKeymapSnapshot {
@@ -477,7 +477,16 @@ pub(crate) fn validate_token(token: &str, field: &'static str) -> Result<(), Cod
     let lower = token.to_ascii_lowercase();
     let safe_bracket_token = matches!(
         token,
-        "<C-/>" | "<A-/>" | "<M-/>" | "<S-/>" | "<C-\\>" | "<A-\\>" | "<M-\\>" | "<S-\\>"
+        "<C-/>"
+            | "<A-/>"
+            | "<M-/>"
+            | "<S-/>"
+            | "<D-/>"
+            | "<C-\\>"
+            | "<A-\\>"
+            | "<M-\\>"
+            | "<S-\\>"
+            | "<D-\\>"
     );
     let path_like =
         (token.contains('/') || token.contains('\\')) && token != "/" && !safe_bracket_token;

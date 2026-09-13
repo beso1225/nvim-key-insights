@@ -15,7 +15,7 @@ local MAX_REPORT_BYTES = 16 * 1024 * 1024
 local MAX_PREVIEW_BYTES = 256 * 1024
 local REPORT_HEADER = "# Neovim Key Insights"
 local PREVIEW_PURPOSE = "analyze-neovim-usage"
-local PREVIEW_PRIVACY_BOUNDARY = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input."
+local PREVIEW_PRIVACY_BOUNDARY = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections."
 local PREVIEW_ACTION_KINDS = { "learn_existing", "add_mapping", "change_mapping", "no_change" }
 local MAX_CODEX_BYTES = 256 * 1024
 local MAX_RENDERED_SUGGESTIONS_BYTES = 1024 * 1024
@@ -298,10 +298,12 @@ local function validate_preview(contents)
         or value == "<A-/>"
         or value == "<M-/>"
         or value == "<S-/>"
+        or value == "<D-/>"
         or value == "<C-\\>"
         or value == "<A-\\>"
         or value == "<M-\\>"
         or value == "<S-\\>"
+        or value == "<D-\\>"
       if (string.sub(value, 1, 1) == "/" and value ~= "/")
         or string.match(value, "^%a:[/\\]")
         or (value ~= "/"
@@ -684,10 +686,12 @@ local SAFE_MODIFIER_SLASH_TOKENS = {
   ["<A-/>"] = true,
   ["<M-/>"] = true,
   ["<S-/>"] = true,
+  ["<D-/>"] = true,
   ["<C-\\>"] = true,
   ["<A-\\>"] = true,
   ["<M-\\>"] = true,
   ["<S-\\>"] = true,
+  ["<D-\\>"] = true,
 }
 
 local function first_utf8_character(value)
@@ -790,10 +794,12 @@ safe_preview_token = function(value)
     or value == "<A-/>"
     or value == "<M-/>"
     or value == "<S-/>"
+    or value == "<D-/>"
     or value == "<C-\\>"
     or value == "<A-\\>"
     or value == "<M-\\>"
     or value == "<S-\\>"
+    or value == "<D-\\>"
     or safe_output_text(value, 256)
 end
 
@@ -1101,8 +1107,14 @@ local function validate_codex_suggestions(contents, preview_payload)
       then
         return false, "Codex returned invalid evidence"
       end
-      if expected_metric(preview_payload.summary, evidence.metric) ~= evidence.value then
-        return false, "Codex evidence does not match the sanitized summary"
+      local expected = expected_metric(preview_payload.summary, evidence.metric)
+      if expected ~= evidence.value then
+        return false, string.format(
+          "Codex evidence does not match the sanitized summary (metric=%s, received=%s, expected=%s)",
+          tostring(evidence.metric),
+          tostring(evidence.value),
+          tostring(expected)
+        )
       end
       for key in pairs(evidence) do
         if key ~= "metric" and key ~= "value" then
@@ -1675,12 +1687,8 @@ function Report:_start_codex(payload, generation, preview_payload)
     'shell_environment_policy.inherit="none"',
     "--config",
     'approval_policy="never"',
-    "--config",
-    'default_permissions="key-insights-payload-only"',
-    "--config",
-    'permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}',
-    "--config",
-    "permissions.key-insights-payload-only.network.enabled=false",
+    "--sandbox",
+    "read-only",
     "--output-schema",
     self._codex_output_schema,
   }

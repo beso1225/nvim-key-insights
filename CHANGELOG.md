@@ -13,6 +13,38 @@ derived from package SemVer.
 - Bounded oversized callback chunking and privacy-safe `input_loss` events for
   pending-queue overflow, with event schema v3 and summary schema v5.
 
+## [0.2.4] - 2026-09-13
+
+### Fixed
+
+- Include the metric name and received/expected aggregate values when rejecting
+  Codex evidence, and bind evidence citations to exact top-level summary
+  metrics instead of allowing values to be recomputed from truncated ranked
+  collections.
+
+## [0.2.3] - 2026-09-13
+
+### Fixed
+
+- Include the metric name and received/expected aggregate values when rejecting
+  Codex evidence that does not match the sanitized summary.
+
+## [0.2.2] - 2026-09-12
+
+### Added
+
+- Use Codex's built-in read-only sandbox for analysis subprocesses, avoiding
+  failures caused by the former custom filesystem and network profile while
+  documenting the broader local-read boundary.
+
+## [0.2.1] - 2026-09-12
+
+### Added
+
+- Versioned the macOS Command slash/backslash control-key tokens as event
+  schema 3, analysis summary schema 5, and Codex suggestions schema 2 while
+  retaining readers for event schemas 1 and 2.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added

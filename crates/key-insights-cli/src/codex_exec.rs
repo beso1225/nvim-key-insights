@@ -85,14 +85,8 @@ pub fn build_codex_exec_argv(config: &CodexExecConfig) -> Vec<OsString> {
         OsString::from(r#"shell_environment_policy.inherit="none""#),
         OsString::from("--config"),
         OsString::from(r#"approval_policy="never""#),
-        OsString::from("--config"),
-        OsString::from(r#"default_permissions="key-insights-payload-only""#),
-        OsString::from("--config"),
-        OsString::from(
-            r#"permissions.key-insights-payload-only.filesystem={":root"="deny",":minimal"="read"}"#,
-        ),
-        OsString::from("--config"),
-        OsString::from(r#"permissions.key-insights-payload-only.network.enabled=false"#),
+        OsString::from("--sandbox"),
+        OsString::from("read-only"),
         OsString::from("--output-schema"),
         config.output_schema.as_os_str().to_owned(),
     ]

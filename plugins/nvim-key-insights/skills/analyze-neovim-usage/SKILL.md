@@ -1,6 +1,6 @@
 ---
 name: analyze-neovim-usage
-description: Evaluate a canonical privacy-sanitized nvim-key-insights preview and produce evidence-bound structured Neovim usage suggestions. Use when a user asks to review key-insights summary evidence, decide whether to learn an existing operation or change a mapping, or generate suggestion-schema-v1 JSON for local validation.
+description: Evaluate a canonical privacy-sanitized nvim-key-insights preview and produce evidence-bound structured Neovim usage suggestions. Use when a user asks to review key-insights summary evidence, decide whether to learn an existing operation or change a mapping, or generate suggestion-schema-v2 JSON for local validation.
 ---
 
 # Analyze Neovim Usage
@@ -37,7 +37,7 @@ Require all of the following before analysis:
 - The top-level payload keys are exactly `payload_schema_version`, `purpose`,
   `instructions`, `summary`, and the optional `keymap_snapshot`. Reject any
   additional top-level key.
-- `payload_schema_version` is `2`;
+- `payload_schema_version` is `3`;
 - `purpose` is `analyze-neovim-usage`;
 - `summary.schema_version` is `5`;
 - `keymap_snapshot.snapshot_version` is `1` when a snapshot is present;
@@ -48,7 +48,7 @@ Require all of the following before analysis:
 - every key or left-hand-side token is canonical, at most 256 UTF-8 bytes, and
   is either one Unicode scalar or one bracket token ending at its first `>`;
   reject controls, path-like `/` or `\` content except the literal `/` and the
-  eight modifier slash/backslash tokens, and reject case-insensitive `.env`,
+  ten modifier slash/backslash tokens, and reject case-insensitive `.env`,
   `secret`, or `credential` content;
 - every mapping ID has the exact `mapping-v1:` plus 64 lowercase hexadecimal
   form. For snapshot entries, recompute the SHA-256 ID from the byte-length
@@ -65,7 +65,7 @@ Require all of the following before analysis:
   limits, token-set versions, and all other constants must match the bundled
   payload schema;
 - the requested output follows `references/suggestions.schema.json`, schema
-  version `1`.
+  version `2`.
 
 Reject unknown versions or malformed/unknown fields. Tell the user to upgrade
 `nvim-key-insights` rather than guessing a migration. Do not reconstruct a
@@ -90,7 +90,11 @@ snapshot from other files.
 4. Choose exactly one supported action for each suggestion:
    `learn_existing`, `add_mapping`, `change_mapping`, or `no_change`.
 5. Cite one or more metric/value pairs exactly as they appear in the payload.
-   Never invent, round, combine, or infer a measurement.
+   Never invent, round, combine, or infer a measurement. Copy evidence metric
+   values exactly from top-level `summary` scalars; never derive, sum, or
+   recompute them from ranked arrays, histograms, candidates, or other
+   truncated collections. In particular, never derive `repeated_key_runs` from
+   `repeated_keys`.
 6. For `add_mapping` or `change_mapping`, require a verified snapshot, provide a
    canonical mode/scope/left-hand-side proposal, and report the complete exact
    set of mapping IDs whose left-hand sides collide exactly or by prefix. For

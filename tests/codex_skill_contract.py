@@ -39,7 +39,7 @@ class CodexSkillContractTests(unittest.TestCase):
             "`payload_schema_version`, `purpose`, `instructions`, `summary`, and the optional",
             "`keymap_snapshot`",
             "Reject any additional top-level key",
-            "`payload_schema_version` is `2`",
+            "`payload_schema_version` is `3`",
             "`summary.schema_version` is `5`",
             "`keymap_snapshot.snapshot_version` is `1`",
             "`instructions.action_kinds` is exactly",
@@ -58,6 +58,8 @@ class CodexSkillContractTests(unittest.TestCase):
         self.assert_contract_text(
             "`learn_existing`, `add_mapping`, `change_mapping`, or `no_change`",
             "Never invent, round, combine, or infer a measurement",
+            "Copy evidence metric values exactly from top-level `summary` scalars",
+            "never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections",
             "complete exact set of mapping IDs",
             "Without a snapshot, emit only `learn_existing` or `no_change`",
         )
@@ -75,7 +77,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_security_critical_skill_instructions_are_canonical(self) -> None:
         self.assertEqual(
             hashlib.sha256(SKILL.encode()).hexdigest(),
-            "cce36c1c9160e2edd85234a55176cb5b6119bfb875f44747c78fc57fcde4afb0",
+            "ffce071b0d51750cc3ffbd654e2c60c6d57fb3a9ebe1c06c7788996400d5441d",
         )
 
     def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:
@@ -88,7 +90,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_response_schema_uses_explicit_types_for_codex_structured_output(self) -> None:
         schema = json.loads((ROOT / "codex/suggestions.schema.json").read_text())
         properties = schema["properties"]
-        self.assertEqual(properties["schema_version"], {"type": "integer", "const": 1})
+        self.assertEqual(properties["schema_version"], {"type": "integer", "const": 2})
         self.assertNotIn("allOf", properties["suggestions"]["items"])
         suggestion_schema = properties["suggestions"]["items"]
         self.assertIn("mapping", suggestion_schema["required"])
