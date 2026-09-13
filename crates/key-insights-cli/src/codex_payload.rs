@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Version of the sanitized subprocess payload contract.
-pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 3;
+pub const CODEX_PAYLOAD_SCHEMA_VERSION: u32 = 4;
 /// Hard upper bound for bytes sent to an optional Codex subprocess.
 pub const MAX_CODEX_PAYLOAD_BYTES: usize = 256 * 1024;
 
@@ -92,7 +92,7 @@ pub fn render_codex_payload_json(
     summary: &AnalysisSummary,
     snapshot: Option<&KeymapSnapshot>,
 ) -> Result<String, CodexPayloadError> {
-    if summary.schema_version != 5 {
+    if summary.schema_version != crate::analyzer::SUMMARY_SCHEMA_VERSION {
         return Err(CodexPayloadError::UnsupportedSummarySchema {
             found: summary.schema_version,
         });

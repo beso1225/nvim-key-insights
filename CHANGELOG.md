@@ -11,7 +11,9 @@ derived from package SemVer.
 ### Added
 
 - Bounded oversized callback chunking and privacy-safe `input_loss` events for
-  pending-queue overflow, with event schema v3 and summary schema v5.
+  pending-queue overflow, with event schema v4, summary schema v6, Codex
+  payload schema v4, and Codex suggestions schema v3. Existing event schemas
+  1, 2, and 3 remain readable.
 
 ## [0.2.4] - 2026-09-13
 

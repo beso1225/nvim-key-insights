@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "ranking_limit": 100,
   "sessions": 2,
   "events": 12,

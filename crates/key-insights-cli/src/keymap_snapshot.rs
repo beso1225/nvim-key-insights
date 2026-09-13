@@ -352,7 +352,7 @@ pub(crate) fn is_control_token_for_event_schema(token: &str, schema_version: u32
     }
     match schema_version {
         crate::PREVIOUS_SCHEMA_VERSION => !matches!(token, "<D-/>" | r#"<D-\>"#),
-        crate::SCHEMA_VERSION => true,
+        3 | crate::SCHEMA_VERSION => true,
         _ => false,
     }
 }

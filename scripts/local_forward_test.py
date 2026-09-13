@@ -302,9 +302,9 @@ def validate_generated_artifacts(summary: bytes, report: bytes, payload: bytes) 
         payload_document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise LocalForwardTestError("generated JSON artifact is invalid") from error
-    if summary_document.get("schema_version") != 5:
+    if summary_document.get("schema_version") != 6:
         raise LocalForwardTestError("generated summary schema is unsupported")
-    if payload_document.get("payload_schema_version") != 3:
+    if payload_document.get("payload_schema_version") != 4:
         raise LocalForwardTestError("generated payload schema is unsupported")
     if not report.startswith(b"# Neovim Key Insights"):
         raise LocalForwardTestError("generated report contract is invalid")
@@ -374,7 +374,7 @@ def execute(
     manifest = {
         "manifest_version": 1,
         "mode": "real-local",
-        "contracts": {"event_schema": 3, "payload_schema": 3, "summary_schema": 5},
+        "contracts": {"event_schema": 4, "payload_schema": 4, "summary_schema": 6},
         "tools": {
             "key_insights": tool_version(analyzer, "key-insights"),
             "neovim": tool_version(nvim, "Neovim"),
