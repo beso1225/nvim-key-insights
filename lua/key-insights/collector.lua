@@ -379,19 +379,26 @@ function Collector:_canonical_tokens(canonical)
   return tokens or {}
 end
 
-function Collector:_typed_tokens(typed)
+function Collector:_typed_tokens(typed, canonical)
   if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
     return {}
   end
-  return self:_canonical_tokens(self:_canonicalize_typed(typed))
+  return self:_canonical_tokens(canonical or self:_canonicalize_typed(typed))
 end
 
-function Collector:_visit_typed_chunks(typed, visitor)
+function Collector:_requires_typed_chunks(typed, canonical)
+  if type(typed) ~= "string" or typed == "" or #typed > MAX_CALLBACK_INPUT_BYTES then
+    return type(typed) == "string" and typed ~= ""
+  end
+  return #canonical > MAX_CALLBACK_INPUT_BYTES
+end
+
+function Collector:_visit_typed_chunks(typed, visitor, canonical)
   if type(typed) ~= "string" or typed == "" then
     return true, 0
   end
 
-  local canonical = self:_canonicalize_typed(typed)
+  canonical = canonical or self:_canonicalize_typed(typed)
   local processed = 0
   local lost = 0
   local visiting = true
@@ -734,6 +741,8 @@ function Collector:_handle_key(mapped, typed)
 
   local raw_mode = self._current_mode()
   local mode = normalize_mode(raw_mode, self._current_cmdtype())
+  local canonical_typed = self:_canonicalize_typed(typed)
+  local requires_typed_chunks = self:_requires_typed_chunks(typed, canonical_typed)
   if self._last_mode ~= nil and self._last_mode ~= mode then
     local previous_mode = self._last_mode
     self._last_mode = mode
@@ -762,9 +771,8 @@ function Collector:_handle_key(mapped, typed)
   end
 
   if SEQUENCE_MODES[mode] then
-    local typed_bytes = type(typed) == "string" and #typed or 0
-    if typed_bytes <= MAX_CALLBACK_INPUT_BYTES then
-      local typed_tokens = self:_typed_tokens(typed)
+    if not requires_typed_chunks then
+      local typed_tokens = self:_typed_tokens(typed, canonical_typed)
       local recorded, lost_key_count = self:_record_sequence(mode, typed, elapsed_ms, typed_tokens)
       if not recorded then
         if self._last_error == PENDING_LIMIT_ERROR then
@@ -776,16 +784,15 @@ function Collector:_handle_key(mapped, typed)
     else
       local ok, lost_key_count = self:_visit_typed_chunks(typed, function(tokens)
         return self:_record_sequence(mode, typed, elapsed_ms, tokens)
-      end)
+      end, canonical_typed)
       if not ok then
         self:_record_input_loss(lost_key_count)
         return
       end
     end
   elseif mode == "insert" then
-    local typed_bytes = type(typed) == "string" and #typed or 0
-    if typed_bytes <= MAX_CALLBACK_INPUT_BYTES then
-      local typed_tokens = self:_typed_tokens(typed)
+    if not requires_typed_chunks then
+      local typed_tokens = self:_typed_tokens(typed, canonical_typed)
       self:_record_text_keys(typed, elapsed_ms, typed_tokens)
       self:_record_control_keys(normalize_text_input_mode(raw_mode), typed_tokens)
     else
@@ -793,7 +800,7 @@ function Collector:_handle_key(mapped, typed)
         self:_record_text_keys(typed, elapsed_ms, tokens)
         self:_record_control_keys(normalize_text_input_mode(raw_mode), tokens)
         return true
-      end)
+      end, canonical_typed)
     end
   end
 end

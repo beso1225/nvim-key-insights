@@ -149,6 +149,43 @@ end
 assert(internal_code_key_count == 100000, "internal key-code input must survive UTF-8 chunking")
 assert(string.find(vim.json.encode(internal_codes_state.events), "mapped-internal-code-secret", 1, true) == nil)
 
+local canonical_expansion_input = string.rep("x", 52429)
+local canonical_expansion, canonical_expansion_state = new_harness(
+  "issue-33-canonical-expansion",
+  config.resolve({ collection = { max_sequence_keys = 65536 } }),
+  {
+    keytrans = function(value)
+      return string.rep("<C-Y>", #value)
+    end,
+  }
+)
+canonical_expansion_state.callback("mapped-canonical-expansion-secret", canonical_expansion_input)
+assert(canonical_expansion:pause())
+local canonical_expansion_sequences = events_of_type(canonical_expansion_state.events, "key_sequence")
+local canonical_expansion_key_count = 0
+for _, event in ipairs(canonical_expansion_sequences) do
+  canonical_expansion_key_count = canonical_expansion_key_count + #event.keys
+end
+assert(
+  canonical_expansion_key_count == #canonical_expansion_input,
+  "canonical expansion must select chunking before tokenization"
+)
+
+local canonical_insert, canonical_insert_state = new_harness(
+  "issue-33-canonical-expansion-insert",
+  config.defaults(),
+  {
+    mode = "i",
+    keytrans = function(value)
+      return string.rep("<C-Y>", #value)
+    end,
+  }
+)
+canonical_insert_state.callback("mapped-canonical-insert-secret", canonical_expansion_input)
+assert(canonical_insert:pause())
+local canonical_insert_runs = events_of_type(canonical_insert_state.events, "text_run")
+assert(#canonical_insert_runs == 1 and canonical_insert_runs[1].key_count == #canonical_expansion_input)
+
 local insert, insert_state = new_harness("issue-33-insert", config.defaults(), { mode = "i" })
 insert_state.callback("mapped-insert-secret", oversized_unicode)
 assert(insert:pause())
