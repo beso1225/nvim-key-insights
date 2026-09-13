@@ -1,9 +1,9 @@
 local M = {
-  event_log = 3,
-  analysis_summary = 5,
+  event_log = 4,
+  analysis_summary = 6,
   keymap_snapshot = 1,
-  codex_payload = 3,
-  codex_suggestions = 2,
+  codex_payload = 4,
+  codex_suggestions = 3,
   ergonomics = 2,
   histogram = 1,
   operation_token_set = 1,
@@ -16,6 +16,7 @@ local M = {
     [3] = true,
     [4] = true,
     [5] = true,
+    [6] = true,
   },
 }
 

@@ -321,31 +321,31 @@ class ReleaseContractTest(unittest.TestCase):
     def test_schema_contract_rejects_runtime_documentation_and_copy_drift(self) -> None:
         mutations = {
             "crates/key-insights-cli/src/lib.rs": (
-                "pub const SCHEMA_VERSION: u32 = 3;",
+                "pub const SCHEMA_VERSION: u32 = 4;",
                 "pub const SCHEMA_VERSION: u32 = 1;",
             ),
             "lua/key-insights/contract_versions.lua": (
-                "event_log = 3",
+                "event_log = 4",
                 "event_log = 1",
             ),
             "lua/key-insights/report.lua": (
                 "summary.schema_version ~= contract_versions.analysis_summary",
-                "summary.schema_version ~= 5",
+                "summary.schema_version ~= 6",
             ),
             "crates/key-insights-cli/src/keymap_snapshot.rs": (
                 'append_length_prefixed(&mut preimage, "mapping-v1");',
                 'append_length_prefixed(&mut preimage, "mapping-v2");',
             ),
             "docs/schema-compatibility.md": (
-                "| Event log | `3` |",
+                "| Event log | `4` |",
                 "| Event log | `1` |",
             ),
             "codex/suggestions.schema.json": (
-                '"schema_version": { "type": "integer", "const": 2 }',
+                '"schema_version": { "type": "integer", "const": 3 }',
                 '"schema_version": { "type": "integer", "const": 1 }',
             ),
             "plugins/nvim-key-insights/skills/analyze-neovim-usage/references/payload.schema.json": (
-                '"payload_schema_version": { "const": 3 }',
+                '"payload_schema_version": { "const": 4 }',
                 '"payload_schema_version": { "const": 1 }',
             ),
         }
@@ -368,7 +368,7 @@ class ReleaseContractTest(unittest.TestCase):
             copy_version_contract(root)
             copy_schema_contract(root)
             versions_path = root / "lua/key-insights/contract_versions.lua"
-            changed = versions_path.read_text().replace("[2] = true", "[4] = true", 1)
+            changed = versions_path.read_text().replace("[2] = true", "[5] = true", 1)
             self.assertNotEqual(changed, versions_path.read_text())
             versions_path.write_text(changed)
             result = run_release("check", root=root)
@@ -770,7 +770,8 @@ class ReleaseContractTest(unittest.TestCase):
             )
             self.assertEqual(extracted.returncode, 0, extracted.stderr)
             notes = output.read_text()
-            self.assertTrue(notes.startswith("### Fixed\n"))
+            self.assertTrue(notes.startswith("### Added\n"))
+            self.assertIn("Bounded oversized callback chunking and privacy-safe", notes)
             self.assertIn("Include the metric name and received/expected aggregate values", notes)
             self.assertNotIn("Unreleased", notes)
             self.assertNotIn(f"## [{CURRENT_VERSION}]", notes)

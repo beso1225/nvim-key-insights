@@ -72,11 +72,11 @@ SCHEMA_REQUIRED_FILES = (
     ),
 )
 SCHEMA_VERSIONS = {
-    "Event log": 3,
-    "Analysis summary": 5,
+    "Event log": 4,
+    "Analysis summary": 6,
     "Keymap snapshot": 1,
-    "Codex payload": 3,
-    "Codex suggestions": 2,
+    "Codex payload": 4,
+    "Codex suggestions": 3,
     "Ergonomics contract": 2,
     "Histogram layout": 1,
     "Operation token set": 1,
@@ -223,7 +223,7 @@ def rust_constant(root: Path, relative: Path, name: str) -> int:
     except UnicodeDecodeError as error:
         fail(f"schema source {relative} is not UTF-8: {error}")
     matches = re.findall(
-        rf"^(?:pub )?const {re.escape(name)}: u32 = ([0-9]+);$",
+        rf"^(?:pub(?:\(crate\))? )?const {re.escape(name)}: u32 = ([0-9]+);$",
         source,
         re.MULTILINE,
     )

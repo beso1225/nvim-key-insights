@@ -427,7 +427,7 @@ local preview_stdin = nil
 local preview_callback = nil
 local shown_preview = nil
 local valid_preview = vim.json.encode({
-  payload_schema_version = 3,
+  payload_schema_version = 4,
   purpose = "analyze-neovim-usage",
   instructions = {
     action_kinds = { "learn_existing", "add_mapping", "change_mapping", "no_change" },
@@ -436,7 +436,7 @@ local valid_preview = vim.json.encode({
     privacy_boundary = "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections.",
   },
   summary = {
-    schema_version = 5,
+    schema_version = 6,
     ranking_limit = 100,
     sessions = 1,
     events = 1,
@@ -449,6 +449,8 @@ local valid_preview = vim.json.encode({
     unique_control_keys = 0,
     mode_transitions = 0,
     mapping_uses = 0,
+    input_loss_events = 0,
+    input_loss_keys = 0,
     repeated_key_runs = 0,
     repeated_key_presses = 0,
     unique_keys = 1,
@@ -1035,11 +1037,11 @@ assert(vim.deep_equal(analysis_invocations[3], {
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Use j/k navigation","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
-assert(string.find(analysis_render_stdin, '"schema_version":2', 1, true) ~= nil)
+assert(string.find(analysis_render_stdin, '"schema_version":3', 1, true) ~= nil)
 assert(analysis_render_options.max_stdout_bytes == 1024 * 1024 + 1)
 analysis_render_callback({
   code = 0,
@@ -1065,7 +1067,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Use the existing motion","rationale":"The measured motion is already available.","evidence":[{"metric":"sessions","value":999}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Use the existing motion","rationale":"The measured motion is already available.","evidence":[{"metric":"sessions","value":999}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
@@ -1080,7 +1082,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Mislabel a histogram","rationale":"Histogram bucket counts are not scalar duration measurements.","evidence":[{"metric":"session_duration_ms","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Mislabel a histogram","rationale":"Histogram bucket counts are not scalar duration measurements.","evidence":[{"metric":"session_duration_ms","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
@@ -1092,7 +1094,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Review src/config.lua","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Review src/config.lua","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
@@ -1104,7 +1106,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Use /… to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Use /… to search","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
@@ -1123,7 +1125,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"learn_existing","title":"Review home/alice/project","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"learn_existing","title":"Review home/alice/project","rationale":"The measured search key is already available.","evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
@@ -1135,7 +1137,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"schema_\\u0076ersion":2,"suggestions":[]}',
+  stdout = '{"schema_version":3,"schema_\\u0076ersion":3,"suggestions":[]}',
   stderr = "",
 })
 assert(analysis:status().running == false)
@@ -1147,7 +1149,7 @@ analysis_confirm_callback(true)
 analysis_codex_callback({
   code = 0,
   signal = 0,
-  stdout = '{"schema_version":2,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","mapping":null,"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
+  stdout = '{"schema_version":3,"suggestions":[{"action":"no_change","title":"Keep the current setup","rationale":"The measured sample does not justify a change.","mapping":null,"evidence":[{"metric":"sessions","value":1}],"collision_check":{"checked":true,"conflicting_mapping_ids":[]}}]}',
   stderr = "",
 })
 assert(analysis:status().phase == "rendering_suggestions")
@@ -1216,7 +1218,7 @@ local function run_prefix_case(conflicting_mapping_ids, should_render, proposal_
         code = 0,
         signal = 0,
         stdout = vim.json.encode({
-          schema_version = 2,
+          schema_version = 3,
           suggestions = {
             {
               action = "add_mapping",

@@ -18,6 +18,10 @@ local text_input_modes = {
   select = true,
 }
 
+local input_loss_reasons = {
+  pending_queue_limit = true,
+}
+
 local modes = vim.tbl_extend("force", sequence_modes, {
   insert = true,
   command = true,
@@ -87,6 +91,17 @@ function M.text_run(session_id, elapsed_ms, key_count, duration_ms)
   local event = envelope("text_run", session_id, elapsed_ms)
   event.key_count = key_count
   event.duration_ms = duration_ms
+  return event
+end
+
+function M.input_loss(session_id, elapsed_ms, reason, key_count)
+  assert(input_loss_reasons[reason] == true, "invalid input loss reason")
+  assert_nonnegative_integer(key_count, "key_count")
+  assert(key_count > 0, "key_count must be positive")
+
+  local event = envelope("input_loss", session_id, elapsed_ms)
+  event.reason = reason
+  event.key_count = key_count
   return event
 end
 

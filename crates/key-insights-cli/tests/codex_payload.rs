@@ -41,7 +41,7 @@ fn renders_a_versioned_payload_from_sanitized_inputs_only() {
     assert!(!payload.contains("/Users/private/project"));
     assert!(!payload.contains("project_id"));
     assert!(!payload.contains("mapping_rhs_secret"));
-    assert_eq!(value["summary"]["schema_version"], 5);
+    assert_eq!(value["summary"]["schema_version"], 6);
     assert_eq!(
         value["instructions"]["privacy_boundary"],
         "Use only aggregate evidence and the optional sanitized keymap snapshot; do not request or infer raw input. Copy evidence metric values exactly from top-level summary scalars; never derive, sum, or recompute them from ranked arrays, histograms, candidates, or other truncated collections."
@@ -56,10 +56,10 @@ fn canonical_payload_serialization_is_stable_and_compact() {
     assert_eq!(first, second);
     assert_eq!(
         format!("{:x}", Sha256::digest(first.as_bytes())),
-        "571c83d7603f65d27f274b3c590f393892958db4cc581f9c4c49beb98acf4312"
+        "76221b071e0c357950ab059683b9697679b7cc1fcc0b8db6187a60bca7c92173"
     );
     assert!(first.starts_with(
-        r#"{"payload_schema_version":3,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
+        r#"{"payload_schema_version":4,"purpose":"analyze-neovim-usage","instructions":{"action_kinds":["learn_existing","add_mapping","change_mapping","no_change"],"evidence_required":true,"collision_check_required":true,"privacy_boundary":"#
     ));
     let instruction_position = first.find("\"instructions\"").expect("instructions field");
     let summary_position = first.find("\"summary\"").expect("summary field");
@@ -183,7 +183,7 @@ fn includes_only_the_sanitized_keymap_snapshot_fields() {
     assert!(!payload.contains("secret-session"));
     assert_eq!(
         format!("{:x}", Sha256::digest(payload.as_bytes())),
-        "f52039a97843d0ee2d623f455dc951f1253c84798487c7e1d9b84103ca282537"
+        "c87cc3dd44bb9070df50fe031d5b124ef32abfef23b6bf280990d51d2e2d7329"
     );
 }
 

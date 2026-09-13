@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "suggestions"],
   "properties": {
-    "schema_version": { "type": "integer", "const": 2 },
+    "schema_version": { "type": "integer", "const": 3 },
     "suggestions": {
       "type": "array",
       "maxItems": 100,
@@ -58,6 +58,8 @@
                     "unique_control_keys",
                     "mode_transitions",
                     "mapping_uses",
+                    "input_loss_events",
+                    "input_loss_keys",
                     "repeated_key_runs",
                     "repeated_key_presses",
                     "unique_keys",

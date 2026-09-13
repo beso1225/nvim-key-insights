@@ -4,7 +4,9 @@ use std::{
     io::{self, BufRead, Read},
 };
 
-use crate::{Event, is_supported_control_key_schema_version, is_supported_schema_version};
+use crate::{
+    Event, SCHEMA_VERSION, is_supported_control_key_schema_version, is_supported_schema_version,
+};
 
 pub const MAX_EVENT_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_SESSION_ID_BYTES: usize = 128;
@@ -298,6 +300,23 @@ fn validate_payload(event: &Event, line: usize) -> Result<(), ValidationError> {
         return Err(error(
             line,
             ValidationErrorKind::SequenceDurationExceedsElapsed,
+        ));
+    }
+    if matches!(
+        event,
+        Event::InputLoss { key_count, .. } if *key_count == 0
+    ) {
+        return Err(error(line, ValidationErrorKind::MalformedEvent));
+    }
+    if matches!(
+        event,
+        Event::InputLoss { schema_version, .. } if *schema_version != SCHEMA_VERSION
+    ) {
+        return Err(error(
+            line,
+            ValidationErrorKind::UnsupportedSchema {
+                found: event.schema_version(),
+            },
         ));
     }
     Ok(())

@@ -39,8 +39,8 @@ class CodexSkillContractTests(unittest.TestCase):
             "`payload_schema_version`, `purpose`, `instructions`, `summary`, and the optional",
             "`keymap_snapshot`",
             "Reject any additional top-level key",
-            "`payload_schema_version` is `3`",
-            "`summary.schema_version` is `5`",
+            "`payload_schema_version` is `4`",
+            "`summary.schema_version` is `6`",
             "`keymap_snapshot.snapshot_version` is `1`",
             "`instructions.action_kinds` is exactly",
             "both required booleans are true",
@@ -77,7 +77,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_security_critical_skill_instructions_are_canonical(self) -> None:
         self.assertEqual(
             hashlib.sha256(SKILL.encode()).hexdigest(),
-            "ffce071b0d51750cc3ffbd654e2c60c6d57fb3a9ebe1c06c7788996400d5441d",
+            "d93b87e06dbe2b6f9f8c96ef609e5390f31835028fe389a8e4bb97272565881f",
         )
 
     def test_canonical_schemas_invalidate_every_codex_contract_task(self) -> None:
@@ -90,7 +90,7 @@ class CodexSkillContractTests(unittest.TestCase):
     def test_response_schema_uses_explicit_types_for_codex_structured_output(self) -> None:
         schema = json.loads((ROOT / "codex/suggestions.schema.json").read_text())
         properties = schema["properties"]
-        self.assertEqual(properties["schema_version"], {"type": "integer", "const": 2})
+        self.assertEqual(properties["schema_version"], {"type": "integer", "const": 3})
         self.assertNotIn("allOf", properties["suggestions"]["items"])
         suggestion_schema = properties["suggestions"]["items"]
         self.assertIn("mapping", suggestion_schema["required"])

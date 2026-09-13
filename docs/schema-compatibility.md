@@ -9,12 +9,12 @@ unknown versions fail closed before output publication or a Codex handoff.
 
 | Contract | Current version | Persistence | Upgrade or regeneration path |
 | --- | ---: | --- | --- |
-| Event log | `3` | Durable collector input | New analyzers read event schemas 1, 2, and 3; keep private finalized JSONL and regenerate derived artifacts. |
-| Analysis summary | `5` | Derived private artifact | Regenerate from supported event logs; do not rewrite an old summary in place. |
+| Event log | `4` | Durable collector input | New analyzers read event schemas 1, 2, 3, and 4; keep private finalized JSONL and regenerate derived artifacts. |
+| Analysis summary | `6` | Derived private artifact | Regenerate from supported event logs; do not rewrite an old summary in place. |
 | Keymap snapshot | `1` | Ephemeral report input | Capture a fresh snapshot from Neovim. |
-| Codex payload | `3` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
-| Codex suggestions | `2` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
-| Ergonomics contract | `2` | Nested in summary 5 | Regenerate the containing summary. |
+| Codex payload | `4` | Bounded sanitized handoff | Regenerate with `key-insights preview` from a supported summary. |
+| Codex suggestions | `3` | Untrusted model output | Request new JSON and validate it against the exact private summary with `key-insights suggestions`. |
+| Ergonomics contract | `2` | Nested in summary 6 | Regenerate the containing summary. |
 | Histogram layout | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Operation token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
 | Count-prefix token set | `1` | Nested in ergonomics 2 | Regenerate the containing summary. |
@@ -29,14 +29,16 @@ compatibility authority.
 
 ## Durable event logs
 
-Event schemas 1, 2, and 3 are supported durable input contracts in the current release. The
+Event schemas 1, 2, 3, and 4 are supported durable input contracts in the current release. The
 analyzer accepts those versions exactly; it does not guess field names,
 drop unknown fields, or partially analyze a newer stream. Preserve finalized
 event logs when upgrading if they may need to be analyzed again.
 
 Event schema 3 adds the macOS Command slash and backslash control-key tokens
 `<D-/>` and `<D-\>`. Schema 2 remains readable with its original token set and
-rejects those new values; only schema 3 may carry them.
+rejects those new values; schema 3 and schema 4 may carry them. Event schema 4
+adds the privacy-safe `input_loss` event; schema 3 remains readable and rejects
+that event type.
 
 Removing an event reader requires a package major release. Before event schema
 1 can be removed, a release must provide either a parallel reader covering the
@@ -46,26 +48,27 @@ ordering, resource-limit, and crash-recovery tests.
 ## Derived and ephemeral artifacts
 
 `summary.json` and `report.md` are a deterministic pair published from the same
-in-memory analysis. They are not migration inputs. When summary schema 5 is no
+in-memory analysis. They are not migration inputs. When summary schema 6 is no
 longer current, regenerate both files from retained event logs using a CLI that
 supports those logs. Existing outputs remain untouched when regeneration
 fails.
 
 For compatibility with a configured older analyzer, Neovim's report freshness
-check may recognize summary schemas 1, 2, 3, and 4 only to confirm that a fresh
-summary/report pair was published. It does not interpret their nested data or
-send them to Codex. `key-insights preview` and the Neovim Codex boundary require
-the complete current summary schema 5 and fail closed for schemas 1, 2, 3, 4, or an
-unknown version.
+check may recognize summary schemas 1, 2, 3, and 4, plus historical schema 5
+and the current schema 6,
+only to confirm that a fresh summary/report pair was published. It does not
+interpret their nested data or send them to Codex. `key-insights preview` and
+the Neovim Codex boundary require the complete current summary schema 6 and
+fail closed for historical or unknown versions.
 
 Keymap snapshots are captured at report time and are never persisted by the
 default Neovim workflow. Capture a new snapshot after upgrading instead of
 converting an old snapshot document.
 
 Codex payloads and suggestion JSON are bounded exchange artifacts, not durable
-records. Payload schema 3 is the current token contract; regenerate a payload
+records. Payload schema 4 is the current token contract; regenerate a payload
 with the matching CLI, inspect it again, and ask
-for new suggestion-schema-2 JSON. Suggestion JSON is never trusted or rendered
+for new suggestion-schema-3 JSON. Suggestion JSON is never trusted or rendered
 until the local validator binds every evidence value and collision claim to the
 exact private summary and optional sanitized snapshot.
 
